@@ -1,0 +1,48 @@
+# gridiron — fantasy football decision engine
+
+Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py`
+(two-sided ratchet). Detail goes in `docs/memory/` with a one-line headline here.
+
+## Orientation
+- Seed doc: `docs/BOOTSTRAP_FROM_PLV.md` — the plv_clone lessons this repo is
+  built on. Read it before proposing architecture.
+- Current state and next step: `HANDOFF.md`. Decisions: `docs/DECISIONS.md`,
+  ADRs in `docs/adr/`.
+- `src/gridiron/` is the production boundary; scripts import from it, never
+  the reverse. `paths.py` is the ONLY place the repo root is computed.
+- Verified math + constants: `docs/research/QUANT_FOUNDATIONS.md`. Read §1.4
+  (Vegas moves efficiency, not volume) before touching projections.
+
+## Commands
+- After ANY change: `python scripts/ci/smoke.py` (offline, <60s).
+- Full suite: `python scripts/ci/run_summary.py -- python -m pytest`
+  (never run bare pytest into agent context — the summary wrapper exists so
+  output doesn't flood the window).
+- Behavior-preserving refactors: `python scripts/ci/golden_run.py` A/B.
+
+## Rules (full text in docs/memory/rules.md — cite by number)
+1. League settings are UNVERIFIED placeholders (`league_config.SETTINGS_VERIFIED`).
+   Nothing ships outputs until they're pulled from the platform and the flag flips.
+2. Scoring has ONE implementation: `gridiron.scoring.fantasy_points`. Never
+   copy a weight into a script.
+3. Every join anchors on a stable player id (nflverse `gsis_id`/`player_id`;
+   platform ids via ONE cached crosswalk). Never name-match, never `.str.contains`.
+4. Derive role from usage (snap/route/target share), never from the roster
+   position tag.
+5. No model feature ships without beating a baseline that contains ALL
+   existing features, out-of-sample — enforced by import-time assert once
+   models exist.
+6. Opportunity (volume) is modeled explicitly and fast; efficiency is a
+   slow-moving prior. In-season usage deltas are real; efficiency deltas are noise.
+7. Decisions are denominated in ΔP(win), not projected points. Log every
+   decision WITH the rejected side; grade the choice, not the projection.
+8. Alerts fire on TRANSITIONS only; freshness checks are cadence-aware
+   (the week has a shape: Wed waivers, Fri designations, Sun inactives).
+9. Credentials live in `.env` (gitignored) only, prefix `GRIDIRON_`, read via
+   `gridiron.config`. Never write a credential into a tracked file.
+10. Don't commit bulk data (`data/research/cache/` is ignored); DO commit the
+    small weekly projection/ledger CSVs in `data/outputs/` and `data/ledger/`.
+11. "Questionable" ≠ out; "on roster" ≠ startable. No convenience accessor
+    that makes the wrong call easy.
+12. Start with 5 skills max (roster-audit, waiver-board, start-sit, matchup,
+    decision-log) plus a registry test. Resist premature skill growth.

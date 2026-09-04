@@ -1,0 +1,17 @@
+# credentials — never tracked (rule #9)
+.env
+
+# venv & caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+
+# bulk data: gitignored. Small weekly outputs/ledger CSVs ARE committed
+# (rule #10) — do not add data/outputs/ or data/ledger/ here.
+data/research/cache/
+data/research/.golden_run/
+
+# research-agent scratch drafts (synthesized into docs/research/*.md)
+docs/research/drafts/

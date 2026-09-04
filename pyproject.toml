@@ -1,0 +1,25 @@
+[project]
+name = "gridiron"
+version = "0.1.0"
+description = "Fantasy football decision engine (P(win)-denominated), seeded from plv_clone's lessons"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic-settings>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+# basetemp inside the repo: the machine-wide %TEMP%\pytest-of-<user> root
+# accumulates dead junctions (sandboxed runs) that crash session teardown.
+addopts = "-q --basetemp=.cache/pytest-tmp"

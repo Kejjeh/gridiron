@@ -1,0 +1,8 @@
+# Context hygiene, decided BEFORE the first big data pull (bootstrap §5).
+# Bulk data and logs never enter agent context; read summaries instead.
+data/research/cache/
+data/research/.golden_run/
+.cache/
+.venv/
+__pycache__/
+*.parquet

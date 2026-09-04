@@ -1,0 +1,9 @@
+# Direct dependencies only. Freeze (pip freeze > requirements.lock) ONLY
+# from inside this project's .venv — never from a machine-wide environment
+# (bootstrap §5: plv_clone's lock shipped an unrelated trading stack).
+pydantic-settings>=2.0
+pytest>=8.0
+numpy>=2.0            # research sims (scripts/research/)
+
+# Build step 2 (ingest) will add: nflreadpy>=0.1.5 (polars-native; NOT the
+# deprecated nfl_data_py), pandas, pyarrow, espn-api>=0.46 (if ESPN league)
