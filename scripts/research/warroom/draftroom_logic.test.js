@@ -52,6 +52,16 @@ test("nextMine finds the next of my picks at or after the current pick", () => {
   assert.equal(L.nextMine({picks:new Array(180).fill({id:"x"}), offset:0}, MY), null);
 });
 
+test("survival odds refer to my next pick AFTER the current one when I am on the clock", () => {
+  assert.equal(L.nextTarget({picks:[], offset:0}, MY), 24);          // on the clock at 1 -> odds at 24
+  assert.equal(L.nextTarget({picks:new Array(23).fill({id:"x"}), offset:0}, MY), 25);   // on the clock at 24 -> 25
+  assert.equal(L.nextTarget({picks:new Array(30).fill({id:"x"}), offset:0}, MY), 48);   // mid-round at 31 -> 48
+  assert.equal(L.nextTarget({picks:new Array(169).fill({id:"x"}), offset:0}, MY), null);
+  const players = [P("a","RB",150,{ph:{1:1,24:0.4,25:0.4,48:0.1}})];
+  const atOne = L.filterSort(players, {picks:[], offset:0}, MY, {sortKey:"vor", sortDir:-1, hideGone:true});
+  assert.ok(Math.abs(atOne[0].pnext - 0.4) < 1e-9);
+});
+
 test("lineup fills FLEX with the best leftover RB/WR/TE and benches the rest", () => {
   const roster = [P("qb","QB",300), P("rb1","RB",100), P("rb2","RB",90), P("rb3","RB",85), P("wr1","WR",95),
                   P("wr2","WR",70), P("te","TE",60), P("wr3","WR",88), P("k","K",100), P("def","DEF",90), P("rb4","RB",40)];

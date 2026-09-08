@@ -249,7 +249,7 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
           <th class="r" data-sort="tier" title="FantasyPros consensus tier">Tier</th>
           <th class="r" data-sort="ecr" title="FantasyPros expert consensus rank (half-PPR)">ECR</th>
           <th class="r" data-sort="adp" title="Blended ADP: 60% Sleeper, 40% FFC 12-team half-PPR">ADP</th>
-          <th class="r" data-sort="pnext" title="Chance this player is still there at your next pick: from 1,000 simulated drafts using each manager's 2023-25 tendencies, conditioned on who is already gone (ADP model as fallback)">Next?</th>
+          <th class="r" data-sort="pnext" id="nextHead" title="Chance this player is still there at your next pick (the one after the current pick when you are on the clock): from 1,000 simulated drafts using each manager's 2023-25 tendencies, conditioned on who is already gone (ADP model as fallback)">Next?</th>
           <th class="r" data-sort="ppg25">'25 PPG</th>
           <th class="notecol">Note</th>
           <th class="r"></th>
@@ -328,6 +328,13 @@ const DATA = {"meta":{"repl":{"QB":292.2,"RB":138.6,"WR":139.0,"TE":128.6,"K":10
     const n = MY.find((x) => x >= c);
     return n === undefined ? null : n;
   }
+  // The pick the survival odds should refer to: when I am on the clock the
+  // question is "if I pass on him now, is he there at my NEXT pick".
+  function nextTarget(state, MY) {
+    const c = curPick(state);
+    const n = MY.find((x) => x > c);
+    return n === undefined ? null : n;
+  }
   const FLEXABLE = ["RB", "WR", "TE"];
   // Greedy optimal lineup: fixed slots first, then FLEX from the best leftovers.
   function lineup(players, SLOTS) {
@@ -353,7 +360,7 @@ const DATA = {"meta":{"repl":{"QB":292.2,"RB":138.6,"WR":139.0,"TE":128.6,"K":10
   const TAG_SETS = { sleepers: ["usage", "experts"], avoid: ["avoid", "regress"] };
   // Returns [{p, gone, mine, pnext}] filtered and sorted. A search ignores hideGone.
   function filterSort(players, state, MY, o) {
-    const c = curPick(state), nm = nextMine(state, MY);
+    const c = curPick(state), nm = nextTarget(state, MY);
     const taken = new Map(state.picks.map((x) => [x.id, !!x.mine]));
     const q = (o.query || "").trim().toLowerCase();
     let list = players.map((p) => ({ p, gone: taken.has(p.id), mine: taken.get(p.id) === true, pnext: nm ? pAvail(p, nm, c, MY) : 0 }));
@@ -380,7 +387,7 @@ const DATA = {"meta":{"repl":{"QB":292.2,"RB":138.6,"WR":139.0,"TE":128.6,"K":10
       },
     };
   }
-  return { Phi, pAvail, curPick, nextMine, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
+  return { Phi, pAvail, curPick, nextMine, nextTarget, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
 });
 
 </script>
@@ -457,8 +464,8 @@ function fmtPlan(text){
     const p = byName.get(name.toLowerCase()); pk = +pk;
     if(!p) return name;
     if(t.has(p.id)) return `<s>${name}</s>`;
-    const pr = pk < c ? null : pAvail(p, pk, c, MY);
-    return pr===null ? name : `${name} (${Math.round(pr*100)}%)`;
+    if(pk <= c) return name;                       // that pick is now or past: he is simply there
+    return `${name} (${Math.round(pAvail(p, pk, c, MY)*100)}%)`;
   });
 }
 function planHTML(){
@@ -486,12 +493,13 @@ function roomHTML(){
 
 // ---------- strip ----------
 function stripHTML(){
-  const c=curPick(), nm=nextMine(), t=taken();
+  const c=curPick(), nm=DL.nextTarget(state, MY), t=taken();
   const avail = P.filter(p=>!t.has(p.id));
   const best = pos => avail.filter(p=>p.pos===pos).sort((a,b)=>b.vor-a.vor)[0];
   const cards = [];
-  const onClock = nm===c;
-  cards.push(`<div class="card ${onClock?"hot":""}"><div class="k">${onClock?"You are on the clock":"Picks until yours"}</div><div class="v">${onClock?"Pick now":(nm?nm-c:"—")}<small> ${nm?`· pick ${nm}`:"draft over"}</small></div></div>`);
+  const mineNow = nextMine();
+  const onClock = mineNow===c;
+  cards.push(`<div class="card ${onClock?"hot":""}"><div class="k">${onClock?"You are on the clock":"Picks until yours"}</div><div class="v">${onClock?"Pick now":(mineNow?mineNow-c:"—")}<small> ${mineNow?`· pick ${mineNow}${nm?` · odds below are for pick ${nm}`:""}`:"draft over"}</small></div></div>`);
   for(const pos of ["RB","WR","TE","QB"]){
     const b = best(pos); if(!b) continue;
     const pn = nm ? pAvail(b, nm, c, MY) : 0;
@@ -546,6 +554,8 @@ function render(){
   document.getElementById("myNext").textContent = nm??"—";
   document.getElementById("myNextIn").textContent = nm? (nm===c?"· on the clock":`· in ${nm-c}`):"";
   document.getElementById("strip").innerHTML = stripHTML();
+  const tgt = DL.nextTarget(state, MY);
+  document.getElementById("nextHead").textContent = tgt ? `At ${tgt}?` : "Next?";
   document.getElementById("rows").innerHTML = rowsHTML();
   const r = rosterHTML(), pl = planHTML();
   document.getElementById("rosterPanel").innerHTML = r;

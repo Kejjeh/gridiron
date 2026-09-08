@@ -39,6 +39,13 @@
     const n = MY.find((x) => x >= c);
     return n === undefined ? null : n;
   }
+  // The pick the survival odds should refer to: when I am on the clock the
+  // question is "if I pass on him now, is he there at my NEXT pick".
+  function nextTarget(state, MY) {
+    const c = curPick(state);
+    const n = MY.find((x) => x > c);
+    return n === undefined ? null : n;
+  }
   const FLEXABLE = ["RB", "WR", "TE"];
   // Greedy optimal lineup: fixed slots first, then FLEX from the best leftovers.
   function lineup(players, SLOTS) {
@@ -64,7 +71,7 @@
   const TAG_SETS = { sleepers: ["usage", "experts"], avoid: ["avoid", "regress"] };
   // Returns [{p, gone, mine, pnext}] filtered and sorted. A search ignores hideGone.
   function filterSort(players, state, MY, o) {
-    const c = curPick(state), nm = nextMine(state, MY);
+    const c = curPick(state), nm = nextTarget(state, MY);
     const taken = new Map(state.picks.map((x) => [x.id, !!x.mine]));
     const q = (o.query || "").trim().toLowerCase();
     let list = players.map((p) => ({ p, gone: taken.has(p.id), mine: taken.get(p.id) === true, pnext: nm ? pAvail(p, nm, c, MY) : 0 }));
@@ -91,5 +98,5 @@
       },
     };
   }
-  return { Phi, pAvail, curPick, nextMine, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
+  return { Phi, pAvail, curPick, nextMine, nextTarget, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
 });
