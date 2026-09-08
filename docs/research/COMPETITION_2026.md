@@ -72,3 +72,37 @@ the opportunity.
 - Historical ADP is FFC's, matched by name; 7–27% of picks per manager had no
   ADP match (mostly K/DEF and deep sleepers) and are excluded from reach.
 - Sleeper does not flag autopicks, so timer-expired picks look like choices.
+
+## Deeper cuts (`analyze_competition_deep.py`, added 8:05 PM)
+
+**Loyalties.** Repeat drafters: sallymcbride has taken Josh Allen two years
+running (and Aubrey twice); mikedonutgang200 took Kamara three times, Chase
+and Taylor twice; MaxSchussler Bijan, London, Montgomery, Dak twice and
+Falcons 5.6× the league rate; SirChadius Gibbs, Evans, Higgins twice;
+bogeman St. Brown, Collins, Kupp, Kirk, Hurts twice; pbrady98 Saquon,
+Metcalf, McLaurin, Garrett Wilson twice. Team tilts: reijcage Bucs 6.4×,
+mikedonutgang Saints 6×, sallymcbride Bills 5.6×, pbrady Jets 4.3×.
+
+**What won.** 30 team-seasons: champions opened RB-light (2 RB in rounds
+1–6) with a QB in round 2–7 and a TE in round 1–7. Rookie count is the
+only shape variable with a real signal (r = −0.47 with PPG); early QB is
+mildly positive (r = −0.22 on QB round). RB-vs-WR mix in rounds 1–6 does
+not predict anything here.
+
+**Draft skill** (points of drafted players vs what the pick slot usually
+returns, rounds 1–10): sallymcbride +35 per pick, mikedonutgang200 +32,
+glavoile +16, reijcage +16, clyvejohnson +14; Kejjeh −7, bogeman −11,
+LaisterSmith −13, SirChadius −16. The biggest single wins in league history
+are all quarterbacks taken in rounds 3–5 (Allen ×3, Lamar, Hurts ×2).
+
+**Weekly scoring, 2025 (12 teams).** Team-week mean 111.1, sd 20.8; 80th
+percentile 127, 20th 94. Average margin 24.8; only 20% of games are decided
+by under 10. ~120 a week wins 70% of matchups.
+
+**Waiver market ($100 FAAB).** 144 winning claims in three seasons, 80 of
+them at $0–1. Winning bids: RB median $10 (max $43), WR $6 (max $51), TE
+$0.50, QB $0 (but $50 for Geno in 2024), DEF/K $0. Claim volume: bogeman
+36, SirChadius 32, Kejjeh 23, chaguy 16, Max 12; sallymcbride,
+mikedonutgang, clyvejohnson never. Half the room does not compete for
+adds, so bench upside can be chased at the draft and cleaned up in-season
+cheaply.
