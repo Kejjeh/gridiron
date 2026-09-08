@@ -107,3 +107,16 @@ The turn is therefore RB/WR, not TE: best RB left (Walker, Jeanty, Hampton)
 or Collins/Pickens at 24, then Pickens/Collins/Olave/Nabers or Javonte/Kyren/
 Hall at 25. TE waits for the LaPorta/Kraft tier at 72; QB for Daniels/Hurts
 at 72–73 or Lawrence at 96. Full room profiles: `COMPETITION_2026.md`.
+
+## Revision 2: survival odds in the page (6:30 PM)
+
+The page's Next? column and the plan text now use `ph{pick}`: the share of
+1,000 history-aware simulated drafts in which the ROOM left the player alone
+until each of my picks, recorded with a "ghost me" (my own simulated picks
+do not remove players), so a player I would usually take at 25 still shows
+his true odds of lasting to 48. Conditioned live on the last of my picks
+already passed. Known bias: ghost picks leave one extra good player in the
+pool per my-pick, so the odds run slightly high late; the conditional ratio
+cancels most of it. At pick 1: Walker 48%, Jeanty 50%, Hampton 42%, Collins
+54%, Pickens 75%, Allen 29% to reach 24; Montgomery 88%, Irving 87%, Judkins
+94%, Swift 73% to reach 48; LaPorta 60%, Kraft 79%, Hurts 86% to reach 72.

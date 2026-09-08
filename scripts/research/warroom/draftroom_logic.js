@@ -12,12 +12,26 @@
     return z > 0 ? 1 - p : p;
   }
   const pUncond = (p, pick) => 1 - Phi((pick - 0.5 - p.adp) / p.adp_sd);
-  // P(still there at `pick` | still there at `now`)
-  function pAvail(p, pick, now) {
+  // P(still there at `pick` | still there at `now`), ADP model
+  function pAvailAdp(p, pick, now) {
     if (pick <= now) return 1;
     const pn = pUncond(p, now);
     if (pn <= 1e-12) return 0;
     return Math.max(0, Math.min(1, pUncond(p, pick) / pn));
+  }
+  // Prefer simulated survival odds p.ph = {myPick: prob} (history-aware Monte
+  // Carlo) conditioned on the last of my picks already passed; fall back to the
+  // ADP model when the sim gave this player no chance of being here (he fell).
+  function pAvail(p, pick, now, MY) {
+    if (pick <= now) return 1;
+    const ph = p.ph;
+    if (ph && MY && ph[pick] != null) {
+      const passed = MY.filter((k) => k <= now && ph[k] != null);
+      const k0 = passed.length ? Math.max(...passed) : null;
+      const base = k0 === null ? 1 : ph[k0];
+      if (base > 0.02) return Math.max(0, Math.min(1, ph[pick] / base));
+    }
+    return pAvailAdp(p, pick, now);
   }
   const curPick = (state) => state.picks.length + (state.offset || 0) + 1;
   function nextMine(state, MY) {
@@ -53,7 +67,7 @@
     const c = curPick(state), nm = nextMine(state, MY);
     const taken = new Map(state.picks.map((x) => [x.id, !!x.mine]));
     const q = (o.query || "").trim().toLowerCase();
-    let list = players.map((p) => ({ p, gone: taken.has(p.id), mine: taken.get(p.id) === true, pnext: nm ? pAvail(p, nm, c) : 0 }));
+    let list = players.map((p) => ({ p, gone: taken.has(p.id), mine: taken.get(p.id) === true, pnext: nm ? pAvail(p, nm, c, MY) : 0 }));
     if (o.filterPos && o.filterPos !== "ALL") list = list.filter((x) => x.p.pos === o.filterPos);
     if (o.filterTag) list = list.filter((x) => TAG_SETS[o.filterTag].includes(x.p.tag));
     if (q) list = list.filter((x) => x.p.name.toLowerCase().includes(q) || (x.p.team || "").toLowerCase() === q);

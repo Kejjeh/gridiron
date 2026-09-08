@@ -249,7 +249,7 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
           <th class="r" data-sort="tier" title="FantasyPros consensus tier">Tier</th>
           <th class="r" data-sort="ecr" title="FantasyPros expert consensus rank (half-PPR)">ECR</th>
           <th class="r" data-sort="adp" title="Blended ADP: 60% Sleeper, 40% FFC 12-team half-PPR">ADP</th>
-          <th class="r" data-sort="pnext" title="Chance this player is still there at your next pick, given who is already gone">Next?</th>
+          <th class="r" data-sort="pnext" title="Chance this player is still there at your next pick: from 1,000 simulated drafts using each manager's 2023-25 tendencies, conditioned on who is already gone (ADP model as fallback)">Next?</th>
           <th class="r" data-sort="ppg25">'25 PPG</th>
           <th class="notecol">Note</th>
           <th class="r"></th>
@@ -338,13 +338,13 @@ function rosterHTML(){
 // ---------- plan ----------
 const PLAN = [
   [1,  "Jahmyr Gibbs", "100% of sims. Bijan is the only other answer. Plan below is from 300 sims that use each manager's 2023-25 tendencies."],
-  [24, "Best RB left: Walker (35%), Jeanty (32%), Hampton (27%); else Nico Collins (41%) / Pickens (65%)", "This room takes TEs early and RBs late: Bowers and McBride are gone before 24 in ~all sims. Allen here only 22%."],
-  [25, "Pickens (63%), Collins (29%), Olave (92%), Nabers (94%), Javonte / Kyren / Hall (~100%)", "Two RBs across the turn is fine: Javonte, Kyren and Hall all reach 25. sallymcbride picks 23 and 26 and opens WR-WR then QB."],
-  [48, "Montgomery (71%), Irving (62%), Judkins (85%), Swift (43%)", "Or Waddle (35%) / Burden if the RBs are gone. Do not take a QB yet."],
-  [49, "Luther Burden, Montgomery (58%), Irving (57%), Judkins (84%)", "Two RBs across 48/49 is fine if you went WR-WR at the turn."],
-  [72, "TE tier 2: LaPorta / Kraft (each ~31%), Warren, Fannin", "Or the QB window: Daniels (83%) / Hurts (72%). Brian Thomas / MHJ / Stevenson are the skill fallbacks."],
-  [73, "QB if you took a TE at 72: Daniels (80%), Hurts (62%), Lawrence (100%)", "Otherwise Metcalf (53%), Carnell Tate (57%), Brian Thomas (36%)."],
-  [96, "Trevor Lawrence (87%) if you still need a QB; else Jayden Reed / Lloyd", "Purdy, Dart, Nix, Mahomes are all ~100% here: the QB floor is deep in this room."],
+  [24, "Best RB left: {Kenneth Walker@24}, {Ashton Jeanty@24}, {Omarion Hampton@24}; else {Nico Collins@24} / {George Pickens@24}", "This room takes TEs early and RBs late: {Brock Bowers@24} and {Trey McBride@24} are gone before 24 in ~all sims. {Josh Allen@24} is a long shot."],
+  [25, "{George Pickens@25}, {Chris Olave@25}, {Malik Nabers@25}, {Javonte Williams@25} / {Kyren Williams@25} / {Breece Hall@25}", "Two RBs across the turn is fine. sallymcbride picks 23 and 26 and opens WR-WR then QB."],
+  [48, "{David Montgomery@48}, {Bucky Irving@48}, {Quinshon Judkins@48}, {D'Andre Swift@48}", "Or {Jaylen Waddle@48} / {Luther Burden@48} if the RBs are gone. Do not take a QB yet."],
+  [49, "{Luther Burden@49}, {Terry McLaurin@49}, {Jameson Williams@49}, {Christian Watson@49}", "Two RBs across 48/49 is fine if you went WR-WR at the turn."],
+  [72, "TE tier 2: {Sam LaPorta@72} / {Tucker Kraft@72} / {Harold Fannin@72}", "Or the QB window: {Jalen Hurts@72} / {Jayden Daniels@72}. {Brian Thomas@72} / {Marvin Harrison@72} / {Rhamondre Stevenson@72} are the skill fallbacks."],
+  [73, "QB if you took a TE at 72: {Jayden Daniels@73}, {Jalen Hurts@73}, {Trevor Lawrence@73}", "Otherwise {DK Metcalf@73}, {Carnell Tate@73}, {Brian Thomas@73}."],
+  [96, "{Trevor Lawrence@96} if you still need a QB; else {Jayden Reed@96} / {MarShawn Lloyd@96}", "{Brock Purdy@96}, {Jaxson Dart@96}, {Bo Nix@96}, {Patrick Mahomes@96}: the QB floor is deep in this room."],
   [97, "Lloyd / Jordan Mason / Pittman / Quentin Johnston", "Handcuff your RB1 if the price is right (Pacheco is on IR, so Gibbs has no cheap cuff)."],
   [120,"Jalen Coker, Khalil Shakir, Jakobi Meyers, Doubs", "Upside WR bench."],
   [121,"Chris Rodriguez, Deebo, Stribling, Corum", "One-injury-away RBs."],
@@ -353,12 +353,25 @@ const PLAN = [
   [168,"DEF: Rams / Texans / Seahawks / Broncos, whichever is left", ""],
   [169,"K: Aubrey / Fairbairn / Little / Myers / Dicker", ""],
 ];
+// "{Name@pick}" -> "Name (xx%)": the live chance he is still there at that pick,
+// from the same odds as the Next? column, given who is already gone.
+const byName = new Map(P.map(p=>[p.name.toLowerCase(), p]));
+function fmtPlan(text){
+  const c = curPick(), t = taken();
+  return text.replace(/\{([^@}]+)@(\d+)\}/g, (m, name, pk)=>{
+    const p = byName.get(name.toLowerCase()); pk = +pk;
+    if(!p) return name;
+    if(t.has(p.id)) return `<s>${name}</s>`;
+    const pr = pk < c ? null : pAvail(p, pk, c, MY);
+    return pr===null ? name : `${name} (${Math.round(pr*100)}%)`;
+  });
+}
 function planHTML(){
   const c = curPick(); const nm = nextMine();
-  let h = `<h2>Slot-1 plan <small>300 sims with this room's history</small></h2><div class="plan">`;
+  let h = `<h2>Slot-1 plan <small>odds from 1,000 sims with this room's history, live</small></h2><div class="plan">`;
   PLAN.forEach(([pk,tg,alt],i)=>{
     const rnd = i+1; const cls = pk<c ? "done" : (pk===nm ? "now" : "");
-    h += `<div class="pr ${cls}"><div class="pk">${pk}<small>R${rnd}</small></div><div class="tg"><b>${tg}</b>${alt?`<div class="alt">${alt}</div>`:""}</div></div>`;
+    h += `<div class="pr ${cls}"><div class="pk">${pk}<small>R${rnd}</small></div><div class="tg"><b>${fmtPlan(tg)}</b>${alt?`<div class="alt">${fmtPlan(alt)}</div>`:""}</div></div>`;
   });
   return h+"</div>";
 }
@@ -386,8 +399,11 @@ function stripHTML(){
   cards.push(`<div class="card ${onClock?"hot":""}"><div class="k">${onClock?"You are on the clock":"Picks until yours"}</div><div class="v">${onClock?"Pick now":(nm?nm-c:"—")}<small> ${nm?`· pick ${nm}`:"draft over"}</small></div></div>`);
   for(const pos of ["RB","WR","TE","QB"]){
     const b = best(pos); if(!b) continue;
-    const pn = nm ? pAvail(b, nm, c) : 0;
-    cards.push(`<div class="card"><div class="k">Best ${pos} left</div><div class="v">${b.name}<small> · VOR ${b.vor.toFixed(0)} · ${Math.round(pn*100)}% at ${nm??"–"}</small></div></div>`);
+    const pn = nm ? pAvail(b, nm, c, MY) : 0;
+    // tier scarcity: how many of tiers 1-4 are left at this position
+    const left = [1,2,3,4].map(t=>avail.filter(p=>p.pos===pos && p.tier===t).length);
+    const tiers = left.map((n,i)=>`T${i+1} ${n}`).join(" · ");
+    cards.push(`<div class="card"><div class="k">Best ${pos} left · ${tiers}</div><div class="v">${b.name}<small> · VOR ${b.vor.toFixed(0)} · ${Math.round(pn*100)}% at ${nm??"–"}</small></div></div>`);
   }
   return cards.join("");
 }

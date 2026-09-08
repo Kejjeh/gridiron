@@ -22,6 +22,23 @@ test("pAvail is a proper conditional survival probability", () => {
   assert.ok(f >= 0 && f < 0.05 && !Number.isNaN(f));
 });
 
+test("pAvail prefers simulated survival odds (ph) when the player has them", () => {
+  // ph: chance still there at each of MY picks from the history-aware sim
+  const p = {adp:20, adp_sd:3, ph:{1:1, 24:0.4, 25:0.3, 48:0.02}};
+  // before my first pick: use ph directly
+  assert.equal(L.pAvail(p, 24, 1, MY), 0.4);
+  // at pick 24 (still there): survival to 25 is conditional on having survived to 24
+  assert.ok(Math.abs(L.pAvail(p, 25, 24, MY) - 0.3/0.4) < 1e-9);
+  // mid-round: condition on the last of my picks already passed (25, not 24)
+  assert.ok(Math.abs(L.pAvail(p, 48, 30, MY) - 0.02/0.3) < 1e-9);
+  // he fell far past what the sim expected (ph at the last pick ~0): fall back to the ADP model
+  const q = {adp:5, adp_sd:1.2, ph:{1:1, 24:0.0, 25:0.0}};
+  const f = L.pAvail(q, 25, 24, MY);
+  assert.ok(f >= 0 && f <= 1 && !Number.isNaN(f));
+  // no ph: unchanged ADP model
+  assert.equal(L.pAvail({adp:30, adp_sd:4}, 25, 25), 1);
+});
+
 test("current pick counts logged picks plus unlogged offset", () => {
   assert.equal(L.curPick({picks:[], offset:0}), 1);
   assert.equal(L.curPick({picks:[{id:"a"},{id:"b"}], offset:0}), 3);

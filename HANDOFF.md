@@ -42,11 +42,21 @@ question from §6 was answered empirically today: the 24 flex slots filled
 16 WR / 8 RB on the 2026 projection curve, so replacement = RB33 / WR41 /
 TE13, not the full-PPR RB25 / WR35.
 
+**Room + injuries (draft day, later)** — `docs/research/COMPETITION_2026.md`
+(manager profiles from 2023–25 Sleeper history; per-slot QB/TE/RB/WR timing
+shifts feed the sim, which exports history-aware survival odds `ph{pick}`
+into the board and the page) and `docs/research/INJURY_EFFECTS.md`
+(Questionable-and-played = 0.84; RB ankle/knee returns 0.77/0.79 for six
+games). `gridiron.ledger` (test-first) records the real draft with the
+rejected side per pick and grades the survival predictions.
+
 ## Next
 
-1. **After the draft**: log the actual picks (Sleeper `draft/{id}/picks`) to
-   `data/ledger/draft_2026.csv` with the board's projected value at each
-   pick, and grade the room's ADP model (was sd = 0.57 + 0.11·ADP right?).
+1. **After the draft**: `PYTHONPATH=src python scripts/research/record_draft_2026.py`
+   writes `data/ledger/draft_2026.csv` and prints my picks with the rejected
+   side plus the Brier score of the board's `p{k}`/`ph{k}` predictions.
+   Commit the ledger. Then compare ADP-only vs history-aware odds on the
+   real picks to decide which model the in-season tools should trust.
 2. Build step 2 ingest for the season: nflreadpy weekly + snaps + schedules
    lines, Sleeper league rosters/matchups each Tuesday. Cached 2023–25 data
    already exists.

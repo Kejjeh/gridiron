@@ -1,10 +1,10 @@
 """Build the 1.01 War Room page: board CSV + news notes + tags + room -> one HTML file.
 
 Run:  PYTHONPATH=src python scripts/research/warroom_build.py
-Reads data/outputs/draft2026_board.csv (from draft_board_2026.py) and the
-template/logic under scripts/research/warroom/; writes
-data/outputs/draft2026_warroom.html (the file published as the artifact).
-The page logic is tested by `node --test scripts/research/warroom/`.
+Reads data/outputs/draft2026_board.csv (from draft_board_2026.py, incl. the
+ph{pick} history-aware survival odds) and the template/logic under
+scripts/research/warroom/; writes data/outputs/draft2026_warroom.html (the
+file published as the artifact). Page logic: `node --test scripts/research/warroom/`.
 """
 import json
 import pathlib
@@ -36,16 +36,16 @@ NOTES = {
  "derrickhenry": "Age 32. ECR 20 but Sleeper drafters take him at 14. Justice Hill / Rasheen Ali behind him, healthy.",
  "saquonbarkley": "Age 29, 2025 was a down year (13.2 PPG). Sleeper ADP 10.6 vs ECR 16.",
  "devonachane": "Malik Willis is now the MIA QB (Tua to ATL). Rebuild offense, but he IS the offense.",
- "kennethwalker": "Now a Chief. Foot soreness was shoe-related; W1 ready. RBs slide in this room: reaches 24 in 35% of history-aware sims (ADP alone said 4%). Top target at the turn.",
- "omarionhampton": "Broke an ankle W5 last year, back. Keaton Mitchell change-of-pace only. Reaches 24 in ~27% of history-aware sims.",
- "ashtonjeanty": "Low-ankle sprain, questionable, tracking to play W1 with managed snaps. DATA: RBs back from an ankle score 77% of their prior PPG over the next 6 games (n=11, t=-2.3); playing on a Q tag costs ~20%. Price in a slow first month; reaches 24 in ~32% of history-aware sims.",
+ "kennethwalker": "Now a Chief. Foot soreness was shoe-related; W1 ready. RBs slide in this room, and he is the top target at the turn: see the Next? column for his live odds.",
+ "omarionhampton": "Broke an ankle W5 last year, back. Keaton Mitchell change-of-pace only. Turn target; odds in the Next? column.",
+ "ashtonjeanty": "Low-ankle sprain, questionable, tracking to play W1 with managed snaps. DATA: RBs back from an ankle score 77% of their prior PPG over the next 6 games (n=11, t=-2.3); playing on a Q tag costs ~20%. Price in a slow first month; turn target if he slides.",
  "chasebrown": "Sleeper ADP 17 vs FFC 13.6 / ECR 15.",
- "nicocollins": "12.6 PPG in 15 games last year; Sleeper projects 218. Reaches 24 ~41%, 25 ~29%: the WR to take at the turn.",
- "brockbowers": "Elite TE1 by 11 pts over McBride. But THIS ROOM takes TEs early: chaguy2457 (pick 17) took him at 21 last year, glavoile (16) took McBride at 26, MaxSchussler (21) goes TE in R4, SirChadius/pbrady reach for TEs. Gone before 24 in ~all history-aware sims. Only a bonus if he falls.",
+ "nicocollins": "12.6 PPG in 15 games last year; Sleeper projects 218. The WR to take at the turn if the RBs are gone.",
+ "brockbowers": "Elite TE1 by 11 pts over McBride. But THIS ROOM takes TEs early: chaguy2457 (pick 17) took him at 21 last year, glavoile (16) took McBride at 26, MaxSchussler (21) goes TE in R4, SirChadius/pbrady reach for TEs. Gone before 24 in nearly every history-aware sim; a bonus only if he falls.",
  "treymcbride": "TE2. glavoile (pick 16) took him in R3 two years running. Also gone before 24 in the history-aware sims.",
- "joshallen": "QB1 by 20 pts. sallymcbride picks 23 and took him at 29 last year; mikedonutgang and glavoile take QBs 9-12 picks early. At 24 only ~22%. QB4-QB12 sit within 15 pts, so wait.",
+ "joshallen": "QB1 by 20 pts. sallymcbride picks 23 and took him at 29 last year; mikedonutgang and glavoile take QBs 9-12 picks early. A long shot at 24 (Next? column). QB4-QB12 sit within 15 pts, so wait.",
  "lamarjackson": "QB2. ECR 38, Sleeper ADP 34, FFC 56 - the sources disagree.",
- "georgepickens": "Now a Cowboy. Reaches 24 ~65%, 25 ~63% in the history-aware sims.",
+ "georgepickens": "Now a Cowboy. Usually there at 24/25 (Next? column).",
  "chrisolave": "Healthy. Jordyn Tyson (rookie 1st-rounder) on IR 4-8 wks, so Olave is the only target hog in NO.",
  "maliknabers": "ACL Oct 2025; questionable, game-time decision W1 vs DAL. DATA: WRs back from a knee run at 87% for the next 6 games; a Q-tag game averages 80%. ECR spread 9-47. Expect a slow ramp.",
  "javontewilliams": "14.1 PPG in 2025 for DAL. Sleeper ADP 31, FFC 28.5.",
@@ -54,15 +54,15 @@ NOTES = {
  "jeremiyahlove": "Rookie, ARI. High-ankle sprain, missed 4 weeks of camp, coach 'feels good' about W1. DATA: RB ankle returns run at 77% of prior PPG for 6 games. Bad OL. Fade at his round-3 price.",
  "dandreswift": "Bears RB1. Left practice with 'a cramp'; Monangai wk-to-wk (knee). Roschon Johnson trending. Value if he slides past 48.",
  "travisetienne": "Now in NO. Kamara (knee) not ready, so Etienne opens as the lead back.",
- "davidmontgomery": "Now a Texan. Available at 48 about 47%. Goal-line role in a real offense.",
+ "davidmontgomery": "Now a Texan. Goal-line role in a real offense; the sim's favorite RB at 48/49.",
  "buckyirving": "TB lead back; ADP 46.",
  "camskattebo": "Sleeper drafters take him at 35 (ECR 54). Early-down role with Tracy/Singletary on passing downs. Overpriced at ADP; fine at 48+.",
- "quinshonjudkins": "CLE lead back, year 2. Available at 48 about 73%.",
+ "quinshonjudkins": "CLE lead back, year 2. Usually still there at 48/49.",
  "rasheerice": "No suspension (Rapoport, Aug 12). Offseason knee surgery + a jail stint. Top-12 upside, real risk. Sleeper ADP 29, FFC 18.",
  "lutherburden": "Grade-1 groin, cleared. Bears WR with Loveland/Odunze; ECR 49, Sleeper ADP 59. The sim's favorite at pick 49.",
- "terrymclaurin": "Age 30. Available at 48 about 83%.",
+ "terrymclaurin": "Age 30. The accurate experts fade him (new target competition); usually there at 48/49.",
  "jamesonwilliams": "Boom/bust WR2 in DET. FFC 37, Sleeper 57.",
- "christianwatson": "Available at 48 about 97%. GB WR1 role.",
+ "christianwatson": "GB WR1 role; almost always there at 48/49.",
  "mikeevans": "Now a 49er, age 33. Two quad injuries + groin in camp; questionable but expected Thu. Sleeper proj 185 vs ECR-implied 162.",
  "emekaegbuka": "Toe sprain (not turf toe); returned Mon, trending to play. DATA: foot/toe returns show no lasting drop (0.98) but Q-tag games with foot/toe run ~70%. Godwin is the pivot if he sits.",
  "davanteadams": "Age 33, LAR. ADP falling.",
@@ -82,10 +82,10 @@ NOTES = {
  "tylerwarren": "Groin was minor; unrestricted.",
  "colstonloveland": "Year-2 Bears TE, TE3 by projection; ECR sd 12 (experts split).",
  "patrickmahomes": "ACL/LCL Dec 2025. Full participant since July, says on track for W1. QB15 price; run-heavy plan early.",
- "jaydendaniels": "QB6 by projection; available at 72 about 63%.",
- "jalenhurts": "QB4; available at 72 about 37%.",
- "trevorlawrence": "QB7; available at 72 about 99%, at 96 about 73%. The QB the sim actually lands.",
- "calebwilliams": "QB8; available at 72 about 90%.",
+ "jaydendaniels": "QB6 by projection. The QB window is 72/73; odds in the Next? column.",
+ "jalenhurts": "QB4 by projection; 2025's biggest draft win in this league (bogeman, R3). Window 72/73.",
+ "trevorlawrence": "QB7 by projection; the QB the sim actually lands at 96 if you wait.",
+ "calebwilliams": "QB8 by projection; usually there at 72/73.",
  "kylemonangai": "Hyperextended knee; wk-to-wk, maybe W2.",
  "michaelpenix": "Inactive W1 (knee). Tua starts for ATL.",
  "jordyntyson": "NO rookie WR; short-term IR, 4-8 weeks. Do not draft.",
@@ -139,6 +139,7 @@ for _, r in out.iterrows():
         inj=r.injury if pd.notna(r.injury) else None, injpart=r.injury_part if pd.notna(r.injury_part) else None,
         ppg25=f(r.ppg_2025), g25=i(r.g_2025), age=i(r.age), note=NOTES.get(r.name_key),
         tag=TAG_OF.get(r.name_key),
+        ph={int(c[2:]): f(r[c], 3) for c in b.columns if c.startswith("ph") and c[2:].isdigit() and pd.notna(r[c])} or None,
     ))
 meta = dict(repl={"QB": 292.2, "RB": 138.6, "WR": 139.0, "TE": 128.6, "K": 104.2, "DEF": 87.0},
             my_picks=[1, 24, 25, 48, 49, 72, 73, 96, 97, 120, 121, 144, 145, 168, 169],

@@ -313,19 +313,25 @@ else:
     USE_HISTORY = False
 
 
-def run_sim(policy_name, n_sims=300):
+def run_sim(policy_name, n_sims=300, ghost_me=False):
+    """ghost_me: my picks do not remove players from the pool, so avail_at records
+    the true counterfactual 'if I pass on him, does the room leave him for me'."""
     kind, script = POLICIES[policy_name]
     scores, rosters, avail_at = [], [], {pk: [] for pk in MY_PICKS}
     for _ in range(n_sims):
         boards = [np.argsort(adp_arr + SHIFT[t] + rng.normal(0, 1, n) * sd_arr * SD_MULT[t]) for t in range(N_TEAMS)]
         ptr = [0] * N_TEAMS
         avail = np.ones(n, bool)
+        # Counterfactual availability for the war-room page: who the ROOM has
+        # left alone by each of my picks, ignoring my own selections, so a
+        # player I usually take at 25 still shows his true odds of lasting to 48.
+        avail_opp = np.ones(n, bool)
         counts = [dict.fromkeys(POS, 0) for _ in range(N_TEAMS)]
         mine = []
         for k, (rnd, team) in enumerate(ORDER):
             pick_no = k + 1
             if team == ME:
-                avail_at[pick_no].append(np.where(avail)[0].copy())
+                avail_at[pick_no].append(np.where(avail_opp)[0].copy())
                 nxt = next((q for q in MY_PICKS if q > pick_no), 200)
                 i = my_choice(kind, avail, counts[ME], rnd, pick_no, nxt, script.get(rnd))
                 if i is None:
@@ -346,10 +352,13 @@ def run_sim(policy_name, n_sims=300):
                 if rnd == 15 and counts[team]["DEF"] == 0:
                     dd = pos_idx["DEF"][avail[pos_idx["DEF"]]]
                     if len(dd): i = dd[np.argmax(proj_arr[dd])]
-            avail[i] = False
+            if not (team == ME and ghost_me):
+                avail[i] = False
             counts[team][pos_arr[i]] += 1
             if team == ME:
                 mine.append(i)
+            else:
+                avail_opp[i] = False
         scores.append(lineup_points(mine))
         rosters.append(mine)
     return np.array(scores), rosters, avail_at
@@ -378,6 +387,18 @@ if __name__ == "__main__":
         print(f"{name:14s} mean {sc.mean():7.1f}  p10 {np.percentile(sc, 10):7.1f}  p90 {np.percentile(sc, 90):7.1f}")
     best = max(results, key=lambda k: results[k][0].mean())
     sc, ro, av = results[best]
+    # History-aware survival odds at each of my picks, from a larger run of the
+    # best policy; exported as ph{pick} columns for the war-room page.
+    n_avail = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
+    _, _, av_big = run_sim(best, n_avail, ghost_me=True)
+    for pk in MY_PICKS:
+        cnt = np.zeros(n)
+        for arr in av_big[pk]:
+            cnt[arr] += 1
+        ph = pd.Series(cnt / max(1, len(av_big[pk])), index=sim.name_key)
+        board[f"ph{pk}"] = board.name_key.map(ph).fillna(0.0).round(3)
+    board.to_csv(OUTPUTS / "draft2026_board.csv", index=False)
+    print(f"\nExported ph{{pick}} survival odds from {n_avail} history-aware drafts ({best}, ghost-me counterfactual).")
     print(f"\nBest policy: {best}. Most common picks by round:")
     for r, pk in enumerate(MY_PICKS, 1):
         c = pd.Series([sim.name[m[r - 1]] + " (" + sim.pos[m[r - 1]] + ")" for m in ro]).value_counts(normalize=True).head(5)
