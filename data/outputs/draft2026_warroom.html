@@ -135,6 +135,7 @@ td.vor{font-family:"Barlow Condensed",sans-serif;font-size:18px;font-weight:700}
 .tag.regress{color:var(--warn);border-color:var(--warn)}
 tr.gone .tag{color:var(--gone);border-color:var(--gone)}
 .chip.tagf.on{background:var(--good);border-color:var(--good);color:#06211d}
+.chip.modef.on{background:var(--amber);border-color:var(--amber);color:var(--amber-ink)}
 .chip.tagf[data-tag="avoid"].on{background:var(--bad);border-color:var(--bad);color:#2b0808}
 .btn.confirm{background:var(--bad);color:#fff;border-color:var(--bad)}
 .inj{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--warn);margin-left:6px;vertical-align:middle}
@@ -235,6 +236,11 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
       <button class="chip tagf" data-tag="sleepers" title="usage + experts chips">Sleepers</button>
       <button class="chip tagf" data-tag="avoid" title="avoid + regress chips">Avoid</button>
       <span class="spacer"></span>
+      <span class="legend">Odds:</span>
+      <button class="chip modef" data-mode="adp" title="Market only: blended Sleeper/FFC ADP with a fitted spread">ADP</button>
+      <button class="chip modef on" data-mode="room" title="This room: 1,000 simulated drafts using each manager's 2023-25 tendencies">Room</button>
+      <button class="chip modef" data-mode="hybrid" title="Weighted blend of the two">Hybrid</button>
+      <label class="legend" id="wLabel" hidden>room <span id="wVal">50</span>% <input type="range" id="wRange" min="0" max="100" step="5" value="50" style="vertical-align:middle;width:90px"></label>
       <label class="legend"><input type="checkbox" id="hideGone" checked> hide drafted</label>
       <label class="legend"><input type="checkbox" id="showNotes" checked> notes</label>
     </div>
@@ -272,7 +278,7 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
     <h2>House rules</h2>
     <ul class="rules">
       <li><b>Sort is VOR</b>: points over the 12-team replacement starter (RB33 / WR41 / TE13 / QB13 under this roster). It already prices half-PPR and the two flex slots.</li>
-      <li><b>Next?</b> is the chance the player survives to your next pick, recomputed as picks are logged.</li>
+      <li><b>At N?</b> is the chance the player survives to your next pick, recomputed as picks are logged. <b>Odds</b> switches the model: <b>ADP</b> is the market alone; <b>Room</b> is 1,000 simulated drafts with each manager's 2023-25 tendencies (TEs early, RBs late); <b>Hybrid</b> blends them by the slider. Room history is one to three seasons per manager, so Hybrid at 50-70% room is the sober default.</li>
       <li>Tier breaks are FantasyPros consensus. Reach across a tier break only when the Next? column says the tier will be gone.</li>
       <li>Two QBs on the clock at the same time: QB4&ndash;QB12 sit within 15 points of each other. Wait.</li>
       <li>K and DEF: last two picks, no exceptions.</li>
@@ -308,10 +314,10 @@ const DATA = {"meta":{"repl":{"QB":292.2,"RB":138.6,"WR":139.0,"TE":128.6,"K":10
     if (pn <= 1e-12) return 0;
     return Math.max(0, Math.min(1, pUncond(p, pick) / pn));
   }
-  // Prefer simulated survival odds p.ph = {myPick: prob} (history-aware Monte
-  // Carlo) conditioned on the last of my picks already passed; fall back to the
-  // ADP model when the sim gave this player no chance of being here (he fell).
-  function pAvail(p, pick, now, MY) {
+  // Room model: simulated survival odds p.ph = {myPick: prob} (history-aware
+  // Monte Carlo) conditioned on the last of my picks already passed; falls back
+  // to the ADP model when the sim gave this player no chance of being here.
+  function pAvailRoom(p, pick, now, MY) {
     if (pick <= now) return 1;
     const ph = p.ph;
     if (ph && MY && ph[pick] != null) {
@@ -321,6 +327,16 @@ const DATA = {"meta":{"repl":{"QB":292.2,"RB":138.6,"WR":139.0,"TE":128.6,"K":10
       if (base > 0.02) return Math.max(0, Math.min(1, ph[pick] / base));
     }
     return pAvailAdp(p, pick, now);
+  }
+  // opts.mode: "room" (default) | "adp" | "hybrid" (w = weight on the room, default 0.5)
+  function pAvail(p, pick, now, MY, opts) {
+    const mode = (opts && opts.mode) || "room";
+    if (mode === "adp") return pAvailAdp(p, pick, now);
+    if (mode === "hybrid") {
+      const w = opts.w == null ? 0.5 : Math.max(0, Math.min(1, opts.w));
+      return w * pAvailRoom(p, pick, now, MY) + (1 - w) * pAvailAdp(p, pick, now);
+    }
+    return pAvailRoom(p, pick, now, MY);
   }
   const curPick = (state) => state.picks.length + (state.offset || 0) + 1;
   function nextMine(state, MY) {
@@ -363,7 +379,8 @@ const DATA = {"meta":{"repl":{"QB":292.2,"RB":138.6,"WR":139.0,"TE":128.6,"K":10
     const c = curPick(state), nm = nextTarget(state, MY);
     const taken = new Map(state.picks.map((x) => [x.id, !!x.mine]));
     const q = (o.query || "").trim().toLowerCase();
-    let list = players.map((p) => ({ p, gone: taken.has(p.id), mine: taken.get(p.id) === true, pnext: nm ? pAvail(p, nm, c, MY) : 0 }));
+    const oo = { mode: o.mode, w: o.w };
+    let list = players.map((p) => ({ p, gone: taken.has(p.id), mine: taken.get(p.id) === true, pnext: nm ? pAvail(p, nm, c, MY, oo) : 0 }));
     if (o.filterPos && o.filterPos !== "ALL") list = list.filter((x) => x.p.pos === o.filterPos);
     if (o.filterTag) list = list.filter((x) => TAG_SETS[o.filterTag].includes(x.p.tag));
     if (q) list = list.filter((x) => x.p.name.toLowerCase().includes(q) || (x.p.team || "").toLowerCase() === q);
@@ -387,7 +404,7 @@ const DATA = {"meta":{"repl":{"QB":292.2,"RB":138.6,"WR":139.0,"TE":128.6,"K":10
       },
     };
   }
-  return { Phi, pAvail, curPick, nextMine, nextTarget, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
+  return { Phi, pAvail, pAvailAdp, pAvailRoom, curPick, nextMine, nextTarget, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
 });
 
 </script>
@@ -404,6 +421,10 @@ const LS = "war-room-1389720742551093249";
 let state = {picks:[], offset:0}; // picks: [{id, mine:boolean}] in draft order; {id:null} = a skipped (unlogged) pick
 try{ const s = localStorage.getItem(LS); if(s) state = JSON.parse(s); }catch(e){}
 state.picks = Array.isArray(state.picks) ? state.picks : []; state.offset = state.offset || 0;
+state.mode = ["adp","room","hybrid"].includes(state.mode) ? state.mode : "room";
+state.w = (typeof state.w === "number" && state.w >= 0 && state.w <= 1) ? state.w : 0.5;
+const oddsOpts = () => ({mode: state.mode, w: state.w});
+const MODE_LABEL = {adp:"ADP", room:"room", hybrid:"hybrid"};
 function save(){ try{ localStorage.setItem(LS, JSON.stringify(state)); }catch(e){} }
 
 let filterPos = "ALL", filterTag = null, sortKey="vor", sortDir=-1, query="", limit=90;
@@ -465,7 +486,7 @@ function fmtPlan(text){
     if(!p) return name;
     if(t.has(p.id)) return `<s>${name}</s>`;
     if(pk <= c) return name;                       // that pick is now or past: he is simply there
-    return `${name} (${Math.round(pAvail(p, pk, c, MY)*100)}%)`;
+    return `${name} (${Math.round(pAvail(p, pk, c, MY, oddsOpts())*100)}%)`;
   });
 }
 function planHTML(){
@@ -502,7 +523,7 @@ function stripHTML(){
   cards.push(`<div class="card ${onClock?"hot":""}"><div class="k">${onClock?"You are on the clock":"Picks until yours"}</div><div class="v">${onClock?"Pick now":(mineNow?mineNow-c:"—")}<small> ${mineNow?`· pick ${mineNow}${nm?` · odds below are for pick ${nm}`:""}`:"draft over"}</small></div></div>`);
   for(const pos of ["RB","WR","TE","QB"]){
     const b = best(pos); if(!b) continue;
-    const pn = nm ? pAvail(b, nm, c, MY) : 0;
+    const pn = nm ? pAvail(b, nm, c, MY, oddsOpts()) : 0;
     // tier scarcity: how many of tiers 1-4 are left at this position
     const left = [1,2,3,4].map(t=>avail.filter(p=>p.pos===pos && p.tier===t).length);
     const tiers = left.map((n,i)=>`T${i+1} ${n}`).join(" · ");
@@ -516,7 +537,7 @@ function rowsHTML(){
   const hideGone = document.getElementById("hideGone").checked;
   const showNotes = document.getElementById("showNotes").checked;
   const q = query.trim().toLowerCase();
-  const list = DL.filterSort(P, state, MY, {filterPos, filterTag, sortKey, sortDir, query, hideGone});
+  const list = DL.filterSort(P, state, MY, {filterPos, filterTag, sortKey, sortDir, query, hideGone, mode: state.mode, w: state.w});
   const shown = q? list : list.slice(0,limit);
   let lastTier=null; let h="";
   shown.forEach((x,i)=>{
@@ -555,7 +576,12 @@ function render(){
   document.getElementById("myNextIn").textContent = nm? (nm===c?"· on the clock":`· in ${nm-c}`):"";
   document.getElementById("strip").innerHTML = stripHTML();
   const tgt = DL.nextTarget(state, MY);
-  document.getElementById("nextHead").textContent = tgt ? `At ${tgt}?` : "Next?";
+  const modeTxt = state.mode==="hybrid" ? `hybrid ${Math.round(state.w*100)}%` : MODE_LABEL[state.mode];
+  document.getElementById("nextHead").textContent = tgt ? `At ${tgt}? (${modeTxt})` : "Next?";
+  document.querySelectorAll(".chip.modef").forEach(x=>x.classList.toggle("on", x.dataset.mode===state.mode));
+  document.getElementById("wLabel").hidden = state.mode!=="hybrid";
+  document.getElementById("wVal").textContent = Math.round(state.w*100);
+  document.getElementById("wRange").value = Math.round(state.w*100);
   document.getElementById("rows").innerHTML = rowsHTML();
   const r = rosterHTML(), pl = planHTML();
   document.getElementById("rosterPanel").innerHTML = r;
@@ -593,6 +619,8 @@ document.querySelectorAll(".chip[data-pos]").forEach(ch=>ch.addEventListener("cl
   document.querySelectorAll(".chip[data-pos]").forEach(x=>x.classList.remove("on")); ch.classList.add("on");
   filterPos = ch.dataset.pos; limit=90; render();
 }));
+document.querySelectorAll(".chip.modef").forEach(ch=>ch.addEventListener("click",()=>{ state.mode = ch.dataset.mode; save(); render(); }));
+document.getElementById("wRange").addEventListener("input", e=>{ state.w = (+e.target.value)/100; save(); render(); });
 document.querySelectorAll(".chip.tagf").forEach(ch=>ch.addEventListener("click",()=>{
   const on = ch.classList.contains("on");
   document.querySelectorAll(".chip.tagf").forEach(x=>x.classList.remove("on"));

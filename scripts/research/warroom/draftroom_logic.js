@@ -19,10 +19,10 @@
     if (pn <= 1e-12) return 0;
     return Math.max(0, Math.min(1, pUncond(p, pick) / pn));
   }
-  // Prefer simulated survival odds p.ph = {myPick: prob} (history-aware Monte
-  // Carlo) conditioned on the last of my picks already passed; fall back to the
-  // ADP model when the sim gave this player no chance of being here (he fell).
-  function pAvail(p, pick, now, MY) {
+  // Room model: simulated survival odds p.ph = {myPick: prob} (history-aware
+  // Monte Carlo) conditioned on the last of my picks already passed; falls back
+  // to the ADP model when the sim gave this player no chance of being here.
+  function pAvailRoom(p, pick, now, MY) {
     if (pick <= now) return 1;
     const ph = p.ph;
     if (ph && MY && ph[pick] != null) {
@@ -32,6 +32,16 @@
       if (base > 0.02) return Math.max(0, Math.min(1, ph[pick] / base));
     }
     return pAvailAdp(p, pick, now);
+  }
+  // opts.mode: "room" (default) | "adp" | "hybrid" (w = weight on the room, default 0.5)
+  function pAvail(p, pick, now, MY, opts) {
+    const mode = (opts && opts.mode) || "room";
+    if (mode === "adp") return pAvailAdp(p, pick, now);
+    if (mode === "hybrid") {
+      const w = opts.w == null ? 0.5 : Math.max(0, Math.min(1, opts.w));
+      return w * pAvailRoom(p, pick, now, MY) + (1 - w) * pAvailAdp(p, pick, now);
+    }
+    return pAvailRoom(p, pick, now, MY);
   }
   const curPick = (state) => state.picks.length + (state.offset || 0) + 1;
   function nextMine(state, MY) {
@@ -74,7 +84,8 @@
     const c = curPick(state), nm = nextTarget(state, MY);
     const taken = new Map(state.picks.map((x) => [x.id, !!x.mine]));
     const q = (o.query || "").trim().toLowerCase();
-    let list = players.map((p) => ({ p, gone: taken.has(p.id), mine: taken.get(p.id) === true, pnext: nm ? pAvail(p, nm, c, MY) : 0 }));
+    const oo = { mode: o.mode, w: o.w };
+    let list = players.map((p) => ({ p, gone: taken.has(p.id), mine: taken.get(p.id) === true, pnext: nm ? pAvail(p, nm, c, MY, oo) : 0 }));
     if (o.filterPos && o.filterPos !== "ALL") list = list.filter((x) => x.p.pos === o.filterPos);
     if (o.filterTag) list = list.filter((x) => TAG_SETS[o.filterTag].includes(x.p.tag));
     if (q) list = list.filter((x) => x.p.name.toLowerCase().includes(q) || (x.p.team || "").toLowerCase() === q);
@@ -98,5 +109,5 @@
       },
     };
   }
-  return { Phi, pAvail, curPick, nextMine, nextTarget, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
+  return { Phi, pAvail, pAvailAdp, pAvailRoom, curPick, nextMine, nextTarget, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
 });

@@ -39,6 +39,25 @@ test("pAvail prefers simulated survival odds (ph) when the player has them", () 
   assert.equal(L.pAvail({adp:30, adp_sd:4}, 25, 25), 1);
 });
 
+test("odds mode: adp ignores the room, room uses it, hybrid blends by weight", () => {
+  const p = {adp:20, adp_sd:3, ph:{1:1, 24:0.4, 25:0.3, 48:0.02}};
+  const adp = L.pAvail(p, 24, 1, MY, {mode:"adp"});
+  const room = L.pAvail(p, 24, 1, MY, {mode:"room"});
+  assert.ok(Math.abs(adp - L.pAvailAdp(p, 24, 1)) < 1e-12);   // pure market model
+  assert.equal(room, 0.4);                                    // pure history
+  const hy = L.pAvail(p, 24, 1, MY, {mode:"hybrid", w:0.25});  // 25% room, 75% market
+  assert.ok(Math.abs(hy - (0.25*0.4 + 0.75*adp)) < 1e-12);
+  assert.ok(Math.abs(L.pAvail(p, 24, 1, MY, {mode:"hybrid", w:1}) - room) < 1e-12);
+  assert.ok(Math.abs(L.pAvail(p, 24, 1, MY, {mode:"hybrid", w:0}) - adp) < 1e-12);
+  // default (no options) stays the room model with ADP fallback
+  assert.equal(L.pAvail(p, 24, 1, MY), 0.4);
+  // filterSort passes the mode through
+  const players = [{...p, id:"a", name:"a", pos:"RB", proj:150, vor:50, team:"X"}];
+  const s = {picks:[], offset:0};
+  assert.ok(Math.abs(L.filterSort(players, s, MY, {mode:"adp"})[0].pnext - adp) < 1e-12);
+  assert.ok(Math.abs(L.filterSort(players, s, MY, {mode:"hybrid", w:0.5})[0].pnext - (0.5*0.4+0.5*adp)) < 1e-12);
+});
+
 test("current pick counts logged picks plus unlogged offset", () => {
   assert.equal(L.curPick({picks:[], offset:0}), 1);
   assert.equal(L.curPick({picks:[{id:"a"},{id:"b"}], offset:0}), 3);
