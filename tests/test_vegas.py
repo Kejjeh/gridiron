@@ -100,13 +100,16 @@ def test_volume_function_reproduces_league_mean_at_pickem():
     assert league_mean_pass_attempts(0, 44.06) == pytest.approx(32.8, abs=0.1)
 
 
+FULL_PPR = ScoringRules(reception=1.0)
+
+
 def test_positional_points_per_target_full_and_half_ppr():
-    assert points_per_target("WR") == pytest.approx(1.719, abs=0.002)
-    assert points_per_target("TE") == pytest.approx(1.753, abs=0.002)
-    assert points_per_target("RB") == pytest.approx(1.545, abs=0.002)
-    half = ScoringRules(reception=0.5)
-    assert points_per_target("WR", half) == pytest.approx(1.404, abs=0.002)
-    assert points_per_target("RB", half) == pytest.approx(1.153, abs=0.002)
+    assert points_per_target("WR", FULL_PPR) == pytest.approx(1.719, abs=0.002)
+    assert points_per_target("TE", FULL_PPR) == pytest.approx(1.753, abs=0.002)
+    assert points_per_target("RB", FULL_PPR) == pytest.approx(1.545, abs=0.002)
+    # DEFAULT_SCORING is the verified league scoring: half-PPR
+    assert points_per_target("WR") == pytest.approx(1.404, abs=0.002)
+    assert points_per_target("RB") == pytest.approx(1.153, abs=0.002)
 
 
 def test_points_per_carry():
@@ -116,7 +119,7 @@ def test_points_per_carry():
 def test_worked_example_wr_24pct_share():
     targets = 0.24 * league_mean_targets(-3, 47)
     assert targets == pytest.approx(7.59, abs=0.01)
-    flat = targets * points_per_target("WR")
+    flat = targets * points_per_target("WR", FULL_PPR)  # the doc's example is full PPR
     assert flat == pytest.approx(13.04, abs=0.02)
     scaled = flat * receiving_efficiency_multiplier(25.0)
     assert scaled == pytest.approx(13.99, abs=0.03)

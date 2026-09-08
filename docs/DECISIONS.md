@@ -27,3 +27,8 @@ ledger is data (`data/ledger/`), not this file.
 | 2026-09-04 | Treat the flex as a WR slot when shaping replacement level (~10 of 12 flex slots are WR in full PPR) | order-statistic fill on 2023-25 (§6.2); revisit if the league is half-PPR |
 | 2026-09-04 | FAAB: never bid 10-19% of budget; bid $1 above focal round numbers; expect optimal bids to RISE through the season | dead-zone clearing data + shadow-price dynamic program (§7) |
 | 2026-09-04 | The §5-7 verifier SCRIPTS are committed and re-runnable even though their agents were killed; their pass/fail counts are the doc's evidence of record | 381/382, 177/12, 66/9 — better than no verification, worse than a reconciled one |
+| 2026-09-08 | League settings VERIFIED from the Sleeper API: 12-team half-PPR, INT −1, QB/2RB/2WR/TE/2FLEX/K/DEF + 5 BN + 1 IR, 15-round snake, slot 1 | `pull_sleeper.py`; `SETTINGS_VERIFIED=True` flipped in the same commit as the values |
+| 2026-09-08 | `DEFAULT_SCORING` IS the league's rules; tests needing full-PPR pass `ScoringRules(reception=1.0)` explicitly | rule #2 — one implementation, real weights |
+| 2026-09-08 | Draft projections = ½ Sleeper stat-line (scored in-repo) + ½ ECR-implied points; replacement by lineup order-statistic fill (RB33/WR41/TE13/QB13) | `draft_board_2026.py`; FantasyPros projection pages are JS-paginated |
+| 2026-09-08 | Draft availability uses a 60/40 Sleeper/FFC ADP blend with sd = 0.57 + 0.11·ADP | the room drafts on Sleeper; sd fitted on FFC per-player spread |
+| 2026-09-08 | Draft policy: best static VOR each pick, K/DEF last two rounds; elite TE at the 2/3 turn | beat scripted RB/WR openings by ~100 lineup pts over 300 sims (`DRAFT_2026_PLAN.md`) |

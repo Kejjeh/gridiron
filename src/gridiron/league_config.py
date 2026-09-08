@@ -1,10 +1,10 @@
 """SEASON_YEAR + league constants. Season rollover = bump ONE number here.
 
-STATUS: PLACEHOLDER. Roster slots and scoring below are a standard 12-team
-PPR guess. Before build step 3 (first projection model), pull the REAL
-league settings from the platform and flip SETTINGS_VERIFIED to True in the
-same commit that corrects these values. Downstream engines must refuse to
-ship outputs while SETTINGS_VERIFIED is False.
+STATUS: VERIFIED 2026-09-08 against the Sleeper API (league 1389720742551093249,
+"Take Mahomes, Country Road") and Josh's settings screenshots. Every value
+below was read from `scoring_settings` / `roster_positions` on the league
+object; the pull script is scripts/research/pull_sleeper.py and the raw JSON
+is cached (gitignored) under data/research/cache/draft2026/.
 """
 from __future__ import annotations
 
@@ -12,40 +12,58 @@ from dataclasses import dataclass
 
 SEASON_YEAR = 2026
 
-# Which platform hosts the league. "espn" or "sleeper" — verify, don't guess
-# from habit (bootstrap doc §3: Sleeper needs no auth and is much nicer).
-PLATFORM = "espn"  # TODO: verify
+# Which platform hosts the league. Sleeper: public read API, no auth needed.
+PLATFORM = "sleeper"
+LEAGUE_NAME = "Take Mahomes, Country Road"
 
-SETTINGS_VERIFIED = False  # flip only after checking the platform's settings
+SETTINGS_VERIFIED = True  # flipped 2026-09-08 in the same commit as the values below
 
 NUM_TEAMS = 12
 
-# Starting lineup slots. FLEX eligibility matters for replacement level
-# (bootstrap doc §2) — keep it explicit, never inferred.
+# Starting lineup slots, straight from Sleeper roster_positions:
+# QB RB RB WR WR TE FLEX FLEX K DEF + 5 BN (+1 IR slot, not a roster slot).
 ROSTER_SLOTS: dict[str, int] = {
     "QB": 1,
     "RB": 2,
     "WR": 2,
     "TE": 1,
-    "FLEX": 1,  # RB/WR/TE
+    "FLEX": 2,  # RB/WR/TE
     "DST": 1,
     "K": 1,
-    "BENCH": 7,
+    "BENCH": 5,
 }
+IR_SLOTS = 1
 FLEX_ELIGIBLE: tuple[str, ...] = ("RB", "WR", "TE")
+
+# Draft: snake, 15 rounds, 60 s pick clock, Josh holds slot 1 of 12.
+DRAFT_ROUNDS = 15
+DRAFT_TYPE = "snake"
+MY_DRAFT_SLOT = 1
+
+# Season shape (rule #8): waivers clear Wed 3 AM ET, 2-day waiver period,
+# trade deadline after week 13, 6-team playoffs starting week 15.
+PLAYOFF_TEAMS = 6
+PLAYOFF_START_WEEK = 15
+TRADE_DEADLINE_WEEK = 13
+REGULAR_SEASON_WEEKS = 14
 
 
 @dataclass(frozen=True)
 class ScoringRules:
     """Point weights for offensive stats. Frozen so nothing mutates scoring
-    mid-pipeline; a rules change is a new instance and a new commit."""
+    mid-pipeline; a rules change is a new instance and a new commit.
+
+    Sleeper keys, for the record: pass_yd .04, pass_td 4, pass_int -1,
+    rush_yd .1, rush_td 6, rec .5, rec_yd .1, rec_td 6, fum_lost -2,
+    pass_2pt / rush_2pt / rec_2pt 2. No yardage or long-TD bonuses.
+    """
 
     pass_yd: float = 0.04          # 1 pt / 25 yards
     pass_td: float = 4.0
-    interception: float = -2.0
+    interception: float = -1.0     # Sleeper default, NOT the ESPN -2
     rush_yd: float = 0.1           # 1 pt / 10 yards
     rush_td: float = 6.0
-    reception: float = 1.0         # PPR — verify (0.5 leagues are common)
+    reception: float = 0.5         # HALF-PPR (highlighted as non-standard on Sleeper)
     rec_yd: float = 0.1
     rec_td: float = 6.0
     fumble_lost: float = -2.0
@@ -53,3 +71,19 @@ class ScoringRules:
 
 
 DEFAULT_SCORING = ScoringRules()
+
+# Kicker / team-defense weights are Sleeper's defaults, verified identical to
+# the league. Kept as plain dicts keyed by Sleeper stat name because nothing
+# in nflverse weekly data carries these as columns.
+KICKING_SCORING: dict[str, float] = {
+    "fgm_0_19": 3.0, "fgm_20_29": 3.0, "fgm_30_39": 3.0, "fgm_40_49": 4.0,
+    "fgm_50p": 5.0, "xpm": 1.0, "fgmiss": -1.0, "xpmiss": -1.0,
+}
+DEFENSE_SCORING: dict[str, float] = {
+    "def_td": 6.0, "sack": 1.0, "int": 2.0, "fum_rec": 2.0, "safe": 2.0,
+    "ff": 1.0, "blk_kick": 2.0, "def_st_td": 6.0, "def_st_ff": 1.0,
+    "def_st_fum_rec": 1.0, "st_td": 6.0, "st_ff": 1.0, "st_fum_rec": 1.0,
+    "pts_allow_0": 10.0, "pts_allow_1_6": 7.0, "pts_allow_7_13": 4.0,
+    "pts_allow_14_20": 1.0, "pts_allow_21_27": 0.0, "pts_allow_28_34": -1.0,
+    "pts_allow_35p": -4.0,
+}

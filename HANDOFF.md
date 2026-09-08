@@ -1,83 +1,58 @@
 # HANDOFF
 
-Updated: 2026-09-04 (research/math session; build step 1 done, and step 3's
-shape settled by research before step 2 starts)
+Updated: 2026-09-08 (draft-day session; league settings verified, draft
+board + Monte Carlo built, war-room artifact published)
 
 ## State
 
-**Code** — `python scripts/ci/smoke.py` green; 9 contract files, 73 tests:
-- Bootstrap skeleton from 09-03: paths/config/league_config/scoring/espn,
-  the three ported CI scripts, the CLAUDE.md budget ratchet, 12 rules.
-- Pure-math modules, each with implementation-independent tests:
-  - `winprob.py` — Φ closed form, leverage-per-point, the variance-flip
-    derivative (both derivatives pinned against finite differences).
-  - `shrinkage.py` — empirical-Bayes posterior, reliability→n₀ conversion,
-    method-of-moments Beta fit, plus the §5 priors (marked UNVERIFIED).
-  - `season.py` — exact Poisson-binomial win distribution and the playoff
-    leverage identity `P(playoffs|win) − P(playoffs|lose) = pmf_rest(k−1)`.
-  - `vegas.py` — implied-total identity, nflverse sign conversion, and the
-    verified line→scoring/efficiency coefficients with the worked example
-    pinned to the verifier's own recomputation.
+**League settings are VERIFIED** (`league_config.SETTINGS_VERIFIED = True`).
+Platform Sleeper, league 1389720742551093249 (id in `.env`, pulled by
+`scripts/research/pull_sleeper.py`). 12 teams, half-PPR, INT −1,
+QB/2RB/2WR/TE/2FLEX/K/DEF + 5 BN + 1 IR, 15-round snake, Josh at slot 1.
+Rule #1 no longer blocks; K/DEF weights live in `league_config` as dicts.
 
-**Research** — `docs/research/QUANT_FOUNDATIONS.md`, six domains:
+**Code** — smoke green; 74 tests:
+- Bootstrap skeleton + pure-math modules unchanged (`winprob`, `shrinkage`,
+  `season`, `vegas`). Tests that pinned full-PPR now pass an explicit
+  `ScoringRules(reception=1.0)`; `DEFAULT_SCORING` is the league's rules.
+- `scripts/research/pull_sleeper.py`, `pull_nflverse_2026.py`,
+  `pull_fantasypros.py` — draft-day pulls into `data/research/cache/draft2026/`
+  (gitignored). nflreadpy 0.1.5 works; `load_injuries(2026)` refuses
+  (season cap 2025) and 2026 stats 404 until week 1 lands.
+- `scripts/research/draft_board_2026.py` — projections under league scoring,
+  replacement by lineup fill, VOR, ADP-availability model, 300-draft Monte
+  Carlo. Output committed: `data/outputs/draft2026_board.csv`.
 
-| section | verified? |
-|---|---|
-| §1 Vegas, §2 win probability, §4 data sources | yes — 14 claims were corrected |
-| §3 season leverage | derived in-repo, covered by tests |
-| §5 stabilization | mostly — its script passes 381/382 |
-| §6 VOR | **partly** — 177 pass, 12 fail (flex margin, man-games shifts) |
-| §7 FAAB | **partly** — 66 pass, 9 fail (common-value sim did not converge) |
+**Draft plan** — `docs/research/DRAFT_2026_PLAN.md`. Gibbs at 1; Bowers at
+the 2/3 turn (97% there at 24); static best-VOR beat every scripted opening
+by ~100 lineup points. The live tool is the "1.01 War Room" artifact
+(tracks picks, recomputes survival odds to the next pick, localStorage).
 
-The §5–7 verifier agents were killed by a usage limit *after* writing and
-running their scripts but *before* reconciling results into the prose, so the
-failures above are flagged inline in the doc but not yet fixed. All five
-verifier scripts are committed under `scripts/research/`.
-Research drafts (gitignored, survive interrupted runs):
-`docs/research/drafts/*.md`.
-
-**Five findings that change the plan:**
-1. The Vegas signal reaches receivers 92% through points-per-target, 8%
-   through volume; volume-on-line has zero out-of-sample skill. Step 3's
-   baseline is `usage prior × (positional efficiency × line multiplier)`.
-2. Chasing variance only pays when trailing by ≳6 projected points; the
-   closed-form derivative is wrong-signed at a 5-point deficit.
-3. `nfl_data_py` is dead → `nflreadpy`; betting lines are free in nflverse
-   schedules; snap counts are keyed by PFR id; Sleeper's own gsis ids cover
-   only 20–32% of skill players, so every join goes through `ff_playerids`.
-4. WR/TE target share stabilizes at ~90 team targets (~3 games) while
-   touchdown rate retains only 11% of a top-decile season year over year.
-5. ~10 of the 12 flex slots in a 12-team full-PPR league go to WR, which
-   sets replacement level at RB25–26 / WR34–35 / TE12–13.
-
-## BLOCKING before build step 3
-
-League settings are still guesses (`league_config.SETTINGS_VERIFIED = False`).
-Need: the platform (ESPN or Sleeper) and league id; real scoring and roster
-slots pulled from the platform; `.env` credentials if it is ESPN. Note every
-PPG/points number in §6 and §7 is scoring-dependent — half-PPR alone moves
-2–4 flex slots back to RB.
+**Research** — `docs/research/QUANT_FOUNDATIONS.md` unchanged: §1, §2, §4
+verified; §5–7 partly (381/382, 177/12, 66/9). The half-PPR replacement
+question from §6 was answered empirically today: the 24 flex slots filled
+16 WR / 8 RB on the 2026 projection curve, so replacement = RB33 / WR41 /
+TE13, not the full-PPR RB25 / WR35.
 
 ## Next
 
-1. Reconcile the 21 known §5–7 verification failures (relaunch the persisted
-   workflow with `args: ["stabilization","faab","vor"]`, or just read the
-   scripts' output and fix the prose). The two that matter: the flex-margin
-   replacement level T may be 7.2–9.3 PPG rather than the claimed 11.0, and
-   the man-games QB shift may be −3.2 rather than −1.0. Then drop the
-   UNVERIFIED banner in `shrinkage.py`.
-2. Build step 2 (ingest). nflverse 2023–25 play-by-play and weekly stats are
-   ALREADY cached in `data/research/cache/nflverse/` (gitignored) from the
-   verifier run, so this can start offline. Add `nflreadpy` weekly + snaps
-   (PFR join) + `ff_playerids` crosswalk + schedules lines; write contract
-   tests on column sets, since nflreadpy 0.1.x schemas drift. Pin
-   `pandas>=2.0,<4`.
-3. Build step 3 with the corrected baseline shape; register the pipeline as
-   a `golden_run.py` target.
+1. **After the draft**: log the actual picks (Sleeper `draft/{id}/picks`) to
+   `data/ledger/draft_2026.csv` with the board's projected value at each
+   pick, and grade the room's ADP model (was sd = 0.57 + 0.11·ADP right?).
+2. Build step 2 ingest for the season: nflreadpy weekly + snaps + schedules
+   lines, Sleeper league rosters/matchups each Tuesday. Cached 2023–25 data
+   already exists.
+3. Build step 3 baseline with the corrected shape (usage prior × efficiency ×
+   line multiplier), now with real scoring. Register in `golden_run.py`.
+4. Reconcile the §5–7 verification failures (unchanged from last handoff).
+5. First skills (rule #12): roster-audit and waiver-board are the immediate
+   in-season needs; waivers clear Wed 3 AM ET.
 
 ## Not done deliberately
 
-- No skills yet (rule #12).
-- The research loop was ended at Josh's request.
-- Scratchpad helper for future batches: `split_batch.py <workflow output>
-  <outdir>` turns a workflow result into per-domain markdown.
+- No skills yet.
+- The dynamic VONA policy in the board script underperformed static VOR
+  because its need weights were hand-set; left as-is rather than tuned on
+  draft day.
+- FantasyPros projection pages only render 10 rows server-side; the board
+  used Sleeper projections + ECR-implied points instead.
