@@ -296,11 +296,28 @@ POLICIES = {
     "wr_at_1": ("dynamic", {1: "WR"}),
 }
 
+# Manager-specific behaviour from league history (analyze_competition.py):
+# per draft slot, how many picks EARLIER than the market each manager takes
+# his first QB/TE/RB/WR, and how noisy his board is relative to the league.
+SHIFT = np.zeros((N_TEAMS, n)); SD_MULT = np.ones(N_TEAMS)
+_shift_file = OUTPUTS / "competition_shifts_2026.csv"
+if _shift_file.exists():
+    _sh = pd.read_csv(_shift_file)
+    for _, r in _sh.iterrows():
+        t = int(r.slot) - 1
+        for p in ["QB", "TE", "RB", "WR"]:
+            SHIFT[t, pos_idx[p]] = -float(r[f"{p}_shift"])   # earlier = lower effective ADP
+        SD_MULT[t] = float(r.sd_mult)
+    USE_HISTORY = True
+else:
+    USE_HISTORY = False
+
+
 def run_sim(policy_name, n_sims=300):
     kind, script = POLICIES[policy_name]
     scores, rosters, avail_at = [], [], {pk: [] for pk in MY_PICKS}
     for _ in range(n_sims):
-        boards = [np.argsort(adp_arr + rng.normal(0, 1, n) * sd_arr) for _ in range(N_TEAMS)]
+        boards = [np.argsort(adp_arr + SHIFT[t] + rng.normal(0, 1, n) * sd_arr * SD_MULT[t]) for t in range(N_TEAMS)]
         ptr = [0] * N_TEAMS
         avail = np.ones(n, bool)
         counts = [dict.fromkeys(POS, 0) for _ in range(N_TEAMS)]

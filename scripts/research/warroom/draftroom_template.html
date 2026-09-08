@@ -172,6 +172,15 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
 .pr .tg .alt{color:var(--ink3)}
 .pr.done .tg{color:var(--ink3)}
 
+.room{display:grid;gap:0}
+.rm{display:grid;grid-template-columns:26px 1fr;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);align-items:start}
+.rm:last-child{border-bottom:0}
+.rm .sl{font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:16px;color:var(--ink3);line-height:1.2}
+.rm.now .sl{color:var(--amber)}
+.rm .nm{font-weight:600;font-size:13px}
+.rm .nm small{font-weight:400;color:var(--ink3);margin-left:6px;font-family:"IBM Plex Mono",monospace;font-size:11px}
+.rm .td{color:var(--ink2);font-size:12px;line-height:1.35}
+.rm .td b{color:var(--ink);font-weight:600}
 .rules{margin:0;padding-left:18px;color:var(--ink2);font-size:13px}
 .rules li{margin:4px 0}
 .rules b{color:var(--ink)}
@@ -252,12 +261,13 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
   </div>
 
   <div class="tabpane" data-pane="roster"><div id="rosterMobile"></div></div>
-  <div class="tabpane" data-pane="plan"><div id="planMobile"></div></div>
+  <div class="tabpane" data-pane="plan"><div id="planMobile"></div><div id="roomMobile" style="margin-top:12px"></div></div>
 </div>
 
 <aside class="side" id="sideDesktop">
   <div class="panel" id="rosterPanel"></div>
   <div class="panel" id="planPanel"></div>
+  <div class="panel" id="roomPanel"></div>
   <div class="panel">
     <h2>House rules</h2>
     <ul class="rules">
@@ -327,14 +337,14 @@ function rosterHTML(){
 
 // ---------- plan ----------
 const PLAN = [
-  [1,  "Jahmyr Gibbs", "100% of sims. Bijan is the only other answer."],
-  [24, "Bowers if there (97%); else Nico Collins / Pickens", "Josh Allen only if he is somehow still here AND you are fine waiting on WR."],
-  [25, "Best of: Pickens, Javonte, Olave, Nabers, Kyren, Breece, Love", "If you took a WR at 24, Bowers is still here 79% — take him. McBride is the fallback."],
-  [48, "RB run insurance: Montgomery (47%), Swift (19%), Irving, Judkins (73%)", "Or Waddle / McLaurin / Burden if the RBs are gone. Do not take a QB yet."],
-  [49, "Luther Burden (92%), McLaurin (83%), Watson (97%), Jameson Williams (67%)", "Two WRs across 48/49 is fine if you took Bowers + RB earlier."],
-  [72, "QB window opens: Daniels (63%) / Hurts (37%)", "If both gone, Lawrence (99%) and Caleb (90%) are ~7 pts behind. Otherwise Brian Thomas / MHJ / Metcalf."],
-  [73, "Second RB/WR depth: Stevenson, Warren, Tate, Metcalf", "LaPorta lands here 80% if you missed the TE tier."],
-  [96, "MarShawn Lloyd (GB RB1 while Jacobs is out), Jayden Reed", "Lawrence is still here 73% if you waited on QB."],
+  [1,  "Jahmyr Gibbs", "100% of sims. Bijan is the only other answer. Plan below is from 300 sims that use each manager's 2023-25 tendencies."],
+  [24, "Best RB left: Walker (35%), Jeanty (32%), Hampton (27%); else Nico Collins (41%) / Pickens (65%)", "This room takes TEs early and RBs late: Bowers and McBride are gone before 24 in ~all sims. Allen here only 22%."],
+  [25, "Pickens (63%), Collins (29%), Olave (92%), Nabers (94%), Javonte / Kyren / Hall (~100%)", "Two RBs across the turn is fine: Javonte, Kyren and Hall all reach 25. sallymcbride picks 23 and 26 and opens WR-WR then QB."],
+  [48, "Montgomery (71%), Irving (62%), Judkins (85%), Swift (43%)", "Or Waddle (35%) / Burden if the RBs are gone. Do not take a QB yet."],
+  [49, "Luther Burden, Montgomery (58%), Irving (57%), Judkins (84%)", "Two RBs across 48/49 is fine if you went WR-WR at the turn."],
+  [72, "TE tier 2: LaPorta / Kraft (each ~31%), Warren, Fannin", "Or the QB window: Daniels (83%) / Hurts (72%). Brian Thomas / MHJ / Stevenson are the skill fallbacks."],
+  [73, "QB if you took a TE at 72: Daniels (80%), Hurts (62%), Lawrence (100%)", "Otherwise Metcalf (53%), Carnell Tate (57%), Brian Thomas (36%)."],
+  [96, "Trevor Lawrence (87%) if you still need a QB; else Jayden Reed / Lloyd", "Purdy, Dart, Nix, Mahomes are all ~100% here: the QB floor is deep in this room."],
   [97, "Lloyd / Jordan Mason / Pittman / Quentin Johnston", "Handcuff your RB1 if the price is right (Pacheco is on IR, so Gibbs has no cheap cuff)."],
   [120,"Jalen Coker, Khalil Shakir, Jakobi Meyers, Doubs", "Upside WR bench."],
   [121,"Chris Rodriguez, Deebo, Stribling, Corum", "One-injury-away RBs."],
@@ -345,11 +355,24 @@ const PLAN = [
 ];
 function planHTML(){
   const c = curPick(); const nm = nextMine();
-  let h = `<h2>Slot-1 plan <small>from 300 simulated drafts</small></h2><div class="plan">`;
+  let h = `<h2>Slot-1 plan <small>300 sims with this room's history</small></h2><div class="plan">`;
   PLAN.forEach(([pk,tg,alt],i)=>{
     const rnd = i+1; const cls = pk<c ? "done" : (pk===nm ? "now" : "");
     h += `<div class="pr ${cls}"><div class="pk">${pk}<small>R${rnd}</small></div><div class="tg"><b>${tg}</b>${alt?`<div class="alt">${alt}</div>`:""}</div></div>`;
   });
+  return h+"</div>";
+}
+
+// ---------- the room (from 2023-25 league history) ----------
+function roomHTML(){
+  const c=curPick();
+  const onClock = ((c-1) % 24);                       // 0..23 within a two-round cycle
+  const slotNow = onClock < 12 ? onClock+1 : 24-onClock; // whose pick is it
+  let h = `<h2>The room <small>2023–25 history, slot order</small></h2><div class="room">`;
+  for(const m of (META.room||[])){
+    const cls = m.slot===slotNow && c<=180 ? "now" : "";
+    h += `<div class="rm ${cls}"><div class="sl">${m.slot}</div><div><div class="nm">${m.name}<small>${m.picks}</small></div><div class="td">${m.td}</div></div></div>`;
+  }
   return h+"</div>";
 }
 
@@ -418,6 +441,9 @@ function render(){
   document.getElementById("planPanel").innerHTML = pl;
   document.getElementById("rosterMobile").innerHTML = `<div class="panel">${r}</div>`;
   document.getElementById("planMobile").innerHTML = `<div class="panel">${pl}</div>`;
+  const rm = roomHTML();
+  document.getElementById("roomPanel").innerHTML = rm;
+  document.getElementById("roomMobile").innerHTML = `<div class="panel">${rm}</div>`;
   document.getElementById("foot").textContent = `Data ${META.generated}. ${META.sources}. Projections = ½ Sleeper + ½ expert-consensus-implied, scored with this league's exact rules.`;
 }
 

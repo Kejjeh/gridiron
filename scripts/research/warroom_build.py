@@ -1,4 +1,4 @@
-"""Build the 1.01 War Room page: board CSV + news notes + tags -> one HTML file.
+"""Build the 1.01 War Room page: board CSV + news notes + tags + room -> one HTML file.
 
 Run:  PYTHONPATH=src python scripts/research/warroom_build.py
 Reads data/outputs/draft2026_board.csv (from draft_board_2026.py) and the
@@ -35,16 +35,16 @@ NOTES = {
  "derrickhenry": "Age 32. ECR 20 but Sleeper drafters take him at 14. Justice Hill / Rasheen Ali behind him, healthy.",
  "saquonbarkley": "Age 29, 2025 was a down year (13.2 PPG). Sleeper ADP 10.6 vs ECR 16.",
  "devonachane": "Malik Willis is now the MIA QB (Tua to ATL). Rebuild offense, but he IS the offense.",
- "kennethwalker": "Now a Chief. Foot soreness was shoe-related; W1 ready. Sleeper drafters undervalue him (ADP 18-20).",
- "omarionhampton": "Broke an ankle W5 last year, back. Keaton Mitchell returned to practice Mon; change-of-pace only.",
- "ashtonjeanty": "Low-ankle sprain, questionable but tracking to play W1 with managed snaps. Buy the dip if he slides.",
+ "kennethwalker": "Now a Chief. Foot soreness was shoe-related; W1 ready. RBs slide in this room: reaches 24 in 35% of history-aware sims (ADP alone said 4%). Top target at the turn.",
+ "omarionhampton": "Broke an ankle W5 last year, back. Keaton Mitchell change-of-pace only. Reaches 24 in ~27% of history-aware sims.",
+ "ashtonjeanty": "Low-ankle sprain, questionable but tracking to play W1 with managed snaps. Reaches 24 in ~32% of history-aware sims; buy the dip.",
  "chasebrown": "Sleeper ADP 17 vs FFC 13.6 / ECR 15.",
- "nicocollins": "12.6 PPG in 15 games last year; Sleeper projects 218.",
- "brockbowers": "Elite TE1 by 11 pts over McBride. Cousins + Kubiak = best environment of his career. Sleeper ADP 23.5, FFC 40. On the board at 24 in 97% of sims, at 25 in 79%.",
- "treymcbride": "TE2, 11 behind Bowers, still 57 over replacement. The fallback if Bowers goes.",
- "joshallen": "QB1 by 20 pts. Available at 24 about 55%, at 25 about 7%. QB4-QB12 sit within 15 pts of each other, so waiting is fine.",
+ "nicocollins": "12.6 PPG in 15 games last year; Sleeper projects 218. Reaches 24 ~41%, 25 ~29%: the WR to take at the turn.",
+ "brockbowers": "Elite TE1 by 11 pts over McBride. But THIS ROOM takes TEs early: chaguy2457 (pick 17) took him at 21 last year, glavoile (16) took McBride at 26, MaxSchussler (21) goes TE in R4, SirChadius/pbrady reach for TEs. Gone before 24 in ~all history-aware sims. Only a bonus if he falls.",
+ "treymcbride": "TE2. glavoile (pick 16) took him in R3 two years running. Also gone before 24 in the history-aware sims.",
+ "joshallen": "QB1 by 20 pts. sallymcbride picks 23 and took him at 29 last year; mikedonutgang and glavoile take QBs 9-12 picks early. At 24 only ~22%. QB4-QB12 sit within 15 pts, so wait.",
  "lamarjackson": "QB2. ECR 38, Sleeper ADP 34, FFC 56 - the sources disagree.",
- "georgepickens": "Now a Cowboy. On the board at 24 about 38%, at 25 about 19%.",
+ "georgepickens": "Now a Cowboy. Reaches 24 ~65%, 25 ~63% in the history-aware sims.",
  "chrisolave": "Healthy. Jordyn Tyson (rookie 1st-rounder) on IR 4-8 wks, so Olave is the only target hog in NO.",
  "maliknabers": "ACL Oct 2025; game-time decision W1 vs DAL. ECR 28 with a huge spread (9-47). Expect a slow ramp.",
  "javontewilliams": "14.1 PPG in 2025 for DAL. Sleeper ADP 31, FFC 28.5.",
@@ -143,6 +143,22 @@ meta = dict(repl={"QB": 292.2, "RB": 138.6, "WR": 139.0, "TE": 128.6, "K": 104.2
             my_picks=[1, 24, 25, 48, 49, 72, 73, 96, 97, 120, 121, 144, 145, 168, 169],
             generated="2026-09-08 5:15 PM ET",
             sources="Sleeper projections + ADP, FantasyPros ECR (9/08), FFC ADP (12-team half-PPR, 9/3-9/8, 1,837 drafts), nflverse 2025")
+# The room: one line per manager from 2023-25 league history (analyze_competition.py).
+ROOM = [
+    dict(slot=1, name="Kejjeh (you)", picks="1 · 24 · 25", td="2023 champ. Value drafter (avg 5 picks later than market)."),
+    dict(slot=2, name="sallymcbride", picks="2 · 23 · 26", td="<b>Josh Allen threat at 23</b>: took him at 29 last year, QB by R3-4 both years. WR-WR to open. TE R6-7. 2024 champ. Has never made a waiver claim."),
+    dict(slot=3, name="bogeman", picks="3 · 22 · 27", td="QB R3-4 (Hurts at 36 last year), TE late. Most active manager: 36 waiver claims, $285 FAAB, 3 trades. 4-10 then 7-7."),
+    dict(slot=4, name="MaxSchussler", picks="4 · 21 · 28", td="<b>TE early</b>: round 4 each of the last two years (Kittle at 40), 18 picks ahead of market. QB late. RB-RB to open in 2023-24."),
+    dict(slot=5, name="LaisterSmith", picks="5 · 20 · 29", td="One season. WR R1, QB R3 (Daniels at 35), TE R9. Most rookie-heavy drafter (20% of picks)."),
+    dict(slot=6, name="mikedonutgang200", picks="6 · 19 · 30", td="Defending champ, 12-2, 125 PPG. WR in R1 every year, QB R3-4 (9 picks early), TE R5-7. Never uses waivers."),
+    dict(slot=7, name="clyvejohnson", picks="7 · 18 · 31", td="RB in R1 every year, then QB R4-6 (Burrow at 43), TE R7-9. Drafts at market, never uses waivers. 10-4 last year."),
+    dict(slot=8, name="chaguy2457", picks="8 · 17 · 32", td="<b>Biggest Bowers threat</b>: took him at 21 (R2, 13 picks early) last year. Waits on QB (R11). 9-5, spent his full $100 FAAB."),
+    dict(slot=9, name="glavoile", picks="9 · 16 · 33", td="<b>TE in R3 two years running</b> (McBride at 26). WR in R1 every year. QB 12 picks early. Reach-prone. 3-11 last year."),
+    dict(slot=10, name="reijcage", picks="10 · 15 · 34", td="WR-WR to open, QB late (R4-6, 10 picks after market), TE R7-8. Best PPG in league history (123). 10-4 in 2024."),
+    dict(slot=11, name="pbrady98", picks="11 · 14 · 35", td="RB in R1 every year (Saquon 1.01 last year). TE R5-7 but 16 picks early (LaPorta R5). Takes two QBs by R10. Reach-prone. 5-9."),
+    dict(slot=12, name="SirChadius", picks="12 · 13 · 36", td="Was coochiemoocher22. <b>Biggest reacher</b> in the league (Pitts at 70, 84 picks early; TE in R2 in 2023). QB late. Active: 32 claims, $153 FAAB."),
+]
+meta["room"] = ROOM
 data = dict(meta=meta, players=recs)
 (OUTPUTS / "draft2026_warroom_data.json").write_text(json.dumps(data), encoding="utf-8")
 tpl = (SCR / "draftroom_template.html").read_text(encoding="utf-8")

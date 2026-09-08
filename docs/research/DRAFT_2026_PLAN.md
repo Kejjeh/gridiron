@@ -84,3 +84,26 @@ Most common picks under the winning rule:
   Sleeper 23.5). The 60/40 blend leans Sleeper on purpose.
 - The dynamic policy underperformed static because its need weights were
   hand-set; it is not evidence against dynamic VOR in general.
+
+## Revision: manager history (added 2026-09-08, 7:30 PM)
+
+`analyze_competition.py` profiled every manager from the league's 2023–25
+Sleeper history and `draft_board_2026.py` now shifts each opponent's board
+by how early they take their first QB/TE/RB/WR versus the market of the day
+(`data/outputs/competition_shifts_2026.csv`). Results moved:
+
+| at pick 24 | ADP-only | with history |
+|---|---|---|
+| Bowers | 97% | ~0% |
+| McBride | 99% | ~0% |
+| Josh Allen | 55% | 22% |
+| Kenneth Walker | 4% | 35% |
+| Ashton Jeanty | 4% | 32% |
+| Omarion Hampton | 3% | 27% |
+| Nico Collins | 14% | 41% |
+| George Pickens | 38% | 65% |
+
+The turn is therefore RB/WR, not TE: best RB left (Walker, Jeanty, Hampton)
+or Collins/Pickens at 24, then Pickens/Collins/Olave/Nabers or Javonte/Kyren/
+Hall at 25. TE waits for the LaPorta/Kraft tier at 72; QB for Daniels/Hurts
+at 72–73 or Lawrence at 96. Full room profiles: `COMPETITION_2026.md`.
