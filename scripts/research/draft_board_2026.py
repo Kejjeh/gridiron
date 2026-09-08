@@ -22,6 +22,8 @@ import sys
 import numpy as np
 import pandas as pd
 
+from gridiron.draft import (adp_sd, optimal_lineup, p_available, p_survive,
+                            replacement_levels, snake_picks)
 from gridiron.league_config import (DEFAULT_SCORING, DRAFT_ROUNDS, MY_DRAFT_SLOT,
                                     NUM_TEAMS, ROSTER_SLOTS)
 from gridiron.paths import OUTPUTS, RESEARCH_CACHE
@@ -39,15 +41,7 @@ def name_key(s: str) -> str:
     return re.sub(r"[^a-z]", "", s)
 
 
-def my_picks() -> list[int]:
-    out = []
-    for r in range(1, DRAFT_ROUNDS + 1):
-        out.append((r - 1) * NUM_TEAMS + MY_DRAFT_SLOT if r % 2 == 1
-                   else r * NUM_TEAMS - MY_DRAFT_SLOT + 1)
-    return out
-
-
-MY_PICKS = my_picks()
+MY_PICKS = snake_picks(MY_DRAFT_SLOT, NUM_TEAMS, DRAFT_ROUNDS)
 
 # Known games-missed overrides applied to the Sleeper leg only (ECR already
 # prices news in). Source: FantasyPros/NBC/Yahoo injury reports 2026-09-08.
@@ -190,31 +184,15 @@ board["adp"] = np.where(board.adp_half.notna() & board.ffc_adp.notna(),
                         board.adp_half.fillna(board.ffc_adp))
 # undrafted-in-ADP players: park them past the ECR-implied slot
 board["adp"] = board.adp.fillna(board.rank_ave + 25).fillna(300)
-board["adp_sd"] = np.maximum(1.0, 0.57 + 0.11 * board.adp)
-from math import erf, sqrt
-Phi = lambda z: 0.5 * (1 + erf(z / sqrt(2)))
-def p_avail(adp, sd, pick):
-    return 1 - Phi((pick - 0.5 - adp) / sd)
+board["adp_sd"] = board.adp.map(adp_sd)
 for pk in MY_PICKS[:10]:
-    board[f"p{pk}"] = [p_avail(a, s_, pk) for a, s_ in zip(board.adp, board.adp_sd)]
+    board[f"p{pk}"] = [p_available(a, s_, pk) for a, s_ in zip(board.adp, board.adp_sd)]
 
 # ---------------------------------------------------------------- replacement levels (order-statistic fill)
 STARTERS = {p: ROSTER_SLOTS[p] * NUM_TEAMS for p in ["QB", "RB", "WR", "TE", "K"]}
 STARTERS["DEF"] = ROSTER_SLOTS["DST"] * NUM_TEAMS
 N_FLEX = ROSTER_SLOTS["FLEX"] * NUM_TEAMS
-def fill(bd):
-    taken = set()
-    for p, n in STARTERS.items():
-        taken |= set(bd[bd.pos == p].nlargest(n, "proj").index)
-    flexpool = bd[bd.pos.isin(["RB", "WR", "TE"]) & ~bd.index.isin(taken)].nlargest(N_FLEX, "proj")
-    taken |= set(flexpool.index)
-    flex_mix = flexpool.pos.value_counts().to_dict()
-    repl = {}
-    for p in POS:
-        rest = bd[(bd.pos == p) & ~bd.index.isin(taken)]
-        repl[p] = float(rest.proj.max()) if len(rest) else 0.0
-    return repl, flex_mix
-REPL, FLEX_MIX = fill(board)
+REPL, FLEX_MIX = replacement_levels(board, STARTERS, N_FLEX)
 # bench/waiver baseline: what is freely available mid-season ~ starters + 1 per team for RB/WR
 WAIVER_RANK = {"QB": 16, "RB": 40, "WR": 44, "TE": 16, "K": 14, "DEF": 14}
 WAIVER = {p: float(board[board.pos == p].nlargest(WAIVER_RANK[p], "proj").proj.min()) for p in POS}
@@ -255,15 +233,10 @@ def opp_allowed(counts, rnd, p):
 
 def lineup_points(idxs):
     """Optimal starting lineup points + a bench term (0.25 x best bench RB/WR over waiver)."""
-    rows = sim.loc[list(idxs)]
-    total, used = 0.0, set()
-    for p, k in [("QB", 1), ("RB", 2), ("WR", 2), ("TE", 1), ("K", 1), ("DEF", 1)]:
-        top = rows[rows.pos == p].nlargest(k, "proj")
-        total += top.proj.sum(); used |= set(top.index)
-    flex = rows[rows.pos.isin(["RB", "WR", "TE"]) & ~rows.index.isin(used)].nlargest(ROSTER_SLOTS["FLEX"], "proj")
-    total += flex.proj.sum(); used |= set(flex.index)
-    bench = rows[~rows.index.isin(used) & rows.pos.isin(["RB", "WR"])]
-    bench_val = float(np.clip(bench.vor_waiver.nlargest(3).sum(), 0, None)) if len(bench) else 0.0
+    idxs = list(idxs)
+    total, starters = optimal_lineup([(pos_arr[i], float(proj_arr[i])) for i in idxs], ROSTER_SLOTS)
+    bench = [idxs[j] for j in range(len(idxs)) if j not in starters and pos_arr[idxs[j]] in ("RB", "WR")]
+    bench_val = float(np.clip(sim.loc[bench, "vor_waiver"].nlargest(3).sum(), 0, None)) if bench else 0.0
     return total + 0.25 * bench_val
 
 def expected_best(avail_mask, p, now, nxt):
@@ -273,8 +246,7 @@ def expected_best(avail_mask, p, now, nxt):
         return 0.0
     ii = ii[np.argsort(-proj_arr[ii])]
     # P(still there at nxt | there now)
-    pa = np.array([(1 - Phi((nxt - 0.5 - adp_arr[i]) / sd_arr[i])) / max(1e-9, 1 - Phi((now - 0.5 - adp_arr[i]) / sd_arr[i])) for i in ii])
-    pa = np.clip(pa, 0, 1)
+    pa = np.array([p_survive(adp_arr[i], sd_arr[i], now, nxt) for i in ii])
     e, surv = 0.0, 1.0
     for v, q in zip(proj_arr[ii], pa):
         e += surv * q * v

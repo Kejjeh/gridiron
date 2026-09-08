@@ -23,6 +23,14 @@ Rule #1 no longer blocks; K/DEF weights live in `league_config` as dicts.
   replacement by lineup fill, VOR, ADP-availability model, 300-draft Monte
   Carlo. Output committed: `data/outputs/draft2026_board.csv`.
 
+- `src/gridiron/draft.py` — pure draft math (snake order, ADP survival,
+  lineup-fill replacement, optimal lineup), written test-first in
+  `tests/test_draft.py`; the board script imports it.
+- `scripts/research/warroom/` — the war-room page source: template,
+  `draftroom_logic.js` (mirrors `draft.py`; `node --test` in that dir, 7
+  tests), and `warroom_build.py` which emits
+  `data/outputs/draft2026_warroom.html`, the file published as the artifact.
+
 **Draft plan** — `docs/research/DRAFT_2026_PLAN.md`. Gibbs at 1; Bowers at
 the 2/3 turn (97% there at 24); static best-VOR beat every scripted opening
 by ~100 lineup points. The live tool is the "1.01 War Room" artifact

@@ -1,0 +1,157 @@
+"""Build the 1.01 War Room page: board CSV + news notes + tags -> one HTML file.
+
+Run:  PYTHONPATH=src python scripts/research/warroom_build.py
+Reads data/outputs/draft2026_board.csv (from draft_board_2026.py) and the
+template/logic under scripts/research/warroom/; writes
+data/outputs/draft2026_warroom.html (the file published as the artifact).
+The page logic is tested by `node --test scripts/research/warroom/`.
+"""
+import json
+import pathlib
+
+import numpy as np
+import pandas as pd
+
+from gridiron.paths import OUTPUTS, REPO_ROOT
+
+SCR = REPO_ROOT / "scripts" / "research" / "warroom"
+b = pd.read_csv(OUTPUTS / "draft2026_board.csv")
+b["adp_rank"] = b.adp.rank(method="first")
+b["keep_rank"] = np.minimum(b.rank_vor, b.adp_rank)
+skill = b[b.pos.isin(["QB", "RB", "WR", "TE"])].nsmallest(230, "keep_rank")
+kd = pd.concat([b[b.pos == "K"].nsmallest(14, "adp"), b[b.pos == "DEF"].nsmallest(14, "adp")])
+out = pd.concat([skill, kd]).drop_duplicates("name_key").sort_values("rank_vor")
+
+NOTES = {
+ "jahmyrgibbs": "Consensus 1.01 everywhere. Montgomery gone to HOU, backup Pacheco on IR. 25.1 PPG in the 6 games without Montgomery last year.",
+ "bijanrobinson": "1.02 by every source. Only knock: 6.5-win Falcons offense; Tua is the ATL starter with Penix out for W1.",
+ "christianmccaffrey": "Age 30, 413 touches in 2025, calf tightness = rep management. Plays W1 in Australia. Draft as normal; hold his handcuff.",
+ "jamarrchase": "Knee hyperextension late Aug, back at practice, W1 expected. TD regression is baked into the projection.",
+ "pukanacua": "Psoas/core in camp; full speed, no setbacks. Plays Thu in Australia vs SF.",
+ "jonathantaylor": "Daniel Jones back from Achilles and starting; JT's ceiling rides on him. Floor still elite (double-digit TDs every full year).",
+ "jaxonsmithnjigba": "35.8% target share in 2025. Sleeper ADP 8.8 vs FFC 5.9.",
+ "amonrastbrown": "Gibbs stack partner; steady.",
+ "jamescook": "Top-5 RB price; TD-dependent (11 projected).",
+ "derrickhenry": "Age 32. ECR 20 but Sleeper drafters take him at 14. Justice Hill / Rasheen Ali behind him, healthy.",
+ "saquonbarkley": "Age 29, 2025 was a down year (13.2 PPG). Sleeper ADP 10.6 vs ECR 16.",
+ "devonachane": "Malik Willis is now the MIA QB (Tua to ATL). Rebuild offense, but he IS the offense.",
+ "kennethwalker": "Now a Chief. Foot soreness was shoe-related; W1 ready. Sleeper drafters undervalue him (ADP 18-20).",
+ "omarionhampton": "Broke an ankle W5 last year, back. Keaton Mitchell returned to practice Mon; change-of-pace only.",
+ "ashtonjeanty": "Low-ankle sprain, questionable but tracking to play W1 with managed snaps. Buy the dip if he slides.",
+ "chasebrown": "Sleeper ADP 17 vs FFC 13.6 / ECR 15.",
+ "nicocollins": "12.6 PPG in 15 games last year; Sleeper projects 218.",
+ "brockbowers": "Elite TE1 by 11 pts over McBride. Cousins + Kubiak = best environment of his career. Sleeper ADP 23.5, FFC 40. On the board at 24 in 97% of sims, at 25 in 79%.",
+ "treymcbride": "TE2, 11 behind Bowers, still 57 over replacement. The fallback if Bowers goes.",
+ "joshallen": "QB1 by 20 pts. Available at 24 about 55%, at 25 about 7%. QB4-QB12 sit within 15 pts of each other, so waiting is fine.",
+ "lamarjackson": "QB2. ECR 38, Sleeper ADP 34, FFC 56 - the sources disagree.",
+ "georgepickens": "Now a Cowboy. On the board at 24 about 38%, at 25 about 19%.",
+ "chrisolave": "Healthy. Jordyn Tyson (rookie 1st-rounder) on IR 4-8 wks, so Olave is the only target hog in NO.",
+ "maliknabers": "ACL Oct 2025; game-time decision W1 vs DAL. ECR 28 with a huge spread (9-47). Expect a slow ramp.",
+ "javontewilliams": "14.1 PPG in 2025 for DAL. Sleeper ADP 31, FFC 28.5.",
+ "kyrenwilliams": "Rams plan close to 50/50 with Corum. Fade at his round-3 price; Corum is the value.",
+ "breecehall": "Groin strain mid-Aug; moving well, expected to start W1. Any discount is a buy.",
+ "jeremiyahlove": "Rookie, ARI. High-ankle sprain; 50/50 for W1 and easing back. Bad OL. Sleeper ADP 27.8.",
+ "dandreswift": "Bears RB1. Left practice with 'a cramp'; Monangai wk-to-wk (knee). Roschon Johnson trending. Value if he slides past 48.",
+ "travisetienne": "Now in NO. Kamara (knee) not ready, so Etienne opens as the lead back.",
+ "davidmontgomery": "Now a Texan. Available at 48 about 47%. Goal-line role in a real offense.",
+ "buckyirving": "TB lead back; ADP 46.",
+ "camskattebo": "Sleeper drafters take him at 35 (ECR 54). Early-down role with Tracy/Singletary on passing downs. Overpriced at ADP; fine at 48+.",
+ "quinshonjudkins": "CLE lead back, year 2. Available at 48 about 73%.",
+ "rasheerice": "No suspension (Rapoport, Aug 12). Offseason knee surgery + a jail stint. Top-12 upside, real risk. Sleeper ADP 29, FFC 18.",
+ "lutherburden": "Grade-1 groin, cleared. Bears WR with Loveland/Odunze; ECR 49, Sleeper ADP 59. The sim's favorite at pick 49.",
+ "terrymclaurin": "Age 30. Available at 48 about 83%.",
+ "jamesonwilliams": "Boom/bust WR2 in DET. FFC 37, Sleeper 57.",
+ "christianwatson": "Available at 48 about 97%. GB WR1 role.",
+ "mikeevans": "Now a 49er, age 33. Two quad injuries + groin in camp; questionable but expected Thu. Sleeper proj 185 vs ECR-implied 162.",
+ "emekaegbuka": "Toe sprain (not turf toe); expected W1. Godwin is the pivot if he sits.",
+ "davanteadams": "Age 33, LAR. ADP falling.",
+ "romeodunze": "Right leg, sat Mon, precautionary.",
+ "jadarianprice": "SEA 1st-round rookie; Charbonnet on PUP (ACL) until at least W5. Clear RB1 for a month-plus.",
+ "bhayshultuten": "JAX; questionable tag on Sleeper.",
+ "brianthomas": "WR3 in JAX 2-WR sets behind Meyers and Washington; comes off for Hunter packages. Talent bet only.",
+ "parkerwashington": "JAX starter in 11 and 12 personnel; targets over Thomas per camp.",
+ "marvinharrison": "Year 3, ARI. ECR 73.",
+ "rhamondrestevenson": "NE lead back while Henderson (ankle) is out.",
+ "treveyonhenderson": "Out since Aug 24 (ankle); unlikely W1 (Wed game). Upside stash at a discount.",
+ "marshawnlloyd": "GB RB1 while Jacobs sits on the exempt list (two misdemeanors pending). ADP jumped 66 spots in a week. The sim's favorite at 96/97.",
+ "joshjacobs": "Commissioner's exempt list; cannot practice or play until resolved. Late stash only.",
+ "samlaporta": "Hip; back at practice, snap count managed W1.",
+ "tuckerkraft": "ACL cleared, no restrictions; Jonnu Smith signed behind him.",
+ "georgekittle": "Achilles (Jan). Off PUP, playing W1 with limited snaps. Age 32.",
+ "tylerwarren": "Groin was minor; unrestricted.",
+ "colstonloveland": "Year-2 Bears TE, TE3 by projection; ECR sd 12 (experts split).",
+ "patrickmahomes": "ACL/LCL Dec 2025. Full participant since July, says on track for W1. QB15 price; run-heavy plan early.",
+ "jaydendaniels": "QB6 by projection; available at 72 about 63%.",
+ "jalenhurts": "QB4; available at 72 about 37%.",
+ "trevorlawrence": "QB7; available at 72 about 99%, at 96 about 73%. The QB the sim actually lands.",
+ "calebwilliams": "QB8; available at 72 about 90%.",
+ "kylemonangai": "Hyperextended knee; wk-to-wk, maybe W2.",
+ "michaelpenix": "Inactive W1 (knee). Tua starts for ATL.",
+ "jordyntyson": "NO rookie WR; short-term IR, 4-8 weeks. Do not draft.",
+ "tankdell": "HOU: Jayden Higgins tore an ACL (out for the year). Dell trending up.",
+ "devaughnvele": "NO WR2 while Tyson is on IR; streamer.",
+ "roschonjohnson": "Most-added player on Sleeper (48h) after Swift's practice exit. Handcuff.",
+ "jonathonbrooks": "Two ACLs; CAR 'very optimistic'. ADP 88, sleeper appeal.",
+ "chubahubbard": "Hamstring in Aug; full go for W1.",
+ "blakecorum": "Rams moving toward 50/50; RB36 PPG from W7 on last year. Value at ADP about 100.",
+ "isiahpacheco": "DET, on IR. Do not draft.",
+ "jaydenhiggins": "Torn ACL, out for 2026. Do not draft.",
+ "rickypearsall": "Season-ending IR. Do not draft.",
+ "kylermurray": "Named MIN starter over McCarthy; Jefferson's QB.",
+ "danieljones": "IND starter, back from Achilles.",
+ "malikwillis": "MIA starter on a 3-yr, $67.5M deal.",
+ "keatonmitchell": "Back at practice Mon after 6 missed; change-of-pace behind Hampton.",
+ "alvinkamara": "Knee; not ready. Etienne leads NO.",
+ "justicehill": "Henry's backup, healthy.",
+}
+
+# Chips shown next to the name. usage = 2025 expected-points screen; experts =
+# the multi-year-accurate rankers sit above ADP; avoid = market ahead of both
+# usage and experts, or unavailable; regress = beat expected points by 35+.
+TAGS = {
+    "usage": ["wandalerobinson", "michaelwilson", "kennygainwell", "jakobimeyers", "quentinjohnston", "ricodowdle",
+              "rjharvey", "alecpierce", "kylepitts", "romeodoubs", "michaelpittman", "jakeferguson", "woodymarks",
+              "deebosamuel", "marshawnlloyd", "travisetienne", "rhamondrestevenson", "jadarianprice", "joshdowns",
+              "malikwashington"],
+    "experts": ["breecehall", "jonathonbrooks", "djmoore", "isaiahlikely", "lutherburden", "jordanmason",
+                "rashidshaheed", "jordanaddison", "cjstroud", "tonypollard", "jacorycroskeymerritt"],
+    "avoid": ["bhayshultuten", "matthewgolden", "joshjacobs", "tankdell", "jordyntyson", "isiahpacheco", "kalebjohnson",
+              "courtlandsutton", "matthewstafford", "jalennailor", "cooperkupp", "jaydenhiggins", "rickypearsall"],
+    "regress": ["pukanacua", "jaxonsmithnjigba", "jonathantaylor", "devonachane", "tuckerkraft", "daltonkincaid",
+                "zayflowers", "teehiggins", "stefondiggs", "kayshonboutte", "georgekittle", "dallasgoedert"],
+}
+TAG_OF = {k: t for t, ks in TAGS.items() for k in ks}
+
+
+def f(v, nd=1):
+    return round(float(v), nd) if pd.notna(v) else None
+def i(v):
+    return int(v) if pd.notna(v) else None
+
+recs = []
+for _, r in out.iterrows():
+    recs.append(dict(
+        id=str(r["sleeper_id"]) if pd.notna(r["sleeper_id"]) else r.name_key, key=r.name_key, name=r["name"], pos=r.pos,
+        team=r.team if pd.notna(r.team) else "", bye=i(r.bye), proj=f(r.proj), vor=f(r.vor), vorw=f(r.vor_waiver),
+        tier=i(r.tier), ecr=f(r.rank_ave), ecr_sd=f(r.rank_std), ecr_min=i(r.rank_min), ecr_max=i(r.rank_max),
+        adp=f(r.adp), adp_sd=f(r.adp_sd, 2), adp_sl=f(r.adp_half), adp_ffc=f(r.ffc_adp), posrank=int(r.pos_rank_proj),
+        inj=r.injury if pd.notna(r.injury) else None, injpart=r.injury_part if pd.notna(r.injury_part) else None,
+        ppg25=f(r.ppg_2025), g25=i(r.g_2025), age=i(r.age), note=NOTES.get(r.name_key),
+        tag=TAG_OF.get(r.name_key),
+    ))
+meta = dict(repl={"QB": 292.2, "RB": 138.6, "WR": 139.0, "TE": 128.6, "K": 104.2, "DEF": 87.0},
+            my_picks=[1, 24, 25, 48, 49, 72, 73, 96, 97, 120, 121, 144, 145, 168, 169],
+            generated="2026-09-08 5:15 PM ET",
+            sources="Sleeper projections + ADP, FantasyPros ECR (9/08), FFC ADP (12-team half-PPR, 9/3-9/8, 1,837 drafts), nflverse 2025")
+data = dict(meta=meta, players=recs)
+(OUTPUTS / "draft2026_warroom_data.json").write_text(json.dumps(data), encoding="utf-8")
+tpl = (SCR / "draftroom_template.html").read_text(encoding="utf-8")
+logic = (SCR / "draftroom_logic.js").read_text(encoding="utf-8")
+html = tpl.replace("/*__DATA__*/", json.dumps(data, separators=(",", ":"))).replace("/*__LOGIC__*/", logic)
+assert "/*__" not in html, "unfilled template placeholder"
+(OUTPUTS / "draft2026_warroom.html").write_text(html, encoding="utf-8")
+print(len(recs), "players;", sum(1 for r in recs if r["note"]), "with notes;", out.pos.value_counts().to_dict())
+print("notes unmatched:", [k for k in NOTES if k not in set(out.name_key)])
+print("tags unmatched:", [k for k in TAG_OF if k not in set(out.name_key)])
+print("tag counts:", {t: sum(1 for r in recs if r["tag"] == t) for t in TAGS})
+print("html bytes:", len(html.encode("utf-8")))

@@ -32,3 +32,5 @@ ledger is data (`data/ledger/`), not this file.
 | 2026-09-08 | Draft projections = ½ Sleeper stat-line (scored in-repo) + ½ ECR-implied points; replacement by lineup order-statistic fill (RB33/WR41/TE13/QB13) | `draft_board_2026.py`; FantasyPros projection pages are JS-paginated |
 | 2026-09-08 | Draft availability uses a 60/40 Sleeper/FFC ADP blend with sd = 0.57 + 0.11·ADP | the room drafts on Sleeper; sd fitted on FFC per-player spread |
 | 2026-09-08 | Draft policy: best static VOR each pick, K/DEF last two rounds; elite TE at the 2/3 turn | beat scripted RB/WR openings by ~100 lineup pts over 300 sims (`DRAFT_2026_PLAN.md`) |
+| 2026-09-08 | War-room page logic lives in ONE place per language: `gridiron/draft.py` (Python) and `scripts/research/warroom/draftroom_logic.js` (page), each with tests pinning the same numbers | audit found the page and the script had drifted into two hand-copies of the same math |
+| 2026-09-08 | Page confirmations never use `window.confirm`/`prompt` (the artifact sandbox swallows them); use in-page two-tap controls | Reset button silently did nothing |
