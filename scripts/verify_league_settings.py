@@ -82,9 +82,12 @@ def compare(league: dict) -> list[dict]:
 
     settings = league.get("settings") or {}
     for key, const in SETTINGS_MAP.items():
-        if key not in settings:
-            continue
-        add(const, getattr(lc, const), int(settings[key]))
+        # An ABSENT key is reported as drift (live=None), never skipped. All
+        # eleven were present in the 2026-09-08 and 2026-09-17 pulls, so one
+        # going missing is a change to the league or to Sleeper's payload and
+        # a human should see it. Symmetric with the scoring block above.
+        add(const, getattr(lc, const),
+            None if key not in settings else int(settings[key]))
 
     for key, weight in sorted(lc.KICKING_SCORING.items()):
         if key in scoring:
@@ -93,6 +96,22 @@ def compare(league: dict) -> list[dict]:
         if key in scoring:
             add(f"DEFENSE_SCORING[{key}]", float(weight), float(scoring[key]))
     return rows
+
+
+def unchecked_weights(league: dict) -> list[str]:
+    """Kicking/defense weights `compare` could NOT check, because the league
+    payload does not carry them.
+
+    Sleeper only returns the weights a league has configured, so absence here
+    is not drift — but it IS a shrinking comparison, and a check that silently
+    covers less than it did last week is the failure mode rule #1 guards
+    against. The CLI prints this count beside the checked count.
+    """
+    scoring = league.get("scoring_settings") or {}
+    return sorted(
+        [f"KICKING_SCORING[{k}]" for k in lc.KICKING_SCORING if k not in scoring]
+        + [f"DEFENSE_SCORING[{k}]" for k in lc.DEFENSE_SCORING if k not in scoring]
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -113,14 +132,18 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = compare(league)
     drift = [r for r in rows if not r["match"]]
+    unchecked = unchecked_weights(league)
     if args.json:
         print(json.dumps({"settings_verified": lc.SETTINGS_VERIFIED,
-                          "checked": len(rows), "drift": drift}, indent=1,
-                         default=str))
+                          "checked": len(rows), "drift": drift,
+                          "unchecked": unchecked}, indent=1, default=str))
     else:
         print(f"SETTINGS_VERIFIED = {lc.SETTINGS_VERIFIED}")
         print(f"checked {len(rows)} constants against league "
               f"{league.get('league_id')} ({league.get('status')})")
+        if unchecked:
+            print(f"  {len(unchecked)} weight(s) NOT in the league payload, so "
+                  f"not compared: {', '.join(unchecked)}")
         for r in drift:
             print(f"  DRIFT {r['field']}: ours={r['ours']!r} "
                   f"live={r['live']!r}")

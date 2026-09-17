@@ -36,6 +36,7 @@ ledger is data (`data/ledger/`), not this file.
 | 2026-09-08 | Page confirmations never use `window.confirm`/`prompt` (the artifact sandbox swallows them); use in-page two-tap controls | Reset button silently did nothing |
 | 2026-09-17 | League settings RE-VERIFIED live (55/55 constants, zero drift); CLAUDE.md rule #1's "unverified placeholders" prose was stale, the flag was not | `scripts/verify_league_settings.py`; the Sept-8 pull was real, the headline just never followed it |
 | 2026-09-17 | Verification is standing, not one-off: a checker script + pinned values in `tests/test_league_config.py`; the checker is AST-tested to be write-free | leagues get edited mid-season; a checker that can edit what it checks can flip a flag to pass |
+| 2026-09-17 | A constant absent from the live payload is reported as drift (`live=None`), never skipped; omitted kicking/defense weights are counted in the output | a check that silently covers less than it did last week fails the same way as one that passes wrongly |
 | 2026-09-17 | Scoring reads the CURRENT nflverse columns (`passing_interceptions`, the three `*_fumbles_lost`, the three `*_2pt_conversions`) with the legacy names kept as read-only fallbacks | the rewritten nflverse schema made INTs, fumbles and 2-pointers score as ZERO — a wrong number, not a missing one |
 | 2026-09-17 | `fumbles_lost_total` is NOT the fumble input: it counts return fumbles | 2 mismatches vs nflverse on the 2026 wk-1 frame; the 3-component sum reconciles exactly (357/357) |
 | 2026-09-17 | Kicker points ship (`scoring.kicker_points`, KICKING_SCORING onto nflverse `fg_made_*`/`pat_*`); blocked kicks deliberately unmapped | 12/12 exact vs Sleeper actuals; no blocked kick in wk 1, so the blocked-as-miss question is UNVERIFIED |
@@ -48,4 +49,5 @@ ledger is data (`data/ledger/`), not this file.
 | 2026-09-17 | A team absent from a schedule we could not load renders `?`, not BYE | a missing schedule must not invent a bye week |
 | 2026-09-17 | Milestone 1 ships NO projections, rankings or lineup advice; the report prints measured usage + market lines and says so at the top | rule #5 gate is unmet; a guessed recommendation presented as verified is the failure mode the repo exists against |
 | 2026-09-17 | Weekly outputs are written to `data/outputs/week{NN}_report.*` plus a stable `weekly_report_latest.*` pair for golden_run A/B | golden_run compares literal paths; the week-stamped name changes weekly |
+| 2026-09-17 | Scoring's test suite reads its fixtures with stdlib `csv`, not pandas, and uses no shared conftest fixture | the scoring implementation is stdlib-pure; its tests must run on the repo's declared dependencies alone or the purity claim is untested |
 

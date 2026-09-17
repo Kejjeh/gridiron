@@ -14,8 +14,9 @@ docs/BOOTSTRAP_FROM_PLV.md for the full history.
    matched, zero drift.
 
    The gate did not go away. Every engine that produces user-facing output
-   still checks `SETTINGS_VERIFIED` and refuses to run while it is False
-   (`scripts/weekly/report.py` exits 3). Two standing rules:
+   (projections, VOR, start/sit, waivers) still checks `SETTINGS_VERIFIED`
+   and refuses to run while it is False — `scripts/weekly/report.py` exits 3.
+   Four standing rules:
    - Flipping the flag requires a platform pull that corrects the values in
      the SAME commit. Never flip it to unblock a run or a test.
    - A league can be edited mid-season, so verification is not a one-off.
@@ -24,6 +25,10 @@ docs/BOOTSTRAP_FROM_PLV.md for the full history.
      `league_config.py` — a checker that can edit what it checks is one
      refactor from flipping a flag to make itself pass
      (`tests/test_verify_league_settings.py` pins that with an AST check).
+   - A constant the live payload does not carry is reported as DRIFT
+     (`live=None`), never skipped, and weights Sleeper omits are counted in
+     the output. A check that quietly covers less than it did last week is
+     the same failure as a check that passes wrongly.
    - The verified values are additionally pinned in
      `tests/test_league_config.py`, so silent drift is a failing test.
 

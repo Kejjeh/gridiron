@@ -148,7 +148,9 @@ def kicker_points(
 
 def scoring_inputs() -> frozenset[str]:
     """Every column name this module will read. Ingest uses it to assert a
-    pulled frame can actually be scored before anything downstream trusts it."""
+    pulled frame can actually be scored before anything downstream trusts the
+    numbers. Legacy aliases are excluded on purpose: they are a read-side
+    fallback, not a contract an ingest must satisfy."""
     cols: set[str] = set()
     for term in _TERMS:
         cols.update(term.components)

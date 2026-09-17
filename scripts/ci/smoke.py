@@ -46,6 +46,8 @@ IMPORTS = [
     "gridiron.freshness",
     "gridiron.sleeper",
     "gridiron.ingest",
+    "gridiron.usage",
+    "gridiron.weekly",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on
@@ -72,8 +74,6 @@ PATTERNS = [
 
 # Anti-vacuity floor: a glob typo must not silently shrink the smoke set.
 # Raise this as smoke tests are added (plv_clone ended at 8+).
-# gridiron.usage/weekly are NOT in IMPORTS: they import pandas, which the
-# offline import stage should stay free of. Their tests run in the full suite.
 MIN_FILES = 17
 
 

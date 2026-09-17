@@ -1,6 +1,7 @@
 """The Sleeper adapter is read-only by construction, and testable offline."""
 from __future__ import annotations
 
+import json
 import re
 import urllib.error
 from pathlib import Path
@@ -10,6 +11,20 @@ import pytest
 from gridiron import sleeper as S
 
 SOURCE = Path(S.__file__).read_text(encoding="utf-8")
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+@pytest.fixture(scope="module")
+def league_snapshot() -> dict:
+    """The saved read-only league snapshot every test here reads from.
+
+    SYNTHETIC: two teams, invented user ids (U1/U2) and an invented league
+    name. It carries the real Sleeper payload SHAPE and nothing private, so
+    the adapter is exercised end to end without a network call and without
+    committing the owner's league. Defined in this module rather than in
+    conftest so the file depends on nothing but the stdlib.
+    """
+    return json.loads((FIXTURES / "sleeper_league.json").read_text(encoding="utf-8"))
 
 #: Anything that could change the league. The adapter must contain none.
 WRITE_MARKERS = (
