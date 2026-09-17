@@ -5,6 +5,12 @@ STATUS: VERIFIED 2026-09-08 against the Sleeper API (league 1389720742551093249,
 below was read from `scoring_settings` / `roster_positions` on the league
 object; the pull script is scripts/research/pull_sleeper.py and the raw JSON
 is cached (gitignored) under data/research/cache/draft2026/.
+
+RE-VERIFIED 2026-09-17 (league status `in_season`, week 2) — every constant
+here still matches the live league object field for field. Re-run the check
+any time with `python scripts/verify_league_settings.py`; it reports drift and
+exits nonzero, and it never edits this file. Flipping SETTINGS_VERIFIED is a
+human decision backed by a pull, never a way to unblock a run (rule #1).
 """
 from __future__ import annotations
 
@@ -15,6 +21,11 @@ SEASON_YEAR = 2026
 # Which platform hosts the league. Sleeper: public read API, no auth needed.
 PLATFORM = "sleeper"
 LEAGUE_NAME = "Take Mahomes, Country Road"
+# Public identifier (Sleeper's read API needs no auth), not a credential.
+# Override with GRIDIRON_SLEEPER_LEAGUE_ID; see gridiron.sleeper.resolve_league_id.
+SLEEPER_LEAGUE_ID = "1389720742551093249"
+# The owner's Sleeper handle (public; used only to find which roster is his).
+MY_SLEEPER_USERNAME = "Kejjeh"
 
 SETTINGS_VERIFIED = True  # flipped 2026-09-08 in the same commit as the values below
 
@@ -46,6 +57,18 @@ PLAYOFF_TEAMS = 6
 PLAYOFF_START_WEEK = 15
 TRADE_DEADLINE_WEEK = 13
 REGULAR_SEASON_WEEKS = 14
+
+# Waivers, read off the live league `settings` block 2026-09-17:
+# waiver_type 2 = FAAB, waiver_day_of_week 2 = Wednesday (0 = Sunday),
+# waiver_clear_days 2, waiver_budget 100, waiver_bid_min 0, trade_review_days 2.
+# Rule #8 cadence: a claim entered Monday clears Wednesday ~3 AM ET.
+WAIVER_TYPE = "faab"
+WAIVER_BUDGET = 100
+WAIVER_MIN_BID = 0
+WAIVER_CLEAR_WEEKDAY = 2          # 0 = Sunday, Sleeper's convention
+WAIVER_CLEAR_DAYS = 2
+TRADE_REVIEW_DAYS = 2
+MAX_KEEPERS = 1
 
 
 @dataclass(frozen=True)

@@ -13,5 +13,10 @@ __pycache__/
 data/research/cache/
 data/research/.golden_run/
 
+# the stable-name copy golden_run.py A/Bs: same content as the week-stamped
+# report, rewritten on every run. The week-stamped pair is the committed record.
+data/outputs/weekly_report_latest.md
+data/outputs/weekly_report_latest.csv
+
 # research-agent scratch drafts (synthesized into docs/research/*.md)
 docs/research/drafts/
