@@ -61,8 +61,13 @@ OK, WARN = '✓', '⚠'
 # the markdown carries a generated-at line that always differs.
 TARGETS: dict = {
     'weekly_report': {
+        # argv lists, NOT shell strings: resolve_target shlex-splits only the
+        # --cmd of a custom target, and list("python ...") would split the
+        # string into characters. Run with PYTHONPATH=src, as every driver in
+        # this repo is.
         'commands': [
-            'python -X utf8 scripts/weekly/report.py --write --anonymous',
+            [sys.executable, '-X', 'utf8', 'scripts/weekly/report.py',
+             '--write', '--anonymous'],
         ],
         'outputs': [
             'data/outputs/weekly_report_latest.csv',

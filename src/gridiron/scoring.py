@@ -28,7 +28,13 @@ committed fixture):
 
 Team defense (DEFENSE_SCORING) has no implementation yet — nflverse weekly
 data is player-level, so DST points have to be aggregated from team stats.
-Until that lands, DST rows carry Sleeper's actual points and no projection.
+Until that lands a DST row scores NOTHING here, and `gridiron.weekly` carries
+it with every points and usage cell BLANK: only the team, opponent, market
+implied total and an explicit "n/a (team defense)" note. Nothing reads
+Sleeper's `players_points` back into the report — that endpoint was used once,
+offline, to reconcile the weights above, and wiring it in as a points source
+is an open decision, not current behavior.
+(Pinned by tests/test_weekly.py::test_team_defenses_are_carried_not_dropped.)
 """
 from __future__ import annotations
 

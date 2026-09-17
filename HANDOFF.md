@@ -101,28 +101,50 @@ as a `golden_run.py` target against the stable `weekly_report_latest.csv`.
    report opens with `NO PROJECTION MODEL SHIPPED` and carries no
    projection/rank/recommend column — a test asserts the absence.
 
+## BLOCKED: dependency scope (read this first)
+
+Review flagged `requirements.txt` adding `nflreadpy`, `pandas` and `pyarrow`
+against a no-new-dependencies constraint. Unresolved — do not merge, do not
+install. Full analysis in `docs/review/MILESTONE1_DEPENDENCY_REVIEW.md`. The
+short version: pandas was ALREADY a hard runtime dependency of `src/gridiron/`
+on `main` (`draft.py`, `ledger.py`, both in pre-PR smoke IMPORTS), so that line
+declares existing state; nflreadpy was already imported by a committed research
+script and is confined to one ingest driver; pyarrow is the only genuinely new
+one and the cheapest to drop (CSV instead of parquet).
+
+Five of the seven new modules are stdlib-only, so two PRs can be peeled off with
+zero new dependencies: the **scoring repair** (fixes a bug that is silently
+wrong on `main` today) and **settings verification**. Only the ingest-and-report
+half is actually blocked.
+
 ## Next
 
-1. **Astra review of this branch.** Nothing merged, nothing deployed.
-2. Open question for the owner: should `data/outputs/week{NN}_report.*` keep
+1. **Resolve the dependency decision** (owner/Astra), then re-cut per the
+   review doc. Do not start projections while it is open.
+2. **Astra review of this branch.** Nothing merged, nothing deployed.
+3. Open question for the owner: should `data/outputs/week{NN}_report.*` keep
    being committed (rule #10 says yes for weekly CSVs) now that it contains
-   the roster? `week02_report.*` is committed here as the first example.
-3. Build step 3 baseline — usage prior × efficiency × line multiplier, with
+   the roster? `week02_report.*` is committed here as the first example, now
+   in its `--anonymous` form (no league name — strictly less personal data;
+   it is also what the golden_run target regenerates).
+4. Build step 3 baseline — usage prior × efficiency × line multiplier, with
    the corrected scoring. Must beat a baseline containing ALL existing
    features out-of-sample before any number reaches the report (rule #5).
    Chronological split only; `season_to_date(through_week=)` is the boundary.
-4. Then roster audit → waiver board → start/sit, in that order, each gated on
+5. Then roster audit → waiver board → start/sit, in that order, each gated on
    evidence. FAAB constants are now available for the waiver board; the §7
    bid guidance in QUANT_FOUNDATIONS is still UNVERIFIED.
-5. Post-draft ledger (carried from the last handoff, still not done):
+6. Post-draft ledger (carried from the last handoff, still not done):
    `scripts/research/record_draft_2026.py` writes `data/ledger/draft_2026.csv`
    and grades the board's `p{k}`/`ph{k}` predictions. The ADP-only vs
    history-aware comparison decides which model the in-season tools trust.
-6. Reconcile the QUANT_FOUNDATIONS §5–7 verification failures (381/382,
+7. Reconcile the QUANT_FOUNDATIONS §5–7 verification failures (381/382,
    177/12, 66/9) — unchanged from the last two handoffs.
-7. DST scoring has no implementation (nflverse weekly is player-level). DST
-   rows currently carry no points. Either aggregate team stats or read
-   Sleeper's actuals.
+8. DST scoring has no implementation (nflverse weekly is player-level). A DST
+   row is carried with team/opponent/implied total and EVERY points and usage
+   cell blank — `scoring.py`'s docstring previously claimed it carried
+   Sleeper's actual points, which was never true and is now corrected. Either
+   aggregate team stats or wire Sleeper's actuals in as an explicit decision.
 
 ## Not done deliberately
 

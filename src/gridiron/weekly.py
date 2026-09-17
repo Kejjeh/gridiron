@@ -17,6 +17,12 @@ Three honesty invariants, each with a test:
    never 0. A player with no box-score row is `games=0`, not `ppg=0`.
 3. The freshness block prints BEFORE the table, and `degraded` is true
    whenever any input is stale or missing.
+
+Team defenses: `is_dst_id` routes them out of the crosswalk (Sleeper names
+them by team abbreviation, which IS a stable id), so they are carried as rows
+but anchor to no gsis and therefore to no stat line. Every points and usage
+cell on a DST row is blank. That is the honest render — there is no DST
+scoring implementation — not a lookup that failed.
 """
 from __future__ import annotations
 

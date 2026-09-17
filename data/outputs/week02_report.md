@@ -1,19 +1,19 @@
-# Weekly report — Take Mahomes, Country Road
+# Weekly report
 
 **2026 week 2 (pregame) — usage/box scores through week 1 (lag 1w)**
-generated 2026-09-17T13:14:22+00:00
+generated 2026-09-17T14:02:55+00:00
 
 > NO PROJECTION MODEL SHIPPED — this report ranks nothing. Columns are measured usage and market lines only (rule #5: no feature ships without beating the full baseline out-of-sample).
 
 ## Input freshness
 
 ```
-sleeper_league  FRESH    as-of 2026-09-17 13:03 UTC  covers wk2  pulled 0h ago
-injuries        FRESH    as-of 2026-09-17 13:03 UTC  covers wk2  pulled 0h ago
-schedules       FRESH    as-of 2026-09-17 13:03 UTC  covers wk18  pulled 0h ago
-weekly_stats    FRESH    as-of 2026-09-17 13:03 UTC  covers wk1  pulled 0h ago
-snap_counts     FRESH    as-of 2026-09-17 13:03 UTC  covers wk1  pulled 0h ago
-crosswalk       FRESH    as-of 2026-09-17 13:03 UTC  covers —  pulled 0h ago
+sleeper_league  FRESH    as-of 2026-09-17 13:03 UTC  covers wk2  pulled 1h ago
+injuries        FRESH    as-of 2026-09-17 13:03 UTC  covers wk2  pulled 1h ago
+schedules       FRESH    as-of 2026-09-17 13:03 UTC  covers wk18  pulled 1h ago
+weekly_stats    FRESH    as-of 2026-09-17 13:03 UTC  covers wk1  pulled 1h ago
+snap_counts     FRESH    as-of 2026-09-17 13:03 UTC  covers wk1  pulled 1h ago
+crosswalk       FRESH    as-of 2026-09-17 13:03 UTC  covers —  pulled 1h ago
 ```
 
 All inputs current.
