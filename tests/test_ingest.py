@@ -43,14 +43,127 @@ def test_freshness_uses_the_pull_time_not_the_file_mtime(tmp_path):
     assert m.freshness("injuries", now=NOW).status is Status.STALE
 
 
-def test_a_failed_pull_is_recorded_as_missing_with_its_reason(tmp_path):
+def test_a_pull_that_never_once_succeeded_is_missing_with_its_reason(tmp_path):
     m = _manifest(tmp_path)
-    m.record("snap_counts", path="", rows=0, source="nflreadpy",
-             error="ConnectionError: 403")
+    m.record_failure("snap_counts", source="nflreadpy",
+                     error="ConnectionError: 403")
     f = m.freshness("snap_counts", now=NOW)
     assert f.status is Status.MISSING and "403" in f.reason
     assert m.file("snap_counts") is None
     assert m.read_frame("snap_counts") is None
+    # Nothing was ever fetched, so there is no as-of to report. The time of
+    # the FAILURE is not the age of data that does not exist.
+    assert f.as_of is None
+
+
+def test_a_failed_refresh_cannot_move_the_as_of_forward(tmp_path):
+    """The headline rule: a refresh that fails makes data older, never newer.
+
+    Recording the failed attempt as a new entry would stamp it with `now`,
+    and the report would then age four-day-old snap counts from the moment
+    the network died — i.e. call them current. The pull time belongs to the
+    pull that actually returned rows.
+    """
+    m = _manifest(tmp_path)
+    path = tmp_path / "snap_counts.parquet"
+    pd.DataFrame({"week": [1, 2]}).to_parquet(path)
+    good = NOW - timedelta(days=5)
+    m.record("snap_counts", path=path, rows=2, source="nflreadpy",
+             weeks=[1, 2], as_of=good)
+
+    m.record_failure("snap_counts", source="nflreadpy",
+                     error="ConnectionError: 503", at=NOW)
+
+    entry = m.get("snap_counts")
+    assert entry.as_of_dt == good, "the failure overwrote the good pull time"
+    assert entry.last_attempt.startswith("2026-09-17T13:00")
+    assert m.freshness("snap_counts", now=NOW).as_of == good
+
+
+def test_a_failed_refresh_does_not_discard_the_last_good_pull(tmp_path):
+    """A transient 503 must not throw away a perfectly good cached frame."""
+    m = _manifest(tmp_path)
+    path = tmp_path / "weekly_stats.parquet"
+    pd.DataFrame({"week": [1, 1, 2]}).to_parquet(path)
+    m.record("weekly_stats", path=path, rows=3, source="nflreadpy",
+             weeks=[1, 2], as_of=NOW - timedelta(hours=6))
+
+    m.record_failure("weekly_stats", source="nflreadpy",
+                     error="HTTPError: 503", at=NOW)
+
+    assert m.file("weekly_stats") == path
+    assert len(m.read_frame("weekly_stats")) == 3
+    entry = m.get("weekly_stats")
+    assert entry.rows == 3 and entry.weeks == [1, 2]
+
+
+def test_a_failed_refresh_is_never_fresh_and_says_what_broke(tmp_path):
+    """Data young enough to read FRESH still can't, once a refresh has failed:
+    the newest thing that happened to this source is a failure, and the reader
+    is told so rather than shown a clean bill of health."""
+    m = _manifest(tmp_path)
+    path = tmp_path / "injuries.parquet"
+    pd.DataFrame({"week": [2]}).to_parquet(path)
+    m.record("injuries", path=path, rows=1, source="nflreadpy", weeks=[2],
+             as_of=NOW - timedelta(minutes=30))
+    assert m.freshness("injuries", now=NOW).status is Status.FRESH
+
+    m.record_failure("injuries", source="nflreadpy",
+                     error="TimeoutError: read timed out", at=NOW)
+
+    f = m.freshness("injuries", now=NOW)
+    assert f.status is Status.STALE
+    assert "REFRESH FAILED" in f.reason and "read timed out" in f.reason
+    assert f.usable, "the cached rows are still shown, just labelled"
+
+
+def test_a_successful_pull_clears_a_previous_failure(tmp_path):
+    m = _manifest(tmp_path)
+    path = tmp_path / "schedules.parquet"
+    pd.DataFrame({"week": [1, 2]}).to_parquet(path)
+    m.record("schedules", path=path, rows=2, source="nflreadpy", weeks=[1, 2],
+             as_of=NOW - timedelta(days=9))
+    m.record_failure("schedules", source="nflreadpy", error="boom",
+                     at=NOW - timedelta(days=1))
+
+    m.record("schedules", path=path, rows=2, source="nflreadpy", weeks=[1, 2],
+             as_of=NOW)
+
+    entry = m.get("schedules")
+    assert entry.error == ""
+    assert m.freshness("schedules", now=NOW).status is Status.FRESH
+
+
+def test_the_puller_retries_a_source_whose_refresh_failed(tmp_path):
+    """age_ok drives the skip decision. A failed refresh must not let the
+    next run skip the source because the OLD data is still young."""
+    m = _manifest(tmp_path)
+    path = tmp_path / "crosswalk.csv"
+    path.write_text("gsis_id\n00-0000001\n", encoding="utf-8")
+    m.record("crosswalk", path=path, rows=1, source="dynastyprocess",
+             as_of=NOW - timedelta(hours=1))
+    assert m.age_ok("crosswalk", NOW, 24.0)
+
+    m.record_failure("crosswalk", source="dynastyprocess", error="404", at=NOW)
+    assert not m.age_ok("crosswalk", NOW, 24.0)
+
+
+def test_a_manifest_written_before_last_attempt_existed_still_loads(tmp_path):
+    """Forward compatibility: an on-disk manifest from before this field was
+    added must keep working rather than crash the report."""
+    (tmp_path / ing.MANIFEST_NAME).write_text(json.dumps({
+        "season": 2026,
+        "entries": {"schedules": {
+            "name": "schedules", "path": "schedules.parquet", "rows": 2,
+            "as_of": "2026-09-17T12:00:00+00:00", "source": "nflreadpy",
+            "weeks": [1, 2], "error": "",
+        }},
+    }), encoding="utf-8")
+    pd.DataFrame({"week": [1, 2]}).to_parquet(tmp_path / "schedules.parquet")
+
+    m = ing.Manifest.load(tmp_path)
+    assert m.get("schedules").last_attempt == ""
+    assert m.freshness("schedules", now=NOW).status is Status.FRESH
 
 
 def test_a_source_never_pulled_is_missing(tmp_path):

@@ -165,3 +165,133 @@ def test_a_custom_cadence_can_be_passed_in():
     cad = Cadence("x", max_age_hours=1.0)
     f = assess("x", now=THU, as_of=THU - timedelta(hours=2), rows=1, cadence=cad)
     assert f.status is Status.STALE
+
+
+# ---------------------------------------------------------------- as-of line
+# A report about week N must read exactly what week N could have read. The
+# cache is append-only and grows past the week you are rendering, so the
+# boundary has to come from the report week and the phase — never from
+# max(weeks present), which is whatever the last pull happened to fetch.
+
+SUN_NIGHT = datetime(2026, 9, 20, 23, 0, tzinfo=UTC)   # week-2 slate done
+WK2_KICKOFFS = [datetime(2026, 9, 20, 17, 0, tzinfo=UTC)]
+
+
+def test_a_pregame_report_may_not_read_its_own_week():
+    """Before the games, week N has no box scores worth the name. The
+    boundary is N-1 and a partial week-N row must not sneak in."""
+    ctx = WeekContext.build(season=2026, report_week=2, stats_weeks=[1, 2],
+                            kickoffs=[THU + timedelta(days=3)], now=THU)
+    assert ctx.phase is Phase.PREGAME
+    assert ctx.evidence_boundary == 1
+    assert ctx.stats_through == 1
+    assert ctx.withheld_weeks == (2,)
+
+
+def test_a_completed_week_is_its_own_evidence():
+    ctx = WeekContext.build(season=2026, report_week=2, stats_weeks=[1, 2],
+                            kickoffs=WK2_KICKOFFS, now=SUN_NIGHT)
+    assert ctx.phase is Phase.COMPLETE
+    assert ctx.evidence_boundary == 2
+    assert ctx.stats_through == 2
+    assert ctx.withheld_weeks == ()
+    assert not ctx.is_historical
+
+
+def test_a_week_after_the_boundary_is_withheld_not_read():
+    """The leak this exists to stop: re-rendering week 2 in week 6."""
+    ctx = WeekContext.build(season=2026, report_week=2,
+                            stats_weeks=[1, 2, 3, 4, 5],
+                            kickoffs=WK2_KICKOFFS, now=SUN_NIGHT)
+    assert ctx.stats_through == 2
+    assert ctx.withheld_weeks == (3, 4, 5)
+    assert ctx.is_historical
+    blob = " ".join(ctx.notes)
+    assert "WITHHELD" in blob and "3, 4, 5" in blob
+
+
+def test_a_historical_re_render_matches_what_that_week_saw():
+    """The property that makes a backtest honest: adding later weeks to the
+    cache changes nothing about an earlier week's report."""
+    at_the_time = WeekContext.build(season=2026, report_week=2,
+                                    stats_weeks=[1, 2], kickoffs=WK2_KICKOFFS,
+                                    now=SUN_NIGHT)
+    much_later = WeekContext.build(season=2026, report_week=2,
+                                   stats_weeks=list(range(1, 19)),
+                                   kickoffs=WK2_KICKOFFS, now=SUN_NIGHT)
+    assert much_later.stats_through == at_the_time.stats_through
+    assert much_later.stats_lag_weeks == at_the_time.stats_lag_weeks
+    assert much_later.headline() == at_the_time.headline()
+
+
+def test_the_boundary_does_not_move_when_the_cache_runs_dry():
+    """A gap in the cache is a lag, not a new boundary. Week 4 pregame with
+    box scores stopping at week 1 is two weeks behind and says so."""
+    ctx = WeekContext.build(season=2026, report_week=4, stats_weeks=[1],
+                            kickoffs=[THU + timedelta(days=3)], now=THU)
+    assert ctx.evidence_boundary == 3
+    assert ctx.stats_through == 1
+    assert ctx.stats_lag_weeks == 3 and ctx.rolled_over
+    assert any("rolled over" in n for n in ctx.notes)
+
+
+def test_withholding_everything_leaves_usage_blank_not_zero():
+    """Week 1 pregame: there is no admissible week at all. That is 'no
+    evidence', which the report must not render as a row of zeros."""
+    ctx = WeekContext.build(season=2026, report_week=1, stats_weeks=[1],
+                            kickoffs=[THU + timedelta(days=3)], now=THU)
+    assert ctx.stats_through is None
+    assert ctx.withheld_weeks == (1,)
+    assert any("blank, not zero" in n for n in ctx.notes)
+
+
+def test_a_historical_report_admits_its_designations_are_after_the_fact():
+    """Injury status and market lines come from the latest pull, not from an
+    archive. A re-rendered week cannot claim to know what was known then."""
+    ctx = WeekContext.build(season=2026, report_week=2, stats_weeks=[1, 2, 7],
+                            kickoffs=WK2_KICKOFFS, now=SUN_NIGHT)
+    assert any("not what was known before kickoff" in n for n in ctx.notes)
+
+
+# ------------------------------------------------------------ covered weeks
+# "covers through week 5" is the LAST week, not the whole set. A hole inside
+# the range is a data defect that staleness checks cannot see.
+
+def test_a_contiguous_range_reads_as_a_range():
+    f = assess("weekly_stats", now=THU, as_of=THU, rows=900,
+               covers_through_week=5, covered_weeks=[1, 2, 3, 4, 5])
+    assert f.week_gaps == ()
+    assert f.coverage() == "wk1-5"
+    assert "covers wk1-5" in f.line()
+
+
+def test_a_hole_inside_the_covered_range_is_named():
+    """The failure this catches: week 3 never landed, every season total is
+    short by a week, and 'covers wk5' says nothing is wrong."""
+    f = assess("weekly_stats", now=THU, as_of=THU, rows=700,
+               covers_through_week=5, covered_weeks=[1, 2, 4, 5])
+    assert f.status is Status.FRESH, "a gap is a defect, not staleness"
+    assert f.week_gaps == (3,)
+    assert f.coverage() == "wk1-5 (no wk3)"
+
+
+def test_a_gap_is_its_own_degradation_line():
+    ctx = WeekContext.build(season=2026, report_week=6, stats_weeks=[1, 2, 4, 5],
+                            kickoffs=[THU + timedelta(days=3)], now=THU)
+    gappy = assess("weekly_stats", now=THU, as_of=THU, rows=700,
+                   covers_through_week=5, covered_weeks=[1, 2, 4, 5])
+    notes = degradations([gappy], ctx)
+    gap_note = next(n for n in notes if "GAP" in n)
+    assert "week(s) 3" in gap_note and "short by those weeks" in gap_note
+
+
+def test_a_single_covered_week_is_not_a_range():
+    f = assess("injuries", now=THU, as_of=THU, rows=300,
+               covers_through_week=2, covered_weeks=[2])
+    assert f.coverage() == "wk2" and f.week_gaps == ()
+
+
+def test_a_source_with_no_week_column_still_renders_its_line():
+    """The crosswalk has no weeks at all. It must not print a fake range."""
+    f = assess("crosswalk", now=THU, as_of=THU, rows=12000)
+    assert f.coverage() == "—" and f.week_gaps == ()

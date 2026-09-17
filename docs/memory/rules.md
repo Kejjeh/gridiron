@@ -90,6 +90,17 @@ docs/BOOTSTRAP_FROM_PLV.md for the full history.
     are committed — git history doubles as the point-in-time archive
     (plv_clone's `recover_rp3_git_snapshots.py` trick, cheap at FF scale).
 
+    One carve-out: the rendered weekly roster report
+    (`data/outputs/week*_report.*`, `weekly_report_latest.*`) is gitignored.
+    It is the only output that is about ONE MANAGER — a START/BENCH/IR
+    column is a statement about who the owner is holding — and it is
+    regenerable from the cache in one command, so the archive argument does
+    not apply to it. League-wide files keyed by a player id (the draft
+    board, ADP, the competition tables) are NOT covered: an id column is not
+    a roster. `tests/test_hygiene_no_roster_in_repo.py` enforces the line on
+    what gets committed NEXT; files tracked before the rule existed stay put,
+    because rewriting shared history is a bigger hazard than the exposure.
+
 11. **No convenience traps.** The plv ADR-0004 `injured_players()` lesson:
     an accessor that makes the wrong interpretation ergonomic will be
     called. FF equivalents: treating Questionable as Out, and treating

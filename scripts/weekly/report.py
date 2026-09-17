@@ -97,9 +97,35 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
+    if manifest.season != args.season:
+        print(f"REFUSING: the cache at {directory} is season "
+              f"{manifest.season}, not {args.season}. A season boundary is "
+              f"not a staleness problem — re-pull rather than render last "
+              f"season's roster under this season's header.", file=sys.stderr)
+        return 2
+
     snapshot = manifest.read_json("sleeper_league") or {}
     state = snapshot.get("state") or {}
-    report_week = int(args.week or state.get("week") or 1)
+
+    # Season rollover. Sleeper's own state carries the season the LEAGUE is
+    # in; if the cached snapshot is from a different season than the frames
+    # beside it, the roster and the box scores describe different years and
+    # joining them produces a confident, wrong report.
+    state_season = int(state.get("season") or args.season)
+    if state_season != args.season:
+        print(f"REFUSING: the cached Sleeper snapshot is season "
+              f"{state_season}, the requested report is {args.season}. "
+              f"Re-run pull_week.py.", file=sys.stderr)
+        return 2
+
+    report_week = int(args.week or state.get("week") or 0)
+    if report_week < 1:
+        # Sleeper reports week 0 between seasons. There is no week to report.
+        print(f"No in-season week to report: Sleeper state is season "
+              f"{state_season}, week {state.get('week')!r}, type "
+              f"{str(state.get('season_type') or 'unknown')!r}. Pass --week "
+              f"to render a specific past week.", file=sys.stderr)
+        return 2
 
     schedule = manifest.read_frame("schedules")
     weekly = manifest.read_frame("weekly_stats")

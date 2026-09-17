@@ -354,3 +354,88 @@ def test_degraded_is_true_whenever_any_source_is_not_fresh(ctx, std, crosswalk,
 
 def test_the_league_name_can_be_withheld(report):
     assert "# Weekly report\n" in report.to_markdown(include_names=False)
+
+
+# ------------------------------------------------- no leakage from the future
+# The as-of boundary lives in WeekContext; these pin that it survives the trip
+# through usage aggregation and into the rendered table, which is where a leak
+# would actually mislead someone.
+
+def _with_later_weeks(frame: pd.DataFrame, weeks=(2, 3)) -> pd.DataFrame:
+    """The same players again in later weeks, with inflated production.
+
+    If any of it reaches a week-2 pregame report, the numbers move visibly —
+    which is the point: a silent leak is one that changes nothing, and that
+    is not the failure mode worth testing.
+    """
+    out = [frame]
+    for w in weeks:
+        later = frame.copy()
+        later["week"] = w
+        for col in ("receptions", "targets", "receiving_yards", "rushing_yards",
+                    "carries", "passing_yards"):
+            if col in later.columns:
+                later[col] = later[col] * 10
+        out.append(later)
+    return pd.concat(out, ignore_index=True)
+
+
+def test_a_later_week_in_the_cache_cannot_leak_into_an_earlier_report(
+        weekly_offense, weekly_kickers, snaps_wk1, crosswalk, league_snapshot,
+        sleeper_players, schedules, injuries):
+    """Re-rendering week 2 in week 4 must produce week 2's report.
+
+    Built twice off the same code path: once from a cache that stops at week
+    1, once from a cache that also holds weeks 2 and 3 at ten times the
+    volume. The rows must be identical.
+    """
+    base = pd.concat([weekly_offense, weekly_kickers], ignore_index=True)
+    grown = _with_later_weeks(base)
+
+    def render(frame, stats_weeks):
+        ctx = WeekContext.build(
+            season=2026, report_week=WEEK, stats_weeks=stats_weeks,
+            kickoffs=[datetime(2026, 9, 18, 0, 15, tzinfo=UTC)], now=NOW)
+        std = season_to_date(player_weeks(frame, snaps_wk1, crosswalk),
+                             through_week=ctx.stats_through)
+        return ctx, _build(ctx, std, crosswalk, league_snapshot,
+                           sleeper_players, schedules, injuries)
+
+    then_ctx, then = render(base, [1])
+    now_ctx, now = render(grown, [1, 2, 3])
+
+    assert then_ctx.stats_through == now_ctx.stats_through == 1
+    assert now_ctx.withheld_weeks == (2, 3)
+    numeric = [c for c in ("g", "pts", "ppg", "tgt", "car", "opp_n", "snap%")
+               if c in then.rows.columns]
+    pd.testing.assert_frame_equal(then.rows[numeric], now.rows[numeric])
+
+
+def test_the_report_names_the_weeks_it_refused_to_read(
+        weekly_offense, snaps_wk1, crosswalk, league_snapshot,
+        sleeper_players, schedules, injuries):
+    """Withholding silently would be its own dishonesty — the reader has to
+    know the cache is ahead of the report."""
+    ctx = WeekContext.build(
+        season=2026, report_week=WEEK, stats_weeks=[1, 2, 3],
+        kickoffs=[datetime(2026, 9, 18, 0, 15, tzinfo=UTC)], now=NOW)
+    std = season_to_date(
+        player_weeks(weekly_offense, snaps_wk1, crosswalk), through_week=1)
+    report = _build(ctx, std, crosswalk, league_snapshot, sleeper_players,
+                    schedules, injuries)
+
+    text = report.to_markdown()
+    assert "WITHHELD" in text
+    assert "not what was known before kickoff" in text
+    assert report.degraded
+
+
+def test_season_to_date_is_a_second_cut_not_the_only_one(
+        weekly_offense, snaps_wk1, crosswalk):
+    """Belt and braces: even handed a frame full of later weeks directly,
+    the aggregate honours through_week."""
+    grown = _with_later_weeks(weekly_offense, weeks=(2, 3, 4))
+    pw = player_weeks(grown, snaps_wk1, crosswalk)
+    std = season_to_date(pw, through_week=1)
+    assert set(std["last_week"]) == {1}
+    assert (std["games"] == 1).all()

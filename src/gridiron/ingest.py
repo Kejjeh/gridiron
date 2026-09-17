@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,13 +33,23 @@ def season_cache(season: int = SEASON_YEAR, root: Path | None = None) -> Path:
 
 @dataclass
 class Entry:
+    """One source in the cache.
+
+    `path`, `rows`, `weeks` and `as_of` always describe the last pull that
+    SUCCEEDED. `error` and `last_attempt` describe the most recent attempt,
+    which may have failed. Keeping them apart is the whole point: a failed
+    refresh makes data older, never newer, and must not be able to erase the
+    good file sitting next to it.
+    """
+
     name: str
     path: str
     rows: int
-    as_of: str                      # ISO-8601 UTC, when the PULL happened
+    as_of: str                      # ISO-8601 UTC, when the PULL SUCCEEDED
     source: str
     weeks: list[int] = field(default_factory=list)
-    error: str = ""
+    error: str = ""                 # set when the LATEST attempt failed
+    last_attempt: str = ""          # ISO-8601 UTC of that latest attempt
 
     @property
     def covers_through_week(self) -> int | None:
@@ -85,18 +95,46 @@ class Manifest:
         return self.path
 
     def record(self, name: str, *, path: Path | str, rows: int, source: str,
-               weeks: Iterable[int] = (), as_of: datetime | None = None,
-               error: str = "") -> Entry:
+               weeks: Iterable[int] = (), as_of: datetime | None = None) -> Entry:
+        """Record a pull that SUCCEEDED. Clears any prior failure."""
         stamp = (as_of or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        iso = stamp.isoformat(timespec="seconds")
         entry = Entry(
             name=name,
             path=str(Path(path).name),
             rows=int(rows),
-            as_of=stamp.isoformat(timespec="seconds"),
+            as_of=iso,
             source=source,
             weeks=sorted({int(w) for w in weeks}),
-            error=error,
+            error="",
+            last_attempt=iso,
         )
+        self.entries[name] = entry
+        return entry
+
+    def record_failure(self, name: str, *, source: str, error: str,
+                       at: datetime | None = None) -> Entry:
+        """Record a refresh that FAILED, without discarding the last good pull.
+
+        Nothing describing data is touched: `path`, `rows`, `weeks` and
+        `as_of` keep pointing at the last successful fetch, so the report
+        still reads that file and still ages it from when it was really
+        fetched. Writing `now` into `as_of` here — which is what recording a
+        failure as a fresh entry amounts to — would let a broken network
+        present itself as a current pull, and a dropped `path` would throw
+        away usable cached data over a transient 503.
+
+        A source that has never succeeded has nothing to preserve and is
+        recorded as the miss it is.
+        """
+        stamp = (at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        iso = stamp.isoformat(timespec="seconds")
+        prev = self.entries.get(name)
+        if prev is None or not prev.path:
+            entry = Entry(name=name, path="", rows=0, as_of="", source=source,
+                          weeks=[], error=error, last_attempt=iso)
+        else:
+            entry = replace(prev, error=error, last_attempt=iso)
         self.entries[name] = entry
         return entry
 
@@ -104,8 +142,11 @@ class Manifest:
         return self.entries.get(name)
 
     def file(self, name: str) -> Path | None:
+        """The last GOOD file for this source, even if the latest refresh
+        failed. A stale-but-real frame, labelled stale, beats no frame —
+        `freshness()` is what tells the reader which one they have."""
         e = self.entries.get(name)
-        if e is None or not e.path or e.error:
+        if e is None or not e.path:
             return None
         p = self.directory / e.path
         return p if p.exists() else None
@@ -126,13 +167,28 @@ class Manifest:
         if e is None:
             return SourceFreshness(name, Status.MISSING, None, 0, None,
                                    "never pulled")
-        if e.error:
-            return SourceFreshness(name, Status.MISSING, e.as_of_dt, 0,
-                                   e.covers_through_week,
-                                   f"last pull failed: {e.error[:120]}")
-        return assess(name, now=now, as_of=e.as_of_dt, rows=e.rows,
-                      covers_through_week=e.covers_through_week,
-                      required_week=required_week)
+        if not e.path or e.as_of_dt is None or self.file(name) is None:
+            # Never succeeded, or the good file is gone. Either way there is
+            # no data to age, so the failure's timestamp is NOT reported as
+            # an as-of: there is nothing it could be the as-of of.
+            return SourceFreshness(
+                name, Status.MISSING, None, 0, e.covers_through_week,
+                f"last pull failed: {e.error[:120]}" if e.error
+                else "never pulled")
+        fresh = assess(name, now=now, as_of=e.as_of_dt, rows=e.rows,
+                       covers_through_week=e.covers_through_week,
+                       required_week=required_week,
+                       covered_weeks=e.weeks)
+        if not e.error:
+            return fresh
+        # Real data, but the latest refresh failed. It can never read FRESH:
+        # the newest thing that happened to this source is a failure.
+        return replace(
+            fresh,
+            status=Status.STALE if fresh.status is Status.FRESH else fresh.status,
+            reason=(f"{fresh.reason}; REFRESH FAILED at "
+                    f"{e.last_attempt or 'unknown time'}: {e.error[:100]}"),
+        )
 
     def freshness_report(self, names: Sequence[str], *, now: datetime,
                          required_week: int | None = None

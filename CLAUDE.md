@@ -45,8 +45,9 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
    (the week has a shape: Wed waivers, Fri designations, Sun inactives).
 9. Credentials live in `.env` (gitignored) only, prefix `GRIDIRON_`, read via
    `gridiron.config`. Never write a credential into a tracked file.
-10. Don't commit bulk data (`data/research/cache/` is ignored); DO commit the
-    small weekly projection/ledger CSVs in `data/outputs/` and `data/ledger/`.
+10. Don't commit bulk data (`data/research/cache/` ignored) or roster-bearing
+    weekly reports (`data/outputs/week*_report.*` ignored — they name the
+    owner's players); DO commit the small projection/ledger CSVs.
 11. "Questionable" ≠ out; "on roster" ≠ startable. No convenience accessor
     that makes the wrong call easy.
 12. Start with 5 skills max (roster-audit, waiver-board, start-sit, matchup,

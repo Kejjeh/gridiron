@@ -1,160 +1,169 @@
 # HANDOFF
 
-Updated: 2026-09-17 (in-season milestone 1: weekly ingest + roster report.
-Branch `claude/compassionate-shannon-yq0hw5`, NOT merged — awaiting Astra.)
+State: **milestone 1 complete and reconciled with main.** Branch
+`claude/compassionate-shannon-yq0hw5`, open as PR #1, awaiting Astra review.
+Not merged, not deployed.
 
-## Settings: the contradiction is resolved, in favour of VERIFIED
+No identifiers in this file: the league id and the owner's Sleeper handle live
+in `src/gridiron/league_config.py`, and the rendered roster report is
+gitignored. Nothing here names a player the owner holds.
 
-The Sept-8 handoff said settings were verified; CLAUDE.md rule #1 still said
-"UNVERIFIED placeholders". The flag was right and the prose was stale.
+## Read this first
 
-Evidence, re-pulled live today from the Sleeper league object (status
-`in_season`, week 2): **55/55 checked constants match, zero drift** —
-scoring weights, roster positions, team count, playoff/trade weeks, FAAB
-budget, waiver day and clear days, every kicking and defense weight. The
-check is now a committed script, `scripts/verify_league_settings.py`
-(exit 0 match / 1 drift / 2 unreachable), and it is AST-tested to be
-incapable of writing to `league_config.py`. The verified values are also
-pinned in `tests/test_league_config.py`, so drift fails a test rather than
-silently changing a number. CLAUDE.md rule #1 and `docs/memory/rules.md`
-rule #1 now say verified, and keep the gate: engines still check
-`SETTINGS_VERIFIED`, and flipping a flag to unblock a run is still banned.
+PR #2 — the dependency-free offensive scoring repair plus the standing league
+settings verification — was reviewed independently and merged to main as
+`cd9d9ef`. **main has been merged into this branch**, so this branch now
+contains that work rather than a second copy of it. The reconciliation kept
+main's version of every shared file (it was a strict superset everywhere but
+two `scoring.py` docstrings); `scoring.py`'s executable code is byte-identical
+to main's. There is one scoring implementation, and it is the reviewed one.
 
-Constants added from the live `settings` block (they were missing):
-`SLEEPER_LEAGUE_ID`, `MY_SLEEPER_USERNAME`, `WAIVER_TYPE` (faab),
-`WAIVER_BUDGET` 100, `WAIVER_MIN_BID` 0, `WAIVER_CLEAR_WEEKDAY` 2 (Wed),
-`WAIVER_CLEAR_DAYS` 2, `TRADE_REVIEW_DAYS` 2, `MAX_KEEPERS` 1.
+The dependency question is **closed**: the owner approved `nflreadpy`,
+`pandas` and `pyarrow` for this project's environment on 2026-09-17. No other
+new direct dependency, and no paid API. `docs/review/MILESTONE1_DEPENDENCY_REVIEW.md`
+is kept as the record of what each one buys.
 
-## The scoring bug this uncovered
+## What you can actually run
 
-`gridiron.scoring` read `interceptions`, `fumbles_lost` and
-`two_point_conversions`. **None of those columns exist in the current
-nflverse weekly frame.** Missing keys score as zero, so every interception,
-lost fumble and two-point conversion had been silently worth nothing. The
-draft board never noticed because it scored projections, not box scores.
+```
+PYTHONPATH=src python scripts/ingest/pull_week.py     # network, read-only
+PYTHONPATH=src python scripts/weekly/report.py        # offline, prints
+PYTHONPATH=src python scripts/weekly/report.py --write --anonymous
+PYTHONPATH=src python scripts/verify_league_settings.py
+```
 
-Fixed in the one implementation (rule #2): each scoring term now names the
-current columns it sums (`passing_interceptions`; `sack_/rushing_/
-receiving_fumbles_lost`; `passing_/rushing_/receiving_2pt_conversions`) and
-keeps the old name as a fallback read only when no current column is present,
-so pre-rewrite frames still score and a frame carrying both spellings cannot
-double-count. `kicker_points` is new. Two external reconciliations, both
-pinned on committed fixtures:
+`pull_week.py` fetches nflverse weekly stats, snap counts, schedules and
+injuries, the dynastyprocess id crosswalk, and a read-only Sleeper snapshot
+into `data/research/cache/season2026/` (gitignored). `report.py` renders from
+that cache and never opens a socket — there is a test that breaks the socket
+and re-renders to prove it.
 
-- **357/357** offensive player-weeks of 2026 week 1 reproduce
-  `(fantasy_points + fantasy_points_ppr) / 2` exactly (max abs error 0.0).
-- **147/147** rostered offensive player-weeks and **12/12** kickers reproduce
-  Sleeper's own `players_points` under this league's scoring.
+The report prints, per rostered player: lineup slot, opponent and market
+implied total, the injury designation with its source, and measured usage
+(snap %, targets, target share, carries, opportunities) plus league points
+through the last admissible week. It ranks nothing and recommends nothing.
 
-`fumbles_lost_total` looks like the right column and is not — it counts
-return fumbles and misses by 2 rows. Blocked kicks are deliberately unmapped
-(no blocked kick in week 1, so blocked-as-miss is UNVERIFIED).
+## The four time invariants, and the tests that hold them
 
-## What shipped (milestone 1)
+These are the ways a weekly tool lies about time. Each is pinned.
 
-Weekly workflow, in two commands:
+1. **No future leakage.** A report about week N reads weeks ≤ N-1 before the
+   slate and ≤ N once it is COMPLETE. The boundary is
+   `WeekContext.evidence_boundary`, derived from the report week and the
+   phase — *not* from `max(weeks in the cache)`, which is what the code did
+   before and which meant re-rendering week 2 in week 6 quietly read weeks
+   3–5. `test_a_later_week_in_the_cache_cannot_leak_into_an_earlier_report`
+   builds the same report twice, once from a cache stopping at week 1 and
+   once from a cache also holding weeks 2–3 at ten times the volume, and
+   asserts the numeric columns are identical.
+   Weeks past the boundary are listed as WITHHELD in the report, and a
+   re-render states that its injury designations and market lines come from
+   the latest pull — they are after-the-fact, not what was known at kickoff.
 
-    PYTHONPATH=src python scripts/ingest/pull_week.py      # network
-    PYTHONPATH=src python scripts/weekly/report.py --write # offline
+2. **A failed refresh cannot fake freshness.** `Manifest.record_failure`
+   records the failure and touches nothing that describes data: `path`,
+   `rows`, `weeks` and `as_of` keep pointing at the last pull that actually
+   returned rows. Previously a failure was recorded as a fresh entry stamped
+   `now`, so a dead network aged as a current pull *and* dropped the good
+   cached file over a transient 503. A source whose latest refresh failed can
+   never read FRESH; it renders STALE with the failure reason and still shows
+   its cached rows. Cache writes are atomic (temp file + `os.replace`), so a
+   pull that dies mid-write cannot leave a truncated parquet behind.
 
-New in `src/gridiron/` (production boundary; scripts are thin drivers):
+3. **Season rollover is a refusal, not a note.** A cache season, or a cached
+   Sleeper state season, that disagrees with the requested season exits 2
+   rather than rendering last season's roster under this season's header.
+   Sleeper reports week 0 between seasons; that exits 2 too, unless `--week`
+   is passed to look back at a finished week.
 
-- `ids.py` — the ONE crosswalk (rule #3). Source of record is dynastyprocess
-  `db_playerids.csv`: **168/168** rostered non-DST players resolve, against
-  36/168 from Sleeper's own sparse `gsis_id` field (kept as a gap-filling
-  overlay that never overrides). `nflreadpy.load_ff_playerids()` 403s through
-  the egress proxy; we read raw.githubusercontent.com directly. Unresolved
-  ids are a reported result, never a name match and never a silent drop.
-- `sleeper.py` — read-only league adapter, GET-only by construction, with a
-  test that fails the build if a write verb appears. Needs no credential.
-- `freshness.py` — cadence-aware staleness in ET (rule #8: injuries tighten
-  from 48h to 12h on gameday/designation/waiver days), plus `WeekContext`,
-  which separates the week the report is ABOUT from the last week box scores
-  exist for and flags the gap.
-- `ingest.py` — the season cache manifest. Freshness is read from the PULL
-  time, never a file mtime; a failed pull is recorded as a failure so the
-  report degrades visibly instead of rendering last week's numbers.
-- `usage.py` — opportunity and efficiency as explicitly separate column
-  groups (rule #6), gsis-anchored, snaps joined through the gsis→pfr edge
-  (99.2% coverage on the live frame). `season_to_date(through_week=)` is the
-  single chronological truncation every as-of read goes through.
-- `weekly.py` — the report. Prints measured usage, league points, injury
-  designation, opponent and the market's implied team total. It ranks
-  nothing.
+4. **Coverage gaps are visible.** Freshness carries the full covered-week
+   set, so a hole inside the range gets its own line (`covers wk1-5 (no
+   wk3)` plus a GAP degradation). "Covers through week 5" off weeks
+   {1,2,4,5} is true, and every season total built on it is short by a week.
 
-Verification: smoke green (14 imports, 18 files); full suite **231 passed**
-(was 74); war-room `node --test` 10/10 unchanged. `weekly_report` registered
-as a `golden_run.py` target against the stable `weekly_report_latest.csv`.
+The three honesty invariants from milestone 1 still hold: blank is never zero,
+a missing schedule renders `?` and never BYE, and "not on this week's injury
+report" reads differently from "no injury report loaded".
 
-## The three honesty invariants, and why they have tests
+## Verification (all green, 2026-09-17)
 
-1. **Evidence of absence ≠ absence of evidence.** "Not on the week-2 injury
-   report" and "we never loaded a week-2 injury report" render differently,
-   and a week-1 designation shown in week 2 is labelled `wk1 report: Out —
-   NO wk2 designation yet`. Rule #11 has teeth: there is no `is_startable`
-   boolean, and a test bans one from appearing.
-2. **Blank is blank.** "No snap row" renders blank, not 0 — it is a
-   different fact from "played no snaps". A player with no box score gets a
-   blank `g`/`pts`/`ppg`, not `0.0`. A team missing from a schedule we could
-   not load renders `?`, not `BYE`.
-3. **No guessed recommendation.** Nothing has passed the rule #5 gate, so the
-   report opens with `NO PROJECTION MODEL SHIPPED` and carries no
-   projection/rank/recommend column — a test asserts the absence.
+| check | result |
+|---|---|
+| `python scripts/ci/smoke.py` | PASS — 16 imports, 20 contract files |
+| `python scripts/ci/run_summary.py -- python -m pytest` | **279 passed** (main: 239) |
+| `node --test scripts/research/warroom/draftroom_logic.test.js` | 10/10 pass |
+| `scripts/verify_league_settings.py` (live) | exit 0, 55 constants, no drift |
+| `golden_run.py --target weekly_report` A/B | 1/1 byte-IDENTICAL |
 
-## BLOCKED: dependency scope (read this first)
+The golden A/B here is a **reproducibility** check, not a refactor check: two
+independent runs against the same cache produce byte-identical output. The
+time-boundary and failed-refresh changes are deliberate behavior changes, so
+A/B across them would be meaningless and was not claimed.
 
-Review flagged `requirements.txt` adding `nflreadpy`, `pandas` and `pyarrow`
-against a no-new-dependencies constraint. Unresolved — do not merge, do not
-install. Full analysis in `docs/review/MILESTONE1_DEPENDENCY_REVIEW.md`. The
-short version: pandas was ALREADY a hard runtime dependency of `src/gridiron/`
-on `main` (`draft.py`, `ledger.py`, both in pre-PR smoke IMPORTS), so that line
-declares existing state; nflreadpy was already imported by a committed research
-script and is confined to one ingest driver; pyarrow is the only genuinely new
-one and the cheapest to drop (CSV instead of parquet).
+Live read-only validation this turn: `pull_week.py` against nflverse and
+Sleeper, and `report.py` rendering the real week-2 report. No league
+transaction of any kind — `gridiron.sleeper` is GET-only by construction and
+`tests/test_sleeper.py::test_module_is_read_only` pins it.
 
-Five of the seven new modules are stdlib-only, so two PRs can be peeled off with
-zero new dependencies: the **scoring repair** (fixes a bug that is silently
-wrong on `main` today) and **settings verification**. Only the ingest-and-report
-half is actually blocked.
+## Provenance and coverage
+
+| source | via | covers | note |
+|---|---|---|---|
+| weekly player stats | `nflreadpy.load_player_stats` | wk1 | wk2 lands after the slate |
+| snap counts | `nflreadpy.load_snap_counts` | wk1 | PFR-keyed, joined through the crosswalk |
+| schedules + market lines | `nflreadpy.load_schedules` | wk1–18 | `total_line` is the implied-total input |
+| injuries | `nflreadpy.load_injuries` | wk1–2 | designation + practice status |
+| id crosswalk | dynastyprocess `db_playerids.csv` | — | Sleeper's own `gsis_id` overlays gaps only |
+| league / rosters / matchups | Sleeper public read API | wk2 | no auth, no writes |
+
+**Missing sources, named rather than worked around:** no DST scoring (nflverse
+weekly data is player-level; a DST row carries blank points and an explicit
+"n/a (team defense)" note, never 0.0). No blocked-kick mapping — no blocked
+kick occurred in the reconciliation week, so whether the league scores it as a
+miss is UNVERIFIED and deliberately unmapped. No projections, no rankings, no
+start/sit or waiver output: the rule #5 gate is unmet.
+
+Dependency versions in the project environment: pandas 3.0.5, pyarrow 25.0.1,
+nflreadpy 0.1.5, polars 1.44.2 (transitive, via nflreadpy), numpy 2.4.6,
+pytest 9.1.1, Python 3.11.15.
+
+## Owner data boundary
+
+The rendered weekly report names the owner's actual players, so
+`data/outputs/week*_report.*` and `weekly_report_latest.*` are now gitignored
+and the previously committed week-2 pair is untracked at this branch's tip.
+`tests/test_hygiene_no_roster_in_repo.py` fails if a roster-bearing file is
+staged again.
+
+Two things deliberately NOT done: history is not rewritten (the untracked pair
+still exists in this branch's earlier commits, and rewriting shared history is
+a bigger hazard than the exposure), and the league-wide files already tracked
+on main — the draft board, ADP and competition tables — are left alone. They
+are keyed by player id and expose no roster; an id column is not a roster, and
+treating it as one would ban the public files rule #10 exists to keep.
+
+One item for the owner: some of those pre-existing tracked files under
+`data/outputs/` do contain the owner's Sleeper display name in a column. That
+predates this branch and is unchanged by it. Widening was avoided; whether to
+narrow it is the owner's call.
 
 ## Next
 
-1. **Resolve the dependency decision** (owner/Astra), then re-cut per the
-   review doc. Do not start projections while it is open.
-2. **Astra review of this branch.** Nothing merged, nothing deployed.
-3. Open question for the owner: should `data/outputs/week{NN}_report.*` keep
-   being committed (rule #10 says yes for weekly CSVs) now that it contains
-   the roster? `week02_report.*` is committed here as the first example, now
-   in its `--anonymous` form (no league name — strictly less personal data;
-   it is also what the golden_run target regenerates).
-4. Build step 3 baseline — usage prior × efficiency × line multiplier, with
-   the corrected scoring. Must beat a baseline containing ALL existing
-   features out-of-sample before any number reaches the report (rule #5).
-   Chronological split only; `season_to_date(through_week=)` is the boundary.
-5. Then roster audit → waiver board → start/sit, in that order, each gated on
-   evidence. FAAB constants are now available for the waiver board; the §7
-   bid guidance in QUANT_FOUNDATIONS is still UNVERIFIED.
-6. Post-draft ledger (carried from the last handoff, still not done):
-   `scripts/research/record_draft_2026.py` writes `data/ledger/draft_2026.csv`
-   and grades the board's `p{k}`/`ph{k}` predictions. The ADP-only vs
-   history-aware comparison decides which model the in-season tools trust.
-7. Reconcile the QUANT_FOUNDATIONS §5–7 verification failures (381/382,
-   177/12, 66/9) — unchanged from the last two handoffs.
-8. DST scoring has no implementation (nflverse weekly is player-level). A DST
-   row is carried with team/opponent/implied total and EVERY points and usage
-   cell blank — `scoring.py`'s docstring previously claimed it carried
-   Sleeper's actual points, which was never true and is now corrected. Either
-   aggregate team stats or wire Sleeper's actuals in as an explicit decision.
+1. **Astra review of this branch.** Nothing is merged or deployed.
+2. **Week 2 rollover check.** After Sunday's slate, `pull_week.py` then
+   `report.py` should show `weekly_stats covers wk1-2` and the lag return to
+   0. That is the first live exercise of the phase boundary.
+3. **DST scoring**, which needs team-level aggregation from nflverse
+   play-by-play — the one place the report currently renders a hole.
+4. **Then** the rule #5 gate: a projection cannot ship until it beats a
+   baseline containing every existing feature, out-of-sample. Roster audit,
+   waiver board and start/sit all sit behind that gate.
 
 ## Not done deliberately
 
-- No projections, rankings, start/sit advice or waiver board. Milestone 1 is
-  evidence only.
-- No skills yet (rule #12). The report is the thing a skill would wrap;
-  wrapping it before the numbers are trustworthy would be premature.
-- No new dependencies beyond the ones `requirements.txt` already planned for
-  ingest (nflreadpy, pandas, pyarrow). `gridiron.weekly` renders its own
-  markdown table rather than adding `tabulate`.
-- Blocked-kick scoring left unmapped rather than guessed.
-- `scripts/research/` left untouched; the name-join hygiene test scopes to
-  the in-season path only.
+- No lineup change, waiver claim, trade or message. Ever, by construction.
+- No projections, rankings or start/sit advice while the rule #5 gate is
+  unmet. A guessed recommendation presented as verified is the failure mode
+  this repo exists against.
+- No blocked-kick scoring and no DST scoring invented to fill the gap.
+- No history rewrite, no merge, no deploy, no PR watcher.

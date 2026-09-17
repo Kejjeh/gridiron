@@ -118,6 +118,10 @@ class SourceFreshness:
     rows: int
     covers_through_week: int | None
     reason: str
+    #: Every week this source actually has rows for. `covers_through_week` is
+    #: only the last of them, which is why a hole in the middle needs its own
+    #: field to be visible at all.
+    covered_weeks: tuple[int, ...] = field(default=())
 
     @property
     def usable(self) -> bool:
@@ -125,11 +129,37 @@ class SourceFreshness:
         count beats no snap count. MISSING data is never invented."""
         return self.status is not Status.MISSING
 
+    @property
+    def week_gaps(self) -> tuple[int, ...]:
+        """Weeks missing from inside the covered range.
+
+        "Covers through week 5" off weeks {1,2,4,5} is true and misleading:
+        week 3 is absent, so every season-to-date total built on it is short
+        by a week and nothing in the header says so. A gap is a data defect,
+        not staleness, and it gets named separately.
+        """
+        if len(self.covered_weeks) < 2:
+            return ()
+        lo, hi = self.covered_weeks[0], self.covered_weeks[-1]
+        have = set(self.covered_weeks)
+        return tuple(w for w in range(lo, hi + 1) if w not in have)
+
+    def coverage(self) -> str:
+        """Human-readable covered weeks: 'wk1-5', 'wk1-5 (no wk3)', 'wk2'."""
+        if not self.covered_weeks:
+            return f"wk{self.covers_through_week}" if self.covers_through_week else "—"
+        lo, hi = self.covered_weeks[0], self.covered_weeks[-1]
+        span = f"wk{lo}" if lo == hi else f"wk{lo}-{hi}"
+        gaps = self.week_gaps
+        if gaps:
+            span += " (no wk" + ",".join(str(w) for w in gaps) + ")"
+        return span
+
     def line(self) -> str:
         stamp = self.as_of.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") \
             if self.as_of else "never"
-        wk = f"wk{self.covers_through_week}" if self.covers_through_week else "—"
-        return f"{self.name:<15} {self.status.value.upper():<8} as-of {stamp}  covers {wk}  {self.reason}"
+        return (f"{self.name:<15} {self.status.value.upper():<8} as-of {stamp}"
+                f"  covers {self.coverage()}  {self.reason}")
 
 
 def age_hours(as_of: datetime | None, now: datetime) -> float | None:
@@ -149,13 +179,15 @@ def assess(
     covers_through_week: int | None = None,
     required_week: int | None = None,
     cadence: Cadence | None = None,
+    covered_weeks: Sequence[int] = (),
 ) -> SourceFreshness:
     """Classify one source. Never raises — a broken source is a report line."""
     cad = cadence or CADENCES.get(name) or Cadence(name, max_age_hours=72.0)
+    weeks = tuple(sorted({int(w) for w in covered_weeks}))
     if as_of is None or rows <= 0:
         why = "not pulled" if as_of is None else "pulled but empty"
         return SourceFreshness(name, Status.MISSING, as_of, rows,
-                               covers_through_week, why)
+                               covers_through_week, why, weeks)
 
     age = age_hours(as_of, now) or 0.0
     limit = cad.limit_for(now)
@@ -163,6 +195,7 @@ def assess(
         return SourceFreshness(
             name, Status.STALE, as_of, rows, covers_through_week,
             f"pulled {age:.0f}h ago, over the {limit:.0f}h {day_shape(now).value} limit",
+            weeks,
         )
 
     if (cad.forward_looking and required_week is not None
@@ -172,10 +205,11 @@ def assess(
             name, Status.STALE, as_of, rows, covers_through_week,
             f"fresh pull but only covers week {covers_through_week}, "
             f"report is for week {required_week}",
+            weeks,
         )
 
     return SourceFreshness(name, Status.FRESH, as_of, rows, covers_through_week,
-                           f"pulled {age:.0f}h ago")
+                           f"pulled {age:.0f}h ago", weeks)
 
 
 def _aware(dt: datetime) -> datetime:
@@ -205,6 +239,9 @@ class WeekContext:
     phase: Phase
     now: datetime
     notes: tuple[str, ...] = field(default=())
+    #: Weeks the cache holds that sit AFTER this report's as-of boundary.
+    #: They are recorded so the report can say what it refused to read.
+    withheld_weeks: tuple[int, ...] = field(default=())
 
     @property
     def stats_lag_weeks(self) -> int | None:
@@ -225,6 +262,26 @@ class WeekContext:
         return 0 if self.phase is Phase.COMPLETE else 1
 
     @property
+    def evidence_boundary(self) -> int:
+        """The last week whose box scores this report is ALLOWED to read.
+
+        This is the chronological as-of line. A report about week N that is
+        rendered before week N's games are final may read weeks < N and
+        nothing else; once the slate is complete week N itself becomes
+        evidence. Re-rendering an old week later must produce the same
+        answer as it did that week, so the boundary is derived from the
+        report week and the phase — never from what happens to be sitting
+        in the cache.
+        """
+        return self.report_week - self.expected_lag
+
+    @property
+    def is_historical(self) -> bool:
+        """True when the cache holds weeks this report is not allowed to see,
+        i.e. we are re-rendering a week that the season has moved past."""
+        return bool(self.withheld_weeks)
+
+    @property
     def rolled_over(self) -> bool:
         """True when the box scores are further behind than the phase allows —
         the week ticked over and the data has not caught up yet."""
@@ -243,19 +300,44 @@ class WeekContext:
               stats_weeks: Iterable[int], kickoffs: Sequence[datetime],
               now: datetime) -> "WeekContext":
         weeks = sorted({int(w) for w in stats_weeks})
-        stats_through = weeks[-1] if weeks else None
         phase = phase_for(kickoffs, now)
+        boundary = int(report_week) - (0 if phase is Phase.COMPLETE else 1)
+
+        # THE CHRONOLOGICAL CUT. Everything after the boundary is dropped here,
+        # before any aggregation sees it, so a week-2 report rendered in week 6
+        # reads exactly the weeks it could have read in week 2. Truncating
+        # later (in season_to_date) would be a second line of defence; doing it
+        # here means the report's own headline cannot overstate its coverage.
+        admissible = [w for w in weeks if w <= boundary]
+        withheld = tuple(w for w in weeks if w > boundary)
+        stats_through = admissible[-1] if admissible else None
+
         notes: list[str] = []
+        if withheld:
+            notes.append(
+                f"as-of boundary week {boundary}: the cache also holds week(s) "
+                f"{', '.join(str(w) for w in withheld)}, which are WITHHELD "
+                f"from this week-{report_week} report — later results must not "
+                f"inform an earlier week")
+            notes.append(
+                "re-rendered after the fact: injury designations and market "
+                "lines come from the LATEST pull, so they reflect what is "
+                "known now, not what was known before kickoff")
         if stats_through is None:
-            notes.append("no nflverse box scores for this season yet — "
-                         "usage columns are blank, not zero")
-        ctx = cls(season, report_week, stats_through, phase, now, tuple(notes))
+            notes.append(
+                "no nflverse box scores this report may read — usage columns "
+                "are blank, not zero"
+                + (f" (the cache starts at week {weeks[0]}, after the "
+                   f"boundary)" if weeks else ""))
+        ctx = cls(season, report_week, stats_through, phase, now, tuple(notes),
+                  withheld)
         if ctx.rolled_over:
             notes.append(
                 f"week rolled over to {report_week} but box scores stop at "
                 f"week {stats_through} — usage shown is {ctx.stats_lag_weeks} "
                 f"week(s) old")
-            ctx = cls(season, report_week, stats_through, phase, now, tuple(notes))
+            ctx = cls(season, report_week, stats_through, phase, now,
+                      tuple(notes), withheld)
         return ctx
 
 
@@ -272,4 +354,10 @@ def degradations(sources: Iterable[SourceFreshness],
             out.append(f"{s.name}: MISSING ({s.reason}) — related columns are blank")
         elif s.status is Status.STALE:
             out.append(f"{s.name}: STALE ({s.reason}) — shown but not current")
+        if s.week_gaps:
+            out.append(
+                f"{s.name}: GAP — no rows for week(s) "
+                f"{', '.join(str(w) for w in s.week_gaps)} inside a range that "
+                f"reaches week {s.covers_through_week}; season totals built on "
+                f"it are short by those weeks")
     return tuple(out)

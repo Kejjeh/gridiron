@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -35,6 +36,22 @@ from gridiron.scoring import scoring_inputs
 from gridiron.sleeper import USER_AGENT, SleeperReadOnly
 
 NFLVERSE_SOURCES = ("weekly_stats", "snap_counts", "schedules", "injuries")
+
+
+def atomic(path: Path, write) -> None:
+    """Write through a temp file and rename into place.
+
+    A pull that dies halfway must not leave a truncated parquet sitting where
+    the last good one was. `os.replace` is atomic on both POSIX and Windows,
+    so the cached file is either the previous pull or the new one, never a
+    fragment of the new one.
+    """
+    tmp = path.with_name(path.name + ".part")
+    try:
+        write(tmp)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _weeks(frame) -> list[int]:
@@ -67,13 +84,13 @@ def pull_nflverse(manifest: ing.Manifest, season: int, now: datetime,
         try:
             df = fn()
             pdf = df.to_pandas() if hasattr(df, "to_pandas") else df
-            pdf.to_parquet(path, index=False)
+            atomic(path, lambda t: pdf.to_parquet(t, index=False))
             manifest.record(name, path=path, rows=len(pdf), source=source,
                             weeks=_weeks(pdf))
             print(f"  {name}: {len(pdf)} rows, weeks {_weeks(pdf) or '—'}")
         except Exception as exc:  # a failed source is data, not a crash
-            manifest.record(name, path="", rows=0, source=source,
-                            error=f"{type(exc).__name__}: {exc}")
+            manifest.record_failure(name, source=source,
+                                    error=f"{type(exc).__name__}: {exc}")
             print(f"  {name}: FAILED {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
@@ -87,13 +104,14 @@ def pull_crosswalk(manifest: ing.Manifest, now: datetime, force: bool) -> None:
         req = urllib.request.Request(CROSSWALK_URL,
                                      headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=120) as resp:
-            path.write_bytes(resp.read())
+            body = resp.read()
+        atomic(path, lambda t: t.write_bytes(body))
         rows = sum(1 for _ in path.open(encoding="utf-8")) - 1
         manifest.record(name, path=path, rows=rows, source=CROSSWALK_URL)
         print(f"  crosswalk: {rows} rows")
     except Exception as exc:
-        manifest.record(name, path="", rows=0, source=CROSSWALK_URL,
-                        error=f"{type(exc).__name__}: {exc}")
+        manifest.record_failure(name, source=CROSSWALK_URL,
+                                error=f"{type(exc).__name__}: {exc}")
         print(f"  crosswalk: FAILED {exc}", file=sys.stderr)
 
 
@@ -104,7 +122,8 @@ def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
     week = 0
     try:
         snapshot = client.snapshot()
-        snap_path.write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
+        atomic(snap_path, lambda t: t.write_text(json.dumps(snapshot, indent=1),
+                                                 encoding="utf-8"))
         week = int(snapshot["week"])
         manifest.record("sleeper_league", path=snap_path,
                         rows=len(snapshot.get("rosters") or []),
@@ -112,9 +131,9 @@ def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
         print(f"  sleeper_league: week {week}, "
               f"{len(snapshot.get('rosters') or [])} rosters")
     except Exception as exc:
-        manifest.record("sleeper_league", path="", rows=0,
-                        source="api.sleeper.app (read-only)",
-                        error=f"{type(exc).__name__}: {exc}")
+        manifest.record_failure("sleeper_league",
+                                source="api.sleeper.app (read-only)",
+                                error=f"{type(exc).__name__}: {exc}")
         print(f"  sleeper_league: FAILED {exc}", file=sys.stderr)
 
     name = "sleeper_players"
@@ -126,13 +145,14 @@ def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
         path = manifest.directory / "sleeper_players.json"
         try:
             players = client.players()
-            path.write_text(json.dumps(players), encoding="utf-8")
+            atomic(path, lambda t: t.write_text(json.dumps(players),
+                                                encoding="utf-8"))
             manifest.record(name, path=path, rows=len(players),
                             source="api.sleeper.app/v1/players/nfl (read-only)")
             print(f"  sleeper_players: {len(players)} players")
         except Exception as exc:
-            manifest.record(name, path="", rows=0, source="api.sleeper.app",
-                            error=f"{type(exc).__name__}: {exc}")
+            manifest.record_failure(name, source="api.sleeper.app",
+                                    error=f"{type(exc).__name__}: {exc}")
             print(f"  sleeper_players: FAILED {exc}", file=sys.stderr)
     return week
 
