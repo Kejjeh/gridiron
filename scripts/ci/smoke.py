@@ -42,11 +42,15 @@ IMPORTS = [
     "gridiron.season",
     "gridiron.draft",
     "gridiron.ledger",
+    "gridiron.sleeper",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on
 # the day they are written.
 PATTERNS = [
+    "test_scoring_nflverse.py",
+    "test_sleeper.py",
+    "test_verify_league_settings.py",
     "test_ledger*.py",
     "test_draft*.py",
     "test_claude_md_budget.py",
@@ -62,7 +66,7 @@ PATTERNS = [
 
 # Anti-vacuity floor: a glob typo must not silently shrink the smoke set.
 # Raise this as smoke tests are added (plv_clone ended at 8+).
-MIN_FILES = 11
+MIN_FILES = 14
 
 
 def main() -> int:

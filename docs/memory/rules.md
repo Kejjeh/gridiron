@@ -5,15 +5,31 @@ of each rule. Numbering is load-bearing (docs and commits cite "rule #N");
 retire in place, never renumber. Most originate as plv_clone scars — see
 docs/BOOTSTRAP_FROM_PLV.md for the full history.
 
-1. **League settings are unverified placeholders.** `league_config.py` was
-   written 2026-09-03 with a standard 12-team full-PPR guess because the real
-   league's platform and settings weren't available at bootstrap. Every
-   engine that produces user-facing output (projections, VOR, start/sit,
-   waivers) must check `SETTINGS_VERIFIED` and refuse to run while it is
-   False. Flipping it requires pulling the actual settings from the platform
-   (ESPN `league.settings` or Sleeper league endpoint) and correcting
-   `ROSTER_SLOTS`, `ScoringRules`, `NUM_TEAMS`, and `PLATFORM` in the same
-   commit.
+1. **League settings are verified — and stay checkable.** `league_config.py`
+   was written 2026-09-03 with a standard 12-team full-PPR guess, gated by
+   `SETTINGS_VERIFIED=False`. On 2026-09-08 the real settings were pulled from
+   the Sleeper league object (`scripts/research/pull_sleeper.py`), the
+   constants were corrected and the flag was flipped in the same commit.
+   Re-verified live 2026-09-17 against the in-season league: 55/55 constants
+   matched, zero drift.
+
+   The gate did not go away. Every engine that produces user-facing output
+   (projections, VOR, start/sit, waivers) still checks `SETTINGS_VERIFIED`
+   and refuses to run while it is False. Four standing rules:
+   - Flipping the flag requires a platform pull that corrects the values in
+     the SAME commit. Never flip it to unblock a run or a test.
+   - A league can be edited mid-season, so verification is not a one-off.
+     `scripts/verify_league_settings.py` re-compares every constant against
+     the live league, prints drift and exits nonzero. It cannot write to
+     `league_config.py` — a checker that can edit what it checks is one
+     refactor from flipping a flag to make itself pass
+     (`tests/test_verify_league_settings.py` pins that with an AST check).
+   - A constant the live payload does not carry is reported as DRIFT
+     (`live=None`), never skipped, and weights Sleeper omits are counted in
+     the output. A check that quietly covers less than it did last week is
+     the same failure as a check that passes wrongly.
+   - The verified values are additionally pinned in
+     `tests/test_league_config.py`, so silent drift is a failing test.
 
 2. **One scoring implementation.** plv_clone needed two dedicated hygiene
    tests (`test_sp_fp_formula_copies`, `test_no_hardcoded_scoring_weights`)
