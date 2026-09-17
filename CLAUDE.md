@@ -19,10 +19,12 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   (never run bare pytest into agent context — the summary wrapper exists so
   output doesn't flood the window).
 - Behavior-preserving refactors: `python scripts/ci/golden_run.py` A/B.
+- Settings drift check: `PYTHONPATH=src python scripts/verify_league_settings.py`.
 
 ## Rules (full text in docs/memory/rules.md — cite by number)
-1. League settings are UNVERIFIED placeholders (`league_config.SETTINGS_VERIFIED`).
-   Nothing ships outputs until they're pulled from the platform and the flag flips.
+1. League settings are VERIFIED (2026-09-08, re-verified 2026-09-17: 55/55
+   constants, `scripts/verify_league_settings.py`). Engines still gate on
+   `SETTINGS_VERIFIED`; never flip a flag to unblock a run.
 2. Scoring has ONE implementation: `gridiron.scoring.fantasy_points`. Never
    copy a weight into a script.
 3. Every join anchors on a stable player id (nflverse `gsis_id`/`player_id`;
