@@ -5,5 +5,11 @@ pydantic-settings>=2.0
 pytest>=8.0
 numpy>=2.0            # research sims (scripts/research/)
 
-# Build step 2 (ingest) will add: nflreadpy>=0.1.5 (polars-native; NOT the
-# deprecated nfl_data_py), pandas, pyarrow, espn-api>=0.46 (if ESPN league)
+# Build step 2 (ingest), landed 2026-09-17:
+nflreadpy>=0.1.5      # polars-native; NOT the deprecated nfl_data_py
+pandas>=2.0,<4        # tested on 3.x (copy-on-write, new string dtype)
+pyarrow>=15           # parquet cache: NaN stays NaN, counts stay ints
+
+# Not needed: espn-api (the league is on Sleeper, whose read API needs no
+# auth — gridiron.sleeper uses stdlib urllib). No markdown/table library:
+# gridiron.weekly renders its own table.

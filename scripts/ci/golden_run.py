@@ -52,7 +52,31 @@ OK, WARN = '✓', '⚠'
 
 # Register named pipelines as they land (see plv_clone for the shape:
 # {'name': {'commands': [...], 'outputs': [...], 'inputs': [...]}}).
-TARGETS: dict = {}
+#
+# weekly_report renders OFFLINE from the ingest cache, so an A/B run is
+# reproducible as long as the cache is not re-pulled between phases. The
+# manifest is listed as an input so a mid-run re-pull is caught as input
+# drift rather than reported as a behavior change. The compared output is the
+# stable `_latest` copy — the week-stamped file changes name every week, and
+# the markdown carries a generated-at line that always differs.
+TARGETS: dict = {
+    'weekly_report': {
+        # argv lists, NOT shell strings: resolve_target shlex-splits only the
+        # --cmd of a custom target, and list("python ...") would split the
+        # string into characters. Run with PYTHONPATH=src, as every driver in
+        # this repo is.
+        'commands': [
+            [sys.executable, '-X', 'utf8', 'scripts/weekly/report.py',
+             '--write', '--anonymous'],
+        ],
+        'outputs': [
+            'data/outputs/weekly_report_latest.csv',
+        ],
+        'inputs': [
+            'data/research/cache/season2026/manifest.json',
+        ],
+    },
+}
 
 
 def scratch_root() -> Path:

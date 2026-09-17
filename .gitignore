@@ -13,5 +13,15 @@ __pycache__/
 data/research/cache/
 data/research/.golden_run/
 
+# Weekly roster reports. These name the owner's actual players, week by week,
+# so they stay on the owner's disk: regenerable from the cache in one command,
+# and not worth putting in a repo that people other than the owner can read.
+# `weekly_report_latest.*` is additionally the stable path golden_run.py A/Bs,
+# rewritten on every run.
+data/outputs/week*_report.md
+data/outputs/week*_report.csv
+data/outputs/weekly_report_latest.md
+data/outputs/weekly_report_latest.csv
+
 # research-agent scratch drafts (synthesized into docs/research/*.md)
 docs/research/drafts/

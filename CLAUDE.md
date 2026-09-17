@@ -19,6 +19,9 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   (never run bare pytest into agent context — the summary wrapper exists so
   output doesn't flood the window).
 - Behavior-preserving refactors: `python scripts/ci/golden_run.py` A/B.
+- Weekly (in-season): `PYTHONPATH=src python scripts/ingest/pull_week.py` then
+  `PYTHONPATH=src python scripts/weekly/report.py --write`. Report reads the
+  cache only — offline, and it states every input's as-of week and staleness.
 - Settings drift check: `PYTHONPATH=src python scripts/verify_league_settings.py`.
 
 ## Rules (full text in docs/memory/rules.md — cite by number)
@@ -42,8 +45,9 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
    (the week has a shape: Wed waivers, Fri designations, Sun inactives).
 9. Credentials live in `.env` (gitignored) only, prefix `GRIDIRON_`, read via
    `gridiron.config`. Never write a credential into a tracked file.
-10. Don't commit bulk data (`data/research/cache/` is ignored); DO commit the
-    small weekly projection/ledger CSVs in `data/outputs/` and `data/ledger/`.
+10. Don't commit bulk data (`data/research/cache/` ignored) or roster-bearing
+    weekly reports (`data/outputs/week*_report.*` ignored — they name the
+    owner's players); DO commit the small projection/ledger CSVs.
 11. "Questionable" ≠ out; "on roster" ≠ startable. No convenience accessor
     that makes the wrong call easy.
 12. Start with 5 skills max (roster-audit, waiver-board, start-sit, matchup,

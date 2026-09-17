@@ -1,0 +1,20 @@
+pfr_player_id,season,week,player,position,team,offense_snaps,offense_pct
+BoswCh00,2026,1,Chris Boswell,K,PIT,0.0,0.0
+HenrDe00,2026,1,Derrick Henry,RB,BAL,37.0,0.54
+FlowZa00,2026,1,Zay Flowers,WR,BAL,20.0,0.29
+AlleJo02,2026,1,Josh Allen,QB,BUF,58.0,1.0
+YounBr01,2026,1,Bryce Young,QB,CAR,61.0,0.9
+CokeJa01,2026,1,Jalen Coker,WR,CAR,57.0,0.84
+WillCa03,2026,1,Caleb Williams,QB,CHI,75.0,1.0
+SwifDA00,2026,1,D'Andre Swift,RB,CHI,43.0,0.57
+LikeIs00,2026,1,Isaiah Likely,TE,NYG,34.0,0.49
+WalkKe00,2026,1,Kenneth Walker III,RB,KC,47.0,0.68
+JeffJu00,2026,1,Justin Jefferson,WR,MIN,60.0,0.92
+WentCa00,2026,1,Carson Wentz,QB,MIN,54.0,0.83
+WatsCh00,2026,1,Christian Watson,WR,GB,52.0,0.76
+MyerJa00,2026,1,Jason Myers,K,SEA,0.0,0.0
+MayeDr00,2026,1,Drake Maye,QB,NE,71.0,1.0
+GibbJa01,2026,1,Jahmyr Gibbs,RB,DET,57.0,0.74
+HigbTy00,2026,1,Tyler Higbee,TE,LA,12.0,0.2
+MayfBa00,2026,1,Baker Mayfield,QB,TB,57.0,1.0
+GoedDa00,2026,1,Dallas Goedert,TE,PHI,52.0,0.95

@@ -28,15 +28,17 @@ committed fixture):
 
 Team defense (DEFENSE_SCORING) has no implementation yet — nflverse weekly
 data is player-level, so DST points have to be aggregated from team stats.
-Until that lands there is NO DST scoring here at all: a DST stat line scores
-nothing, and a caller must render it as absent rather than as zero points.
-Nothing in this module reads Sleeper's `players_points`; that endpoint was
-used once, offline, to reconcile the weights above, and wiring it in as a
-points source is an open decision, not current behavior.
+Until that lands a DST row scores NOTHING here, and `gridiron.weekly` carries
+it with every points and usage cell BLANK: only the team, opponent, market
+implied total and an explicit "n/a (team defense)" note. Nothing reads
+Sleeper's `players_points` back into the report — that endpoint was used once,
+offline, to reconcile the weights above, and wiring it in as a points source
+is an open decision, not current behavior.
+(Pinned by tests/test_weekly.py::test_team_defenses_are_carried_not_dropped.)
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from gridiron.league_config import DEFAULT_SCORING, KICKING_SCORING, ScoringRules
@@ -145,13 +147,131 @@ def kicker_points(
 
 
 def scoring_inputs() -> frozenset[str]:
-    """Every column name this module will read. A caller that pulls a frame
-    uses it to assert the frame can actually be scored before anything
-    downstream trusts the numbers. Legacy aliases are excluded on purpose:
-    they are a read-side fallback, not a contract an ingest must satisfy."""
+    """Every column name this module will read. Ingest uses it to assert a
+    pulled frame can actually be scored before anything downstream trusts the
+    numbers. Legacy aliases are excluded on purpose: they are a read-side
+    fallback, not a contract an ingest must satisfy."""
     cols: set[str] = set()
     for term in _TERMS:
         cols.update(term.components)
     for comps in _KICK_COMPONENTS.values():
         cols.update(comps)
     return frozenset(cols)
+
+
+# --- can this frame be scored at all? ----------------------------------------
+#
+# `fantasy_points` treats an absent key as zero, and that contract is correct
+# for a CELL: nflverse leaves a running back's `passing_interceptions` null,
+# and null really does mean zero picks. It is catastrophic for a COLUMN. If
+# the interceptions column is missing from the frame entirely, every
+# quarterback silently scores two points per pick too high — a plausible
+# number, which is far worse than a blank one, because nothing downstream can
+# tell it from a real one.
+#
+# So the missing-key-is-zero contract stays exactly as it is, and this is the
+# gate that stops it reaching a reader: callers ask whether the COLUMNS a
+# frame carries can support the scoring rules before they publish any points.
+
+
+@dataclass(frozen=True)
+class ColumnGap:
+    """One scoring line the frame's columns cannot support."""
+
+    rule: str                 # ScoringRules field, or Sleeper kicking stat key
+    group: str                # "offense" (fantasy_points) | "kicking"
+    missing: tuple[str, ...]  # the columns that are absent
+    #: True when SOME components are present and others are not. A partial
+    #: term is the nastiest case: it sums the columns it has and returns a
+    #: number that looks right (lost fumbles minus the sack fumbles).
+    partial: bool = False
+
+    def describe(self) -> str:
+        kind = "partially present" if self.partial else "absent"
+        return f"{self.rule} [{self.group}] {kind}: {', '.join(self.missing)}"
+
+
+@dataclass(frozen=True)
+class ScoringCoverage:
+    """Whether a frame's columns can back the league's scoring rules."""
+
+    gaps: tuple[ColumnGap, ...] = field(default=())
+    #: Terms satisfied through a pre-rewrite column name. Not a defect — the
+    #: aliases exist precisely so an older frame still scores — but worth
+    #: naming, because it says which nflverse schema this cache came from.
+    legacy_used: tuple[str, ...] = field(default=())
+
+    @property
+    def complete(self) -> bool:
+        return not self.gaps
+
+    @property
+    def missing_columns(self) -> tuple[str, ...]:
+        return tuple(sorted({c for g in self.gaps for c in g.missing}))
+
+    @property
+    def affected_groups(self) -> frozenset[str]:
+        return frozenset(g.group for g in self.gaps)
+
+    def scorable(self, position: str) -> bool:
+        """Can a player at this position be scored from this frame?
+
+        Kickers and everyone else go through different halves of this module,
+        so a hole in the field-goal buckets must not blank a wide receiver's
+        points, and vice versa.
+        """
+        group = "kicking" if str(position or "").upper() == "K" else "offense"
+        return group not in self.affected_groups
+
+    def reason(self) -> str:
+        return "; ".join(g.describe() for g in self.gaps)
+
+
+def scoring_coverage(
+    columns: Iterable[str],
+    *,
+    rules: ScoringRules = DEFAULT_SCORING,
+    kicking: Mapping[str, float] = KICKING_SCORING,
+) -> ScoringCoverage:
+    """Check a frame's COLUMN NAMES against the scoring rules.
+
+    Reports only what cannot be scored. Specifically NOT reported:
+
+    * a term whose weight is zero — it cannot move a point total, so a
+      missing column for it is not a defect;
+    * a legacy alias standing in for the current columns — that is the
+      documented fallback path, and it is recorded rather than flagged;
+    * a column that is present but null for some rows. That is a missing
+      CELL, and zero is the right reading of it (`_num`). This function
+      never looks at values, only at the schema.
+    """
+    cols = {str(c) for c in columns}
+    gaps: list[ColumnGap] = []
+    legacy: list[str] = []
+
+    for term in _TERMS:
+        if not getattr(rules, term.rule_field):
+            continue
+        have = [c for c in term.components if c in cols]
+        if len(have) == len(term.components):
+            continue
+        if have:
+            # Partial: `_term_value` would sum the present components only.
+            gaps.append(ColumnGap(
+                term.rule_field, "offense",
+                tuple(c for c in term.components if c not in cols), True))
+        elif any(k in cols for k in term.legacy):
+            legacy.extend(k for k in term.legacy if k in cols)
+        else:
+            gaps.append(ColumnGap(term.rule_field, "offense", term.components))
+
+    for sleeper_key, comps in _KICK_COMPONENTS.items():
+        if not kicking.get(sleeper_key):
+            continue
+        absent = tuple(c for c in comps if c not in cols)
+        if not absent:
+            continue
+        gaps.append(ColumnGap(sleeper_key, "kicking", absent,
+                              partial=len(absent) < len(comps)))
+
+    return ScoringCoverage(tuple(gaps), tuple(sorted(set(legacy))))
