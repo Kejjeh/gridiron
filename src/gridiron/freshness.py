@@ -101,6 +101,15 @@ class Cadence:
 CADENCES: dict[str, Cadence] = {
     "sleeper_league": Cadence("sleeper_league", max_age_hours=24.0,
                               gameday_max_age_hours=6.0, forward_looking=True),
+    # The player dump carries the LIVE `injury_status` designation — the one
+    # field in the whole cache that can flip an hour before kickoff. It is not
+    # week-keyed, so nothing about the data itself says how old it is; its age
+    # is the only signal there is, which is exactly why it needs a cadence at
+    # least as tight as the injury table's. 24h matches the puller's own
+    # refresh interval; 6h on a gameday because "Questionable at Friday's
+    # practice" is not a statement about Sunday at 1pm.
+    "sleeper_players": Cadence("sleeper_players", max_age_hours=24.0,
+                               gameday_max_age_hours=6.0),
     "injuries": Cadence("injuries", max_age_hours=48.0,
                         gameday_max_age_hours=12.0, forward_looking=True),
     "schedules": Cadence("schedules", max_age_hours=168.0, forward_looking=True),
@@ -158,7 +167,7 @@ class SourceFreshness:
     def line(self) -> str:
         stamp = self.as_of.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") \
             if self.as_of else "never"
-        return (f"{self.name:<15} {self.status.value.upper():<8} as-of {stamp}"
+        return (f"{self.name:<16} {self.status.value.upper():<8} as-of {stamp}"
                 f"  covers {self.coverage()}  {self.reason}")
 
 

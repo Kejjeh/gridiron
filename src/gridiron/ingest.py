@@ -50,6 +50,12 @@ class Entry:
     weeks: list[int] = field(default_factory=list)
     error: str = ""                 # set when the LATEST attempt failed
     last_attempt: str = ""          # ISO-8601 UTC of that latest attempt
+    #: Columns the pull was supposed to carry and did not. A pull can succeed
+    #: — 200 OK, thousands of rows, a perfectly readable parquet — and still
+    #: be unusable because upstream renamed a column the scoring rules need.
+    #: That is a property of the DATA, not of the fetch, so it survives in the
+    #: manifest rather than living and dying in one run's stderr.
+    missing_columns: list[str] = field(default_factory=list)
 
     @property
     def covers_through_week(self) -> int | None:
@@ -96,7 +102,12 @@ class Manifest:
 
     def record(self, name: str, *, path: Path | str, rows: int, source: str,
                weeks: Iterable[int] = (), as_of: datetime | None = None) -> Entry:
-        """Record a pull that SUCCEEDED. Clears any prior failure."""
+        """Record a pull that SUCCEEDED. Clears any prior failure.
+
+        Also clears `missing_columns`: a new pull has a new schema, and last
+        week's defect is not evidence about this week's file. Whoever
+        validates re-validates after recording.
+        """
         stamp = (as_of or datetime.now(timezone.utc)).astimezone(timezone.utc)
         iso = stamp.isoformat(timespec="seconds")
         entry = Entry(
@@ -109,6 +120,23 @@ class Manifest:
             error="",
             last_attempt=iso,
         )
+        self.entries[name] = entry
+        return entry
+
+    def note_missing_columns(self, name: str, columns: Iterable[str]) -> Entry | None:
+        """Record that a SUCCESSFUL pull produced a frame that is missing
+        columns something downstream requires.
+
+        Deliberately not an error: the fetch worked, the file is there, and
+        the parts of it that are intact are still worth reading. It is a
+        durable note that the frame cannot be fully trusted, so a later reader
+        of the manifest alone — a cron summary, the next session — can see it
+        without re-opening the parquet.
+        """
+        prev = self.entries.get(name)
+        if prev is None:
+            return None
+        entry = replace(prev, missing_columns=sorted({str(c) for c in columns}))
         self.entries[name] = entry
         return entry
 

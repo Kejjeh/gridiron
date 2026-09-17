@@ -28,7 +28,8 @@ from pathlib import Path
 import pytest
 
 from gridiron.league_config import DEFAULT_SCORING, KICKING_SCORING, ScoringRules
-from gridiron.scoring import fantasy_points, kicker_points, scoring_inputs
+from gridiron.scoring import (fantasy_points, kicker_points,
+                              scoring_coverage, scoring_inputs)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -191,3 +192,90 @@ def test_reception_weight_is_the_verified_league_value():
     assert DEFAULT_SCORING.reception == 0.5      # half-PPR, verified on Sleeper
     assert DEFAULT_SCORING.interception == -1.0  # Sleeper default, not ESPN's -2
     assert not math.isnan(DEFAULT_SCORING.pass_yd)
+
+
+# ---------------------------------------- can this frame be scored at all?
+#
+# The gate between "an absent key scores as zero" (right for a null cell) and
+# "an absent COLUMN scores as zero" (a wrong number wearing a right number's
+# clothes). These pin the distinction from both sides.
+
+FULL = columns("weekly_offense_wk1.csv") | columns("weekly_kickers_wk1.csv")
+
+
+def test_the_committed_fixtures_score_completely():
+    cov = scoring_coverage(FULL)
+    assert cov.complete and not cov.missing_columns
+    assert cov.legacy_used == (), "fixtures should be on the post-rewrite schema"
+    assert cov.scorable("QB") and cov.scorable("K")
+
+
+def test_an_absent_column_is_a_gap_and_names_itself():
+    cov = scoring_coverage(FULL - {"passing_interceptions"})
+    assert not cov.complete
+    assert cov.missing_columns == ("passing_interceptions",)
+    assert "interception" in cov.reason()
+
+
+def test_a_gap_is_scoped_to_the_half_of_the_module_it_breaks():
+    """`score_row` routes kickers to `kicker_points` and everyone else to
+    `fantasy_points`. A hole in one says nothing about the other."""
+    offense = scoring_coverage(FULL - {"rushing_yards"})
+    assert offense.affected_groups == {"offense"}
+    assert not offense.scorable("RB") and offense.scorable("K")
+
+    kicking = scoring_coverage(FULL - {"pat_made"})
+    assert kicking.affected_groups == {"kicking"}
+    assert kicking.scorable("RB") and not kicking.scorable("K")
+
+
+def test_a_legacy_alias_still_scores_and_is_recorded_not_flagged():
+    """The pre-0.1.x names are a deliberate read-side fallback. A cache that
+    predates the nflverse rename is old, not broken."""
+    legacy = (FULL - {"passing_interceptions"}) | {"interceptions"}
+    cov = scoring_coverage(legacy)
+    assert cov.complete, "the documented alias should satisfy the term"
+    assert cov.legacy_used == ("interceptions",)
+    # And it must not double count: with BOTH present only the current one is
+    # read, which is the invariant `_term_value` exists to hold.
+    both = fantasy_points({"passing_interceptions": 1, "interceptions": 1})
+    assert both == pytest.approx(DEFAULT_SCORING.interception)
+
+
+def test_a_partially_present_term_is_a_gap_because_it_sums_to_a_plausible_lie():
+    """Lost fumbles is three columns. With one missing, the term returns a
+    number — just the wrong one — and nothing downstream can tell."""
+    cov = scoring_coverage(FULL - {"sack_fumbles_lost"})
+    assert not cov.complete
+    assert cov.missing_columns == ("sack_fumbles_lost",)
+    assert cov.gaps[0].partial and "partially present" in cov.reason()
+
+    scored = fantasy_points({"rushing_fumbles_lost": 1, "receiving_fumbles_lost": 0})
+    assert scored == pytest.approx(DEFAULT_SCORING.fumble_lost), (
+        "the frame still scores; that is exactly why it has to be flagged")
+
+
+def test_a_column_that_cannot_change_the_answer_is_not_required():
+    """A term weighted zero cannot move a point total, so a missing column
+    behind it is not a defect. Flagging it would train the reader to ignore
+    the warning."""
+    from dataclasses import replace as _replace
+
+    rules = _replace(DEFAULT_SCORING, interception=0.0)
+    assert scoring_coverage(FULL - {"passing_interceptions"}, rules=rules).complete
+    assert scoring_coverage(FULL - {"pat_made"},
+                            kicking={**KICKING_SCORING, "xpm": 0.0}).complete
+
+
+def test_coverage_reads_the_schema_and_never_the_values():
+    """A null cell is not a missing column.
+
+    nflverse leaves a running back's `passing_interceptions` null, and that
+    null truly means zero picks — `_num` is right to score it as zero. The
+    check must therefore look only at column NAMES, or every frame in the
+    league would read as broken.
+    """
+    assert scoring_coverage(FULL).complete
+    stats = {c: float("nan") for c in FULL}
+    assert fantasy_points(stats) == 0.0
+    assert kicker_points(stats) == 0.0

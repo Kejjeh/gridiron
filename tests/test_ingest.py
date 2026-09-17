@@ -222,3 +222,75 @@ def test_the_cache_lives_under_the_gitignored_research_tree():
 
     assert ing.season_cache(2026).parent == RESEARCH_CACHE
     assert ing.season_cache(2026).name == "season2026"
+
+
+# ------------------------------- a pull can succeed and still be unusable
+
+def test_a_schema_defect_outlives_the_run_that_found_it(tmp_path):
+    """The pull worked: 200 OK, rows on disk, a readable file. It is still
+    unusable, because upstream dropped a column the scoring rules need.
+
+    A warning on stderr dies with the process that printed it. The next
+    reader — the offline report, a cron summary, tomorrow's session — has
+    only the manifest, so that is where the verdict has to live.
+    """
+    m = _manifest(tmp_path)
+    path = tmp_path / "weekly_stats.parquet"
+    path.write_text("x", encoding="utf-8")
+    m.record("weekly_stats", path=path, rows=900, source="nflverse", weeks=[1])
+    assert m.get("weekly_stats").missing_columns == []
+
+    m.note_missing_columns("weekly_stats", ["passing_interceptions"])
+    m.save()
+
+    reloaded = ing.Manifest.load(tmp_path)
+    assert reloaded.get("weekly_stats").missing_columns == ["passing_interceptions"]
+    # It is NOT an error: the fetch succeeded and the intact columns are
+    # still worth reading, so the file stays readable and the as-of stands.
+    assert reloaded.get("weekly_stats").error == ""
+    assert reloaded.file("weekly_stats") is not None
+
+
+def test_a_fresh_pull_clears_a_previous_schema_defect(tmp_path):
+    """Last week's defect is not evidence about this week's file."""
+    m = _manifest(tmp_path)
+    path = tmp_path / "weekly_stats.parquet"
+    path.write_text("x", encoding="utf-8")
+    m.record("weekly_stats", path=path, rows=900, source="nflverse", weeks=[1])
+    m.note_missing_columns("weekly_stats", ["passing_interceptions"])
+
+    m.record("weekly_stats", path=path, rows=950, source="nflverse", weeks=[1, 2])
+    assert m.get("weekly_stats").missing_columns == []
+
+
+def test_a_failed_refresh_preserves_the_recorded_schema_defect(tmp_path):
+    """A failure says nothing new about the columns of the file we still
+    have, so it must not quietly clear the note on it."""
+    m = _manifest(tmp_path)
+    path = tmp_path / "weekly_stats.parquet"
+    path.write_text("x", encoding="utf-8")
+    m.record("weekly_stats", path=path, rows=900, source="nflverse", weeks=[1])
+    m.note_missing_columns("weekly_stats", ["passing_interceptions"])
+
+    m.record_failure("weekly_stats", source="nflverse", error="503")
+    assert m.get("weekly_stats").missing_columns == ["passing_interceptions"]
+
+
+def test_noting_columns_on_an_unknown_source_is_a_no_op(tmp_path):
+    m = _manifest(tmp_path)
+    assert m.note_missing_columns("never_pulled", ["x"]) is None
+    assert "never_pulled" not in m.entries
+
+
+def test_an_older_manifest_without_the_field_still_loads(tmp_path):
+    """Manifests written before this field existed must keep working — the
+    cache is not versioned and re-pulling everything to read it would be a
+    silly tax on a season's worth of data."""
+    (tmp_path / ing.MANIFEST_NAME).write_text(json.dumps({
+        "season": 2026,
+        "entries": {"weekly_stats": {
+            "name": "weekly_stats", "path": "weekly_stats.parquet", "rows": 900,
+            "as_of": "2026-09-10T12:00:00+00:00", "source": "nflverse",
+            "weeks": [1]}}}), encoding="utf-8")
+    entry = ing.Manifest.load(tmp_path).get("weekly_stats")
+    assert entry.missing_columns == [] and entry.last_attempt == ""

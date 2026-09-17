@@ -260,3 +260,184 @@ def test_a_missing_week_in_the_cache_reaches_the_report(tmp_path, capsys):
     header = out.split("## Roster")[0]
     assert "(no wk2)" in header
     assert "GAP" in header and "short by those weeks" in header
+
+
+# ------------------------------------------- every consumed source is declared
+
+#: The sources the report demonstrably reads, listed here INDEPENDENTLY of
+#: `report.py`. Looping over `R.SOURCES` to check `R.SOURCES` proves nothing —
+#: that is how `sleeper_players` stayed invisible while the report was reading
+#: the live injury designation, the NFL team, the position and the sleeper ->
+#: gsis id overlay out of it. This list is maintained by hand, against what the
+#: report actually uses, and `_sources_read_by` below re-derives the same set
+#: from the CLI's own syntax so a future read cannot quietly skip both.
+CONSUMED_SOURCES = frozenset({
+    "sleeper_league",   # roster, users, Sleeper state (season/week)
+    "sleeper_players",  # injury_status, team, position, name, gsis overlay
+    "injuries",         # nflverse practice + game-status report
+    "schedules",        # opponent, kickoff, market lines
+    "weekly_stats",     # box scores -> league points
+    "snap_counts",      # snap share
+    "crosswalk",        # sleeper/pfr <-> gsis (rule #3)
+})
+
+
+def _sources_read_by(path: Path) -> set[str]:
+    """Every source name the module at `path` pulls out of a manifest.
+
+    Reads the CLI's syntax rather than its constants: any
+    `<x>.read_frame("name")`, `.read_json("name")` or `.file("name")` counts as
+    a read, whatever the surrounding code says it declares.
+    """
+    import ast
+
+    out: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text("utf-8"))):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"read_frame", "read_json", "file"}
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            out.add(node.args[0].value)
+    return out
+
+
+def test_every_source_the_report_reads_declares_its_freshness():
+    """A value on the page implies an as-of line on the page.
+
+    The failure this pins: `sleeper_players` was consumed by the report and
+    absent from SOURCES, so a month-old player dump — with a failed refresh
+    recorded against it — rendered under "All inputs current" and exited 0.
+    """
+    read = _sources_read_by(ROOT / "scripts" / "weekly" / "report.py")
+    assert read, "found no manifest reads at all — the derivation broke"
+    undeclared = read - set(R.SOURCES)
+    assert not undeclared, (
+        f"report.py reads {sorted(undeclared)} but does not report their "
+        f"freshness; add them to SOURCES")
+    assert CONSUMED_SOURCES <= set(R.SOURCES), (
+        f"SOURCES dropped {sorted(CONSUMED_SOURCES - set(R.SOURCES))}")
+    assert read == CONSUMED_SOURCES, (
+        "the hand-maintained list and the code have diverged: "
+        f"only in code {sorted(read - CONSUMED_SOURCES)}, "
+        f"only in the list {sorted(CONSUMED_SOURCES - read)}")
+
+
+def _stale_players(manifest, *, days=30, error="refresh denied"):
+    """Age the player dump and record a failed refresh against it."""
+    from dataclasses import replace
+
+    e = manifest.entries["sleeper_players"]
+    manifest.entries["sleeper_players"] = replace(
+        e,
+        as_of=(datetime.now(UTC) - timedelta(days=days)).isoformat(
+            timespec="seconds"),
+        error=error,
+        last_attempt=datetime.now(UTC).isoformat(timespec="seconds"))
+    manifest.save()
+
+
+def test_a_stale_player_pull_is_named_and_fails_the_strict_run(tmp_path, capsys):
+    m = build_cache(tmp_path)
+    _stale_players(m)
+
+    assert run(tmp_path, "--fail-on-degraded") == 1
+    out = capsys.readouterr().out
+    header = out.split("## Roster")[0]
+    line = next(l for l in header.splitlines() if l.startswith("sleeper_players"))
+    assert "STALE" in line and "as-of" in line
+    assert "refresh denied" in line
+    assert "All inputs current" not in header
+    assert "sleeper_players: STALE" in header
+
+
+def test_a_stale_designation_is_labelled_not_presented_as_current(tmp_path, capsys):
+    """Sleeper's `injury_status` is live, not week-keyed, so a month-old
+    "Questionable" looks exactly like a current one. The age of the pull it
+    came from is the only thing that can tell them apart."""
+    m = build_cache(tmp_path)
+    fresh_run = run(tmp_path)
+    assert fresh_run == 0
+    fresh = capsys.readouterr().out
+    assert "Questionable" in fresh and "STALE designation" not in fresh
+
+    _stale_players(m)
+    run(tmp_path)
+    stale = capsys.readouterr().out
+    row = next(l for l in stale.splitlines() if "Questionable" in l)
+    assert "STALE designation" in row
+    assert "NOT a current status" in row
+
+
+# --------------------------------------------- scoring inputs, checked on read
+
+def _drop_column(manifest, column: str, *, source: str = "weekly_stats"):
+    path = manifest.file(source)
+    frame = pd.read_parquet(path)
+    assert column in frame.columns, f"fixture no longer carries {column}"
+    frame.drop(columns=[column]).to_parquet(path, index=False)
+
+
+def _cells(out: str, player: str) -> dict[str, str]:
+    """One roster row as {column: rendered cell}, keyed off the table's own
+    header so a column reorder cannot silently re-point these assertions."""
+    lines = out.split("## Roster")[1].splitlines()
+    head = next(l for l in lines if l.startswith("| lineup"))
+    cols = [c.strip() for c in head.strip().strip("|").split("|")]
+    row = next(l for l in lines if l.startswith("| ") and player in l)
+    return dict(zip(cols, [c.strip() for c in row.strip().strip("|").split("|")]))
+
+
+def test_a_missing_scoring_column_blanks_points_rather_than_publishing_a_wrong_one(
+        tmp_path, capsys):
+    """`fantasy_points` reads an absent key as zero — correct for a null CELL,
+    catastrophic for a missing COLUMN. Without `passing_interceptions` every
+    quarterback scores a point per pick too high, and the number looks fine.
+
+    The report must not publish that number, must say why, and must fail a
+    strict run.
+    """
+    m = build_cache(tmp_path)
+    _drop_column(m, "passing_interceptions")
+
+    assert run(tmp_path, "--fail-on-degraded") == 1
+    out = capsys.readouterr().out
+    header = out.split("## Roster")[0]
+    assert "SCORING INPUTS INCOMPLETE" in header
+    assert "passing_interceptions" in header
+    assert "All inputs current" not in header
+
+    qb = _cells(out, "Carson Wentz")
+    assert qb["pts"] == "" and qb["ppg"] == "", "published points off a broken frame"
+    # Usage is untouched: a carry is a carry whatever the scoring columns say.
+    assert qb["car"] != ""
+
+
+def test_a_kicking_column_hole_does_not_blank_the_offense(tmp_path, capsys):
+    """The two halves of `gridiron.scoring` fail independently. A hole in the
+    field-goal buckets says nothing about a running back."""
+    m = build_cache(tmp_path)
+    _drop_column(m, "fg_made_50_59")
+
+    assert run(tmp_path, "--fail-on-degraded") == 1
+    out = capsys.readouterr().out
+    assert "kicking" in out.split("## Roster")[0]
+    assert _cells(out, "Chris Boswell")["pts"] == ""
+    assert _cells(out, "Derrick Henry")["pts"] != ""
+
+
+def test_a_null_stat_cell_is_not_a_missing_column(tmp_path, capsys):
+    """The distinction the check turns on. nflverse leaves a running back's
+    `passing_interceptions` null and that null genuinely means zero picks —
+    scoring it as 0 is right. Only an absent COLUMN is a defect."""
+    m = build_cache(tmp_path)
+    path = m.file("weekly_stats")
+    frame = pd.read_parquet(path)
+    frame["passing_interceptions"] = float("nan")
+    frame.to_parquet(path, index=False)
+
+    assert run(tmp_path, "--fail-on-degraded") == 0
+    out = capsys.readouterr().out
+    assert "SCORING INPUTS INCOMPLETE" not in out
+    assert _cells(out, "Carson Wentz")["pts"] != ""

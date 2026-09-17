@@ -32,7 +32,7 @@ from gridiron.freshness import CADENCES
 from gridiron.ids import CROSSWALK_URL
 from gridiron.league_config import SEASON_YEAR
 from gridiron.paths import ensure_dirs
-from gridiron.scoring import scoring_inputs
+from gridiron.scoring import scoring_coverage
 from gridiron.sleeper import USER_AGENT, SleeperReadOnly
 
 NFLVERSE_SOURCES = ("weekly_stats", "snap_counts", "schedules", "injuries")
@@ -157,16 +157,36 @@ def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
     return week
 
 
-def check_scoring_inputs(manifest: ing.Manifest) -> None:
-    """Fail loudly if the pulled frame cannot be scored. A silently missing
-    stat column reads as a zero, which is a wrong number, not a missing one."""
+def check_scoring_inputs(manifest: ing.Manifest) -> ing.Entry | None:
+    """Check the pulled frame against the league's scoring rules, and RECORD
+    the answer in the manifest.
+
+    A silently missing stat column reads as a zero, which is a wrong number
+    rather than a missing one — and a warning on stderr dies with the run that
+    printed it, leaving the next reader nothing to go on. So the verdict is
+    written into the manifest entry, where `report.py` and anyone reading
+    `manifest.json` can see it without re-opening the parquet.
+
+    The check is alias-aware (`scoring_coverage`), so a cache predating the
+    nflreadpy 0.1.x rename scores through its legacy columns and is not
+    reported as broken.
+    """
     frame = manifest.read_frame("weekly_stats")
     if frame is None:
-        return
-    missing = sorted(c for c in scoring_inputs() if c not in frame.columns)
-    if missing:
-        print(f"  WARNING: weekly_stats is missing scoring columns {missing} — "
-              f"gridiron.scoring would score them as zero", file=sys.stderr)
+        return None
+    coverage = scoring_coverage(frame.columns)
+    entry = manifest.note_missing_columns("weekly_stats",
+                                          coverage.missing_columns)
+    if not coverage.complete:
+        print(f"  WARNING: weekly_stats cannot be scored — {coverage.reason()}. "
+              f"gridiron.scoring would read the absent column(s) as zero, so "
+              f"report.py will BLANK points for "
+              f"{', '.join(sorted(coverage.affected_groups))} positions until "
+              f"this is re-pulled.", file=sys.stderr)
+    elif coverage.legacy_used:
+        print(f"  note: weekly_stats scored through legacy column(s) "
+              f"{', '.join(coverage.legacy_used)} (pre-0.1.x nflverse schema)")
+    return entry
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -196,10 +216,16 @@ def main(argv: list[str] | None = None) -> int:
     manifest.save()
 
     failed = [e.name for e in manifest.entries.values() if e.error]
+    unscorable = [e.name for e in manifest.entries.values() if e.missing_columns]
     print(f"[pull] manifest written: {manifest.path}")
     if failed:
         print(f"[pull] {len(failed)} source(s) failed: {failed} — the report "
               f"will show them as MISSING", file=sys.stderr)
+    if unscorable:
+        print(f"[pull] {len(unscorable)} source(s) pulled but incomplete: "
+              f"{unscorable} — recorded in the manifest; the report will blank "
+              f"the affected points rather than publish a wrong one",
+              file=sys.stderr)
     return 0
 
 

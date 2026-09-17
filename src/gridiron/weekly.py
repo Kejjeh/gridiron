@@ -35,6 +35,7 @@ import pandas as pd
 from gridiron.freshness import SourceFreshness, Status, WeekContext, degradations
 from gridiron.ids import Crosswalk, is_dst_id, normalize_id
 from gridiron.league_config import LEAGUE_NAME, ROSTER_SLOTS, SEASON_YEAR
+from gridiron.scoring import ScoringCoverage
 from gridiron.vegas import implied_totals_from_nflverse
 
 #: What the report is honest about not having.
@@ -59,6 +60,13 @@ class AvailabilityNote:
     It also refuses to present a stale designation as current: a row from an
     earlier week is labelled with the week it came from, so a Wednesday
     designation never masquerades as a Sunday one.
+
+    Sleeper's `injury_status` needs the same treatment for a different reason.
+    It is LIVE rather than week-keyed, so the value itself carries no date —
+    which means a month-old player dump yields a "Questionable" that is
+    indistinguishable, on the page, from one pulled an hour ago. The age of
+    the pull it came from is the only thing that can tell them apart, so it
+    is carried here and printed.
     """
 
     designation: str          # Sleeper live injury_status (Questionable/Out/IR)
@@ -69,6 +77,12 @@ class AvailabilityNote:
     report_week: int
     covers_report_week: bool  # did a report for THIS week actually load?
     sources: tuple[str, ...] = field(default=())
+    #: Was the Sleeper player dump that supplied `designation` itself current?
+    #: Defaults to False: a caller that cannot say is not entitled to the
+    #: benefit of the doubt on the one field that goes stale fastest.
+    designation_fresh: bool = False
+    #: Why not, when it is not — e.g. "pulled 720h ago, over the 24h limit".
+    designation_reason: str = ""
 
     @property
     def known(self) -> bool:
@@ -77,15 +91,22 @@ class AvailabilityNote:
     @property
     def current(self) -> bool:
         """True only when the designation describes the report week itself."""
-        if self.designation:          # Sleeper's field is live, not week-keyed
-            return True
+        if self.designation:
+            # Live field, so the WEEK is right by construction — but only if
+            # the pull it rode in on is current. A stale dump is a snapshot of
+            # some earlier week wearing no date.
+            return self.designation_fresh
         return self.source_week == self.report_week
 
     def describe(self) -> str:
         tail = f" ({self.body_part})" if self.body_part else ""
         prac = f"; practice: {self.practice}" if self.practice else ""
         if self.designation:
-            return f"{self.designation}{tail}{prac}"
+            if self.designation_fresh:
+                return f"{self.designation}{tail}{prac}"
+            why = f" — {self.designation_reason}" if self.designation_reason else ""
+            return (f"{self.designation}{tail}{prac} — STALE designation from "
+                    f"an out-of-date player pull{why}; NOT a current status")
         if self.report_status:
             if self.source_week == self.report_week:
                 return f"{self.report_status}{tail} — wk{self.report_week} report{prac}"
@@ -200,12 +221,13 @@ def _txt(value: object) -> str:
 
 def availability(gsis_id: str, sleeper_player: Mapping[str, object] | None,
                  injuries: Mapping[str, dict], *, report_week: int,
-                 covers_report_week: bool) -> AvailabilityNote:
+                 covers_report_week: bool, designation_fresh: bool = False,
+                 designation_reason: str = "") -> AvailabilityNote:
     sp = sleeper_player or {}
     row = injuries.get(normalize_id(gsis_id), {})
     sources = []
     if sp.get("injury_status"):
-        sources.append("sleeper")
+        sources.append("sleeper" if designation_fresh else "sleeper (STALE)")
     if row:
         sources.append(f"nflverse wk{row.get('week')}")
     return AvailabilityNote(
@@ -217,6 +239,8 @@ def availability(gsis_id: str, sleeper_player: Mapping[str, object] | None,
         report_week=int(report_week),
         covers_report_week=bool(covers_report_week),
         sources=tuple(sources),
+        designation_fresh=bool(designation_fresh),
+        designation_reason=designation_reason,
     )
 
 
@@ -303,12 +327,35 @@ def build_report(
     std: pd.DataFrame,
     schedule: pd.DataFrame,
     injuries: pd.DataFrame,
+    scoring: ScoringCoverage,
 ) -> WeeklyReport:
-    """Assemble one manager's roster into the week's evidence table."""
+    """Assemble one manager's roster into the week's evidence table.
+
+    `scoring` is the caller's read-time check that the cached stat frame
+    actually carries the columns the league's rules need. When a scoring term
+    has no column behind it, the points for the affected positions are BLANK
+    here, because `gridiron.scoring` would otherwise return a plausible number
+    that is simply wrong (an absent interceptions column is worth +2 a pick to
+    every quarterback on the page).
+
+    It is deliberately a REQUIRED argument. A default would mean a caller can
+    publish points without ever having looked at the schema behind them, and
+    "nobody remembered to check" is precisely the state this parameter exists
+    to make impossible.
+    """
     starters = [normalize_id(p) for p in (roster.get("starters") or [])]
     players = [normalize_id(p) for p in (roster.get("players") or [])]
     reserve = {normalize_id(p) for p in (roster.get("reserve") or [])}
     resolution = crosswalk.resolve(players)
+
+    coverage = scoring
+    players_source = next((s for s in sources if s.name == "sleeper_players"),
+                          None)
+    designation_fresh = (players_source is not None
+                         and players_source.status is Status.FRESH)
+    designation_reason = "" if designation_fresh else (
+        players_source.reason if players_source is not None
+        else "the player dump's freshness was never assessed")
 
     games = schedule_index(schedule, context.report_week)
     inj = injury_index(injuries, context.report_week)
@@ -330,7 +377,9 @@ def build_report(
         nfl_team = _txt(sp.get("team")) or (sid if dst else "")
         game = games.get(nfl_team, unplayed)
         note = availability(gid, sp, inj, report_week=context.report_week,
-                            covers_report_week=injuries_cover)
+                            covers_report_week=injuries_cover,
+                            designation_fresh=designation_fresh,
+                            designation_reason=designation_reason)
         row: dict[str, object] = {
             "lineup": lineup,
             "player": _txt(sp.get("full_name")) or (f"{nfl_team} DST" if dst
@@ -346,10 +395,14 @@ def build_report(
         }
         stats = (std_by_gsis.loc[gid] if gid and len(std_by_gsis)
                  and gid in std_by_gsis.index else None)
+        # Usage survives a scoring-column hole — a target is a target whether
+        # or not the interceptions column made it into the parquet. Only the
+        # points go blank, and only for the half of the module that is broken.
+        scorable = coverage.scorable(str(row["pos"]))
         row.update({
             "g": _get(stats, "games"),
-            "pts": _get(stats, "points"),
-            "ppg": _get(stats, "ppg"),
+            "pts": _get(stats, "points") if scorable else None,
+            "ppg": _get(stats, "ppg") if scorable else None,
             "snap%": _get(stats, "offense_pct"),
             "tgt": _get(stats, "targets"),
             "tgt_sh": _get(stats, "target_share"),
@@ -370,6 +423,21 @@ def build_report(
         ).reset_index(drop=True)
 
     notes = list(degradations(sources, context))
+    if not coverage.complete:
+        groups = ", ".join(sorted(coverage.affected_groups))
+        notes.append(
+            f"SCORING INPUTS INCOMPLETE — the cached stat frame is missing "
+            f"column(s) {', '.join(coverage.missing_columns)} "
+            f"({coverage.reason()}). `pts`/`ppg` are BLANK for {groups} "
+            f"position(s): scoring them would silently treat an absent column "
+            f"as a zero stat line and publish a wrong number. Re-pull "
+            f"weekly_stats; usage columns are unaffected.")
+    if coverage.legacy_used:
+        notes.append(
+            f"weekly_stats uses pre-rewrite nflverse column(s) "
+            f"{', '.join(coverage.legacy_used)} — scored through the documented "
+            f"legacy aliases, not double counted, but this cache predates the "
+            f"nflreadpy 0.1.x stats rewrite")
     if resolution.unresolved:
         notes.append(
             f"{len(resolution.unresolved)} roster id(s) unresolved against the "

@@ -28,12 +28,21 @@ from gridiron.ids import Crosswalk, sleeper_gsis_overlay
 from gridiron.league_config import (MY_SLEEPER_USERNAME, SEASON_YEAR,
                                     SETTINGS_VERIFIED)
 from gridiron.paths import OUTPUTS, ensure_dirs
+from gridiron.scoring import ScoringCoverage, scoring_coverage
 from gridiron.sleeper import owner_roster
 from gridiron.usage import player_weeks, season_to_date, weeks_present
 from gridiron.weekly import build_report
 
-SOURCES = ("sleeper_league", "injuries", "schedules", "weekly_stats",
-           "snap_counts", "crosswalk")
+#: Every source this report READS. The rule is consumption, not convenience:
+#: if a value from a source reaches the page, that source's as-of line is on
+#: the page too. `sleeper_players` is here because the report takes the live
+#: injury designation, team, position and the sleeper->gsis id overlay from
+#: it — leaving it out let a month-old designation print as current under an
+#: "All inputs current" header.
+#: tests/test_report_cli.py derives this list from the source of this file
+#: independently, so a future read that forgets to add its source fails.
+SOURCES = ("sleeper_league", "sleeper_players", "injuries", "schedules",
+           "weekly_stats", "snap_counts", "crosswalk")
 
 
 def kickoffs_for(schedule: pd.DataFrame | None, week: int) -> list[datetime]:
@@ -148,6 +157,16 @@ def main(argv: list[str] | None = None) -> int:
     if players:
         crosswalk = crosswalk.with_overlay(sleeper_gsis_overlay(players))
 
+    # Read-time scoring-input validation. The manifest records what the PULL
+    # saw; this checks the frame actually in hand, which is the only thing
+    # that can catch a cache edited, truncated or written by an older schema
+    # since. It is the report's own gate, offline, on every run.
+    # No frame at all is not a schema defect: weekly_stats already reads
+    # MISSING in the freshness block and every stat cell is already blank, so
+    # validating a frame that isn't there would only double-report it.
+    coverage = (scoring_coverage(weekly.columns) if weekly is not None
+                else ScoringCoverage())
+
     std = pd.DataFrame(columns=["gsis_id"])
     if weekly is not None and len(weekly) and ctx.stats_through is not None:
         skill = weekly.loc[weekly["position"].isin(["QB", "RB", "WR", "TE", "K"])]
@@ -170,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         crosswalk=crosswalk, std=std,
         schedule=schedule if schedule is not None else pd.DataFrame(),
         injuries=injuries if injuries is not None else pd.DataFrame(),
+        scoring=coverage,
     )
     text = report.to_markdown(include_names=not args.anonymous)
     print(text)

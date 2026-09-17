@@ -15,6 +15,7 @@ import pytest
 
 from gridiron.freshness import Status, WeekContext, assess
 from gridiron.ids import Crosswalk
+from gridiron.scoring import ScoringCoverage, scoring_coverage
 from gridiron.usage import player_weeks, season_to_date
 from gridiron.weekly import (PROJECTION_STATUS, AvailabilityNote, availability,
                              build_report, injury_index, markdown_table,
@@ -25,10 +26,13 @@ NOW = datetime(2026, 9, 17, 13, 0, tzinfo=UTC)
 WEEK = 2
 
 
-def _sources(now=NOW, *, injuries_as_of=NOW, injury_weeks=2, rows=300):
+def _sources(now=NOW, *, injuries_as_of=NOW, injury_weeks=2, rows=300,
+             players_as_of=None):
     return [
         assess("sleeper_league", now=now, as_of=now, rows=12,
                covers_through_week=WEEK, required_week=WEEK),
+        assess("sleeper_players", now=now, as_of=players_as_of or now,
+               rows=11000),
         assess("injuries", now=now, as_of=injuries_as_of, rows=rows,
                covers_through_week=injury_weeks, required_week=WEEK),
         assess("schedules", now=now, as_of=now, rows=272,
@@ -56,12 +60,15 @@ def std(weekly_offense, weekly_kickers, snaps_wk1, crosswalk):
 
 
 def _build(ctx, std, crosswalk, league_snapshot, sleeper_players, schedules,
-           injuries, sources=None):
+           injuries, sources=None, scoring=None):
     return build_report(
         context=ctx, sources=sources or _sources(),
         roster=league_snapshot["rosters"][0],
         sleeper_players=sleeper_players, crosswalk=crosswalk, std=std,
-        schedule=schedules, injuries=injuries)
+        schedule=schedules, injuries=injuries,
+        # The committed fixtures carry the full post-rewrite nflverse schema,
+        # so the honest statement for them is "checked, complete".
+        scoring=scoring if scoring is not None else ScoringCoverage())
 
 
 @pytest.fixture
@@ -123,7 +130,8 @@ class TestAvailability:
     def test_a_live_sleeper_designation_is_reported_verbatim(self):
         note = availability("g1", {"injury_status": "Questionable",
                                    "injury_body_part": "Ankle"}, {},
-                            report_week=2, covers_report_week=True)
+                            report_week=2, covers_report_week=True,
+                            designation_fresh=True)
         assert "Questionable" in note.describe() and "Ankle" in note.describe()
         assert note.current
 
@@ -311,7 +319,8 @@ def test_an_incomplete_lineup_is_called_out(
     short["starters"] = short["starters"][:-2]
     report = build_report(context=ctx, sources=_sources(), roster=short,
                           sleeper_players=sleeper_players, crosswalk=crosswalk,
-                          std=std, schedule=schedules, injuries=injuries)
+                          std=std, schedule=schedules, injuries=injuries,
+                          scoring=ScoringCoverage())
     assert any("lineup slots" in n for n in report.notes)
 
 
@@ -336,7 +345,8 @@ def test_an_empty_roster_renders_without_crashing(ctx, std, crosswalk,
     report = build_report(context=ctx, sources=_sources(),
                           roster={"players": [], "starters": []},
                           sleeper_players=sleeper_players, crosswalk=crosswalk,
-                          std=std, schedule=schedules, injuries=injuries)
+                          std=std, schedule=schedules, injuries=injuries,
+                          scoring=ScoringCoverage())
     assert "_no roster rows_" in report.to_markdown()
 
 
@@ -439,3 +449,99 @@ def test_season_to_date_is_a_second_cut_not_the_only_one(
     std = season_to_date(pw, through_week=1)
     assert set(std["last_week"]) == {1}
     assert (std["games"] == 1).all()
+
+
+# --- the live designation is only as current as the pull it rode in on ---
+
+def test_a_designation_from_a_stale_player_pull_is_labelled(ctx, std, crosswalk,
+                                                            league_snapshot,
+                                                            sleeper_players,
+                                                            schedules, injuries):
+    """Sleeper's `injury_status` is live, not week-keyed, so it carries no
+    date of its own. A month-old "Questionable" and a current one are the
+    same five characters; only the age of the pull distinguishes them."""
+    stale = _sources(players_as_of=NOW - timedelta(days=30))
+    report = _build(ctx, std, crosswalk, league_snapshot, sleeper_players,
+                    schedules, injuries, sources=stale)
+
+    assert report.degraded
+    designations = [r for r in report.rows["availability"]
+                    if "Questionable" in str(r)]
+    assert designations, "fixture roster should carry a Sleeper designation"
+    assert all("STALE designation" in d for d in designations)
+    assert all("NOT a current status" in d for d in designations)
+
+
+def test_a_designation_whose_freshness_was_never_assessed_is_not_trusted(ctx, std,
+        crosswalk, league_snapshot, sleeper_players, schedules, injuries):
+    """Fail closed. If no caller established that the player dump is current,
+    the report does not get to imply that it is — that silence is exactly what
+    let a stale designation print as live."""
+    without = [s for s in _sources() if s.name != "sleeper_players"]
+    report = _build(ctx, std, crosswalk, league_snapshot, sleeper_players,
+                    schedules, injuries, sources=without)
+
+    designations = [r for r in report.rows["availability"]
+                    if "Questionable" in str(r)]
+    assert all("STALE designation" in d for d in designations)
+
+
+def test_a_current_player_pull_reports_the_designation_plainly(report):
+    """The other side of it: when the pull IS current, no hedging noise."""
+    designations = [r for r in report.rows["availability"]
+                    if "Questionable" in str(r)]
+    assert designations
+    assert all("STALE designation" not in d for d in designations)
+
+
+# --- points are blank when the columns behind them are not there ---
+
+def test_a_scoring_column_hole_blanks_the_points_but_not_the_usage(
+        ctx, std, crosswalk, league_snapshot, sleeper_players, schedules,
+        injuries, weekly_offense, weekly_kickers):
+    """`fantasy_points` treats an absent key as zero. That is right for a null
+    cell and a lie for a missing column, so the points do not get published —
+    while a target, a carry and a snap share remain exactly as measured."""
+    schema = set(weekly_offense.columns) | set(weekly_kickers.columns)
+    assert scoring_coverage(schema).complete, "fixture schema should be whole"
+    broken = scoring_coverage(schema - {"receiving_yards"})
+    assert broken.affected_groups == {"offense"}
+
+    report = _build(ctx, std, crosswalk, league_snapshot, sleeper_players,
+                    schedules, injuries, scoring=broken)
+
+    assert report.degraded
+    assert any("SCORING INPUTS INCOMPLETE" in n for n in report.notes)
+    offense = report.rows.loc[report.rows["pos"].isin(["QB", "RB", "WR", "TE"])]
+    assert offense["pts"].isna().all() and offense["ppg"].isna().all()
+    assert offense["tgt"].notna().any(), "usage must survive a scoring hole"
+
+
+def test_a_kicking_hole_leaves_the_offense_scored(ctx, std, crosswalk,
+                                                  league_snapshot,
+                                                  sleeper_players, schedules,
+                                                  injuries):
+    from gridiron.scoring import ColumnGap, ScoringCoverage as _SC
+
+    kicking_only = _SC((ColumnGap("xpm", "kicking", ("pat_made",)),))
+    report = _build(ctx, std, crosswalk, league_snapshot, sleeper_players,
+                    schedules, injuries, scoring=kicking_only)
+
+    rows = report.rows
+    assert rows.loc[rows["pos"] == "K", "pts"].isna().all()
+    assert rows.loc[rows["pos"].isin(["RB", "WR"]), "pts"].notna().any()
+
+
+def test_a_legacy_schema_is_noted_without_blanking_anything(ctx, std, crosswalk,
+        league_snapshot, sleeper_players, schedules, injuries):
+    """A cache predating the nflreadpy 0.1.x rename scores correctly through
+    the documented aliases. Worth saying; not a defect."""
+    from gridiron.scoring import ScoringCoverage as _SC
+
+    report = _build(ctx, std, crosswalk, league_snapshot, sleeper_players,
+                    schedules, injuries,
+                    scoring=_SC((), ("interceptions",)))
+
+    assert any("pre-rewrite nflverse column" in n for n in report.notes)
+    assert not any("SCORING INPUTS INCOMPLETE" in n for n in report.notes)
+    assert report.rows.loc[report.rows["pos"] == "RB", "pts"].notna().any()
