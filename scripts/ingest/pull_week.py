@@ -136,6 +136,13 @@ def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
         # writers takes is not a lock, and two writers overwriting one
         # well-known filename is exactly how a reader ends up pairing a new
         # snapshot with the previous pull's as_of.
+        # Validate before publishing. This writer reaches the same file the
+        # five-minute sync does, so it needs the same gate: a weekly pull that
+        # publishes a wrong-league or truncated snapshot is exactly as harmful
+        # as a scheduled one that does.
+        problems = ls.validate_snapshot(snapshot)
+        if problems:
+            raise ValueError("; ".join(str(p) for p in problems)[:300])
         rows = len(snapshot.get("rosters") or [])
         ls.publish_snapshot(manifest.directory, snapshot, now=now,
                             source="api.sleeper.app (read-only)", rows=rows,
@@ -204,6 +211,25 @@ def check_scoring_inputs(manifest: ing.Manifest) -> ing.Entry | None:
     return entry
 
 
+def commit_manifest(manifest: ing.Manifest, directory: Path, season: int,
+                    touched: set[str]) -> Path:
+    """Save under the shared lock, letting disk win for entries we do not own.
+
+    A writer that saves a manifest it loaded minutes ago erases everything
+    another writer committed in between. `touched` is the set of entries THIS
+    run is responsible for; every other entry — `sleeper_league` included, and
+    especially — is taken from the committed manifest, never from this
+    process's memory.
+    """
+    with ls.single_writer(directory, now=datetime.now(timezone.utc),
+                          holder="pull_week"):
+        disk = ing.Manifest.load(directory, season)
+        for name, entry in disk.entries.items():
+            if name not in touched:
+                manifest.entries[name] = entry
+        return manifest.save()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--season", type=int, default=SEASON_YEAR)
@@ -223,8 +249,12 @@ def main(argv: list[str] | None = None) -> int:
     #: Entries this run is responsible for. Everything else in the manifest
     #: belongs to another writer and is taken from disk at save time, never
     #: from this process's memory.
-    touched = set(NFLVERSE_SOURCES) | {"crosswalk", "sleeper_league",
-                                       "sleeper_players"}
+    #: NOT sleeper_league. That entry is published by `publish_snapshot`
+    #: inside the lock and may be superseded by a five-minute sync at any
+    #: point during the rest of this run — the 16 MB player fetch alone is
+    #: long enough for two of them. The committed on-disk entry therefore
+    #: always wins at save time, including over the one this run published.
+    touched = set(NFLVERSE_SOURCES) | {"crosswalk", "sleeper_players"}
     print(f"[pull] season {args.season} -> {directory}")
     print("[pull] nflverse")
     pull_nflverse(manifest, args.season, now, args.force)
@@ -238,13 +268,7 @@ def main(argv: list[str] | None = None) -> int:
     # nflverse pull would end by writing back a manifest whose sleeper_league
     # entry predates every five-minute sync that ran in the meantime.
     try:
-        with ls.single_writer(directory, now=datetime.now(timezone.utc),
-                              holder="pull_week"):
-            disk = ing.Manifest.load(directory, args.season)
-            for name, entry in disk.entries.items():
-                if name not in touched:
-                    manifest.entries[name] = entry
-            manifest.save()
+        commit_manifest(manifest, directory, args.season, touched)
     except ls.LockBusy as exc:
         print(f"[pull] could not take the write lock ({exc}); manifest NOT "
               f"written — re-run when the other writer finishes", file=sys.stderr)

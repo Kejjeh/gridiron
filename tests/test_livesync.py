@@ -8,6 +8,7 @@ waited for.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -347,18 +348,7 @@ def _pull_week_module():
 
 
 def test_the_weekly_puller_publishes_through_the_same_generation_scheme(cache):
-    """Astra's gate: a lock only one of two writers takes is not a lock.
-
-    The weekly puller used to overwrite one fixed filename and record the
-    manifest separately, which left a window where the bytes were new and the
-    as_of beside them was old. It now goes through `publish_snapshot`, so both
-    writers take one lock and both commit (path, as_of) together.
-    """
-    pw = _pull_week_module()
-    src = (Path(pw.__file__)).read_text(encoding="utf-8")
-    assert "ls.publish_snapshot(" in src
-    assert 'atomic(snap_path' not in src        # the old un-locked write is gone
-
+    """Astra's gate: a lock only one of two writers takes is not a lock."""
     path = ls.publish_snapshot(cache, _payload(), now=T0,
                                source="api.sleeper.app (read-only)",
                                rows=NUM_TEAMS, week=2, season=2026,
@@ -384,3 +374,232 @@ def test_generations_are_pruned_but_the_referenced_one_always_survives(cache):
     assert len(gens) == ls.KEEP_GENERATIONS
     entry = Manifest.load(cache, 2026).get("sleeper_league")
     assert (cache / entry.path).exists()
+
+
+def test_a_sync_during_a_slow_player_fetch_is_not_rolled_back_by_the_puller(cache):
+    """The real interleaving, executed — not asserted about the source text.
+
+    Timeline the weekly puller actually produces:
+      t+0   pull_week publishes its own snapshot and holds it in memory
+      t+5   a scheduled sync publishes a NEWER snapshot (the 16 MB player dump
+            is easily long enough for one, usually several)
+      t+9   pull_week finishes and saves its manifest
+
+    If that last save writes back the entry it published at t+0, every sync in
+    between is silently reverted and the report ages fresh data by the weekly
+    pull's clock.
+    """
+    pw = _pull_week_module()
+
+    manifest = Manifest.load(cache, 2026)
+    ls.publish_snapshot(cache, _payload(), now=T0, source="api.sleeper.app",
+                        rows=NUM_TEAMS, week=2, season=2026, holder="pull_week")
+    pw._adopt(manifest, "sleeper_league")
+    old_pointer = manifest.get("sleeper_league").path
+
+    # ... the player dump downloads; a scheduled sync lands mid-fetch ...
+    assert _sync(cache, FakeClient(), now=T0 + timedelta(minutes=5)).ok
+    new_pointer = Manifest.load(cache, 2026).get("sleeper_league").path
+    assert new_pointer != old_pointer
+
+    # ... and now the puller finishes and commits.
+    manifest.record("sleeper_players", path=cache / "sleeper_players.json",
+                    rows=11000, source="api.sleeper.app", as_of=T0 + timedelta(minutes=9))
+    pw.commit_manifest(manifest, cache, 2026,
+                       set(pw.NFLVERSE_SOURCES) | {"crosswalk", "sleeper_players"})
+
+    final = Manifest.load(cache, 2026)
+    assert final.get("sleeper_league").path == new_pointer      # sync survives
+    assert final.get("sleeper_league").as_of_dt == T0 + timedelta(minutes=5)
+    assert (cache / new_pointer).exists()
+    assert final.get("sleeper_players").rows == 11000           # puller's own lands
+
+
+def test_a_manifest_write_that_dies_leaves_the_previous_one_whole(cache):
+    """Injected failure: the manifest must be all-or-nothing.
+
+    A truncated manifest is worse than a stale one. It is the only thing that
+    says which generation is published, so losing it orphans every snapshot
+    file in the directory.
+    """
+    assert _sync(cache, FakeClient()).ok
+    good_manifest = (cache / "manifest.json").read_bytes()
+    entry = Manifest.load(cache, 2026).get("sleeper_league")
+    good_snapshot = (cache / entry.path).read_bytes()
+
+    real_replace = ls.os.replace
+    def die(src, dst):
+        if str(dst).endswith("manifest.json"):
+            raise OSError("disk full")
+        return real_replace(src, dst)
+
+    import gridiron.ingest as ingest_mod
+    ingest_mod.os.replace = die
+    try:
+        res = _sync(cache, FakeClient(), now=T0 + timedelta(minutes=5))
+    finally:
+        ingest_mod.os.replace = real_replace
+
+    assert not res.ok and res.code == "write_failed"
+    # Byte-identical, and still pointing at a snapshot that exists.
+    assert (cache / "manifest.json").read_bytes() == good_manifest
+    after = Manifest.load(cache, 2026).get("sleeper_league")
+    assert after.path == entry.path
+    assert (cache / after.path).read_bytes() == good_snapshot
+    assert not list(cache.glob("manifest.json.*.part"))      # no scratch left
+    assert not (cache / ls.LOCK_NAME).exists()               # lock released
+
+
+def test_a_lock_being_taken_is_not_mistaken_for_an_abandoned_one(cache):
+    """The O_EXCL window: created, payload not yet written.
+
+    Reading "unparseable" as "free" let a second process delete a lock a first
+    process was still in the middle of taking, and then both would proceed.
+    """
+    # Real wall clock here: an unreadable lock is aged by its mtime, which is
+    # the only timestamp such a lock has.
+    real_now = datetime.now(timezone.utc)
+    (cache / ls.LOCK_NAME).write_text("", encoding="utf-8")   # mid-creation
+    assert not ls._lock_is_abandoned(cache / ls.LOCK_NAME, real_now,
+                                     ls.LOCK_STALE_SECONDS)
+    with pytest.raises(ls.LockBusy):
+        with ls.single_writer(cache, now=real_now):
+            pass
+    assert (cache / ls.LOCK_NAME).exists()      # the other writer's, untouched
+    # Once it is genuinely old, it is reclaimable.
+    assert ls._lock_is_abandoned(
+        cache / ls.LOCK_NAME,
+        real_now + timedelta(seconds=ls.LOCK_STALE_SECONDS + 60),
+        ls.LOCK_STALE_SECONDS)
+
+
+def test_a_killed_holder_is_reclaimed_immediately_not_after_the_timeout(cache):
+    """A dead pid on this machine needs no waiting period."""
+    import os as _os
+    dead_pid = 999_999
+    (cache / ls.LOCK_NAME).write_text(json.dumps({
+        "pid": dead_pid, "node": ls.platform.node(), "holder": "killed",
+        "token": "abc", "started_at": ls._iso(T0)}), encoding="utf-8")
+    assert ls._process_alive(dead_pid, ls.platform.node()) is False
+    # T0 itself: not one second of staleness has elapsed.
+    assert _sync(cache, FakeClient(), now=T0).ok
+
+
+def test_a_live_holder_is_never_stolen_on_age_alone(cache):
+    """Our own pid is alive by definition, so age must not be enough."""
+    (cache / ls.LOCK_NAME).write_text(json.dumps({
+        "pid": os.getpid(), "node": ls.platform.node(), "holder": "slow",
+        "token": "abc", "started_at": ls._iso(T0)}), encoding="utf-8")
+    ancient = T0 + timedelta(hours=9)
+    assert not ls._lock_is_abandoned(cache / ls.LOCK_NAME, ancient,
+                                     ls.LOCK_STALE_SECONDS)
+    res = _sync(cache, FakeClient(), now=ancient)
+    assert not res.ok and res.code == "busy"
+
+
+def test_a_reclaimed_holder_cannot_delete_its_replacement_s_lock(cache):
+    """Ownership is by token, not by filename.
+
+    Without it, a holder whose lock was reclaimed as stale would, on finishing,
+    unlink the REPLACEMENT's lock — leaving two writers live and the directory
+    unlocked.
+    """
+    entered = []
+    with pytest.raises(ls.LockBusy):
+        with ls.single_writer(cache, now=T0, holder="first") as lock:
+            entered.append(json.loads(lock.read_text())["token"])
+            # Someone reclaims it and becomes the new holder.
+            lock.write_text(json.dumps({
+                "pid": os.getpid(), "node": ls.platform.node(),
+                "holder": "second", "token": "replacement",
+                "started_at": ls._iso(T0)}), encoding="utf-8")
+            raise ls.LockBusy("simulated takeover")
+    assert entered
+    # The first holder's exit left the replacement's lock exactly where it was.
+    assert (cache / ls.LOCK_NAME).exists()
+    assert json.loads((cache / ls.LOCK_NAME).read_text())["token"] == "replacement"
+
+
+def test_state_writes_do_not_share_a_scratch_file(cache):
+    seen = []
+    real = ls.Path.write_text
+    def spy(self, *a, **kw):
+        if ".part" in self.name:
+            seen.append(self.name)
+        return real(self, *a, **kw)
+    ls.Path.write_text = spy
+    try:
+        ls.SyncState(last_result="a").save(cache)
+        ls.SyncState(last_result="b").save(cache)
+    finally:
+        ls.Path.write_text = real
+    assert len(seen) == 2 and seen[0] != seen[1]
+    assert not list(cache.glob("*.part"))
+
+
+# --- fail-closed validation ------------------------------------------------
+@pytest.mark.parametrize("label,mutate", [
+    ("league season missing", lambda p: p["league"].pop("season")),
+    ("state season missing", lambda p: p["state"].pop("season")),
+    ("no scoring_settings", lambda p: p["league"].update(scoring_settings={})),
+    ("no roster_positions", lambda p: p["league"].update(roster_positions=[])),
+    ("duplicate roster ids",
+     lambda p: p["rosters"][3].update(roster_id=p["rosters"][2]["roster_id"])),
+    ("malformed roster member", lambda p: p["rosters"].__setitem__(4, "not-an-object")),
+    ("malformed user member", lambda p: p["users"].__setitem__(4, None)),
+    ("short matchups", lambda p: p.__setitem__("matchups", p["matchups"][:5])),
+])
+def test_fail_closed_on_a_defective_payload(cache, label, mutate):
+    assert _sync(cache, FakeClient()).ok
+    entry = Manifest.load(cache, 2026).get("sleeper_league")
+    before = (cache / entry.path).read_bytes()
+
+    broken = _payload()
+    mutate(broken)
+    res = _sync(cache, FakeClient(payload=broken), now=T0 + timedelta(minutes=5))
+    assert not res.ok, label
+    after = Manifest.load(cache, 2026).get("sleeper_league")
+    assert after.path == entry.path and (cache / after.path).read_bytes() == before
+
+
+def test_the_weekly_puller_validates_before_publishing(cache, monkeypatch):
+    """Same gate, both writers. A weekly pull that publishes a wrong-league
+    snapshot is exactly as harmful as a scheduled one that does."""
+    pw = _pull_week_module()
+
+    class BadClient:
+        def __init__(self, *a, **kw): pass
+        def snapshot(self, week=None):
+            return _payload(league_id="9999999999")
+
+    monkeypatch.setattr(pw, "SleeperReadOnly", BadClient)
+    manifest = Manifest.load(cache, 2026)
+    pw.pull_sleeper(manifest, T0, force=True, with_players=False)
+
+    # Nothing published, and the refusal is recorded as a failure.
+    assert not list(cache.glob(f"{ls.GENERATION_PREFIX}*.json"))
+    entry = manifest.get("sleeper_league")
+    assert entry is not None and "wrong_league" in entry.error
+    assert entry.path == ""     # never succeeded, so nothing to point at
+
+
+def test_settings_drift_stays_sticky_across_later_clean_syncs(cache):
+    """Drift is a standing flag, not a one-run notice.
+
+    It is cleared by a human deciding, not by the next sync happening to see
+    the same (changed) settings twice — which it always will.
+    """
+    _sync(cache, FakeClient())
+    changed = _payload(scoring={"rec": 1.0, "pass_td": 4})
+    assert _sync(cache, FakeClient(payload=changed),
+                 now=T0 + timedelta(minutes=5)).drift
+
+    for i in range(2, 5):                       # later, unremarkable syncs
+        res = _sync(cache, FakeClient(payload=changed),
+                    now=T0 + timedelta(minutes=5 * i))
+        assert res.ok and res.drift == ()       # nothing NEW changed
+        state = ls.SyncState.load(cache)
+        assert state.settings_drift == ["scoring_settings.rec"]
+        assert state.settings_drift_at == ls._iso(T0 + timedelta(minutes=5))
+    assert "SETTINGS DRIFT" in "\n".join(
+        ls.status_lines(ls.SyncState.load(cache), cache, now=T0))

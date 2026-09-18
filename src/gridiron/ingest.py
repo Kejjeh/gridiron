@@ -15,6 +15,7 @@ absent source and a broken source degrade the report differently.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
@@ -92,12 +93,31 @@ class Manifest:
         return cls(directory, entries, int(blob.get("season", season)))
 
     def save(self) -> Path:
+        """Publish the manifest ATOMICALLY.
+
+        `write_text` truncates first and writes second, so a process that dies
+        mid-write leaves a truncated or empty manifest — and a manifest is the
+        only thing that says which snapshot generation is the published one.
+        Losing it does not merely lose freshness metadata; it orphans every
+        generation file on disk. Writing a uniquely-named temp and renaming it
+        into place means a reader sees either the whole previous manifest or
+        the whole new one, never a fragment of either.
+        """
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(
+        blob = json.dumps(
             {"season": self.season,
              "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
              "entries": {k: asdict(v) for k, v in sorted(self.entries.items())}},
-            indent=1), encoding="utf-8")
+            indent=1)
+        # The temp name carries the pid: two writers (or a writer and a
+        # retrying one) must never share a scratch file, or one truncates the
+        # other's half-written bytes and renames the result into place.
+        tmp = self.path.with_name(f"{MANIFEST_NAME}.{os.getpid()}.part")
+        try:
+            tmp.write_text(blob, encoding="utf-8")
+            os.replace(tmp, self.path)
+        finally:
+            tmp.unlink(missing_ok=True)
         return self.path
 
     def record(self, name: str, *, path: Path | str, rows: int, source: str,

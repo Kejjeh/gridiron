@@ -35,8 +35,10 @@ passed validation whole.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
+import platform
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -89,6 +91,9 @@ LOCK_NAME = "sync.lock"
 LOCK_STALE_SECONDS = 240
 
 
+_TEMP_SEQ = itertools.count()
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -129,6 +134,19 @@ def _dicts(x: Any) -> list[Mapping[str, Any]]:
     return [d for d in x if isinstance(d, Mapping)]
 
 
+def _member_defects(x: Any) -> int:
+    """How many members of a list are not objects.
+
+    Silently filtering them — which `_dicts` does, because every caller past
+    validation wants clean rows — would let a payload of twelve nulls validate
+    as an empty list and a payload of six rosters and six strings validate as
+    a six-roster league. Counted here so validation can refuse it.
+    """
+    if not isinstance(x, Sequence) or isinstance(x, (str, bytes)):
+        return 0
+    return sum(1 for d in x if not isinstance(d, Mapping))
+
+
 def validate_snapshot(payload: Any, *, league_id: str = SLEEPER_LEAGUE_ID,
                       season: int = SEASON_YEAR,
                       owner_username: str | None = MY_SLEEPER_USERNAME,
@@ -157,18 +175,33 @@ def validate_snapshot(payload: Any, *, league_id: str = SLEEPER_LEAGUE_ID,
                 f"payload is league {got_id or '<none>'}, configured "
                 f"league is {league_id}"))
         got_season = str(league.get("season") or "")
-        if got_season and got_season != str(season):
+        if not got_season:
+            # Fail closed. An absent season is not "probably this season": it
+            # is a payload we cannot place in time, and publishing it would
+            # let last season's league object sit under this season's manifest.
+            out.append(Rejection(
+                "missing_season", "league object carries no season"))
+        elif got_season != str(season):
             out.append(Rejection(
                 "wrong_season",
                 f"league object is season {got_season}, configured season "
                 f"is {season}"))
+        if not (_mapping(league.get("scoring_settings")) or {}):
+            out.append(Rejection(
+                "missing_settings", "league object carries no scoring_settings"))
+        if not (league.get("roster_positions") or []):
+            out.append(Rejection(
+                "missing_settings", "league object carries no roster_positions"))
 
     state = _mapping(snap.get("state")) or {}
     try:
         state_season = int(state.get("season"))
     except (TypeError, ValueError):
         state_season = None
-    if state_season is not None and state_season != int(season):
+    if state_season is None:
+        out.append(Rejection(
+            "missing_season", "NFL state carries no readable season"))
+    elif state_season != int(season):
         out.append(Rejection(
             "wrong_season",
             f"NFL state reports season {state_season}, configured season "
@@ -188,9 +221,26 @@ def validate_snapshot(payload: Any, *, league_id: str = SLEEPER_LEAGUE_ID,
             "partial",
             f"{len(rosters)} rosters for a {NUM_TEAMS}-team league",
             partial=True))
+    for label, raw in (("users", snap.get("users")),
+                       ("rosters", snap.get("rosters")),
+                       ("matchups", snap.get("matchups"))):
+        bad = _member_defects(raw)
+        if bad:
+            out.append(Rejection(
+                "malformed", f"{bad} {label} entr{'y is' if bad == 1 else 'ies are'} "
+                             f"not an object", partial=True))
     if rosters and not all(r.get("roster_id") is not None for r in rosters):
         out.append(Rejection("malformed", "a roster has no roster_id",
                              partial=True))
+    elif rosters:
+        ids = [str(r.get("roster_id")) for r in rosters]
+        if len(set(ids)) != len(ids):
+            # Duplicate roster ids make every id-anchored join downstream
+            # ambiguous (rule #3). A merged or truncated response is the
+            # likely cause and neither is publishable.
+            dupes = sorted({i for i in ids if ids.count(i) > 1})
+            out.append(Rejection(
+                "malformed", f"duplicate roster_id(s): {', '.join(dupes)}"))
 
     # Owner identity. Not a credential — a public handle — but publishing a
     # snapshot in which the owner does not appear means the league is not his,
@@ -217,10 +267,20 @@ def validate_snapshot(payload: Any, *, league_id: str = SLEEPER_LEAGUE_ID,
         week = int(snap.get("week"))
     except (TypeError, ValueError):
         week = 0
-    if season_type == "regular" and week >= 1 and not _dicts(snap.get("matchups")):
-        out.append(Rejection(
-            "empty",
-            f"no matchups for regular-season week {week}", partial=True))
+    if season_type == "regular" and week >= 1:
+        matchups = _dicts(snap.get("matchups"))
+        if not matchups:
+            out.append(Rejection(
+                "empty",
+                f"no matchups for regular-season week {week}", partial=True))
+        elif rosters and len(matchups) < len(rosters):
+            # Every roster plays every week. Fewer matchup rows than rosters
+            # is a truncated response, and publishing it would read downstream
+            # as teams having no game — which is what a bye looks like.
+            out.append(Rejection(
+                "partial",
+                f"{len(matchups)} matchup rows for {len(rosters)} rosters in "
+                f"week {week}", partial=True))
     return tuple(out)
 
 
@@ -353,8 +413,15 @@ def _atomic_write(path: Path, text: str) -> None:
 
     `os.replace` is atomic on Windows as well as POSIX, which matters here
     because the scheduled writer and a human running `status` genuinely do race.
+
+    The temp name is UNIQUE per process and per call. A shared `<name>.part`
+    is its own race: two writers land on the same scratch file, one truncates
+    the other's half-written bytes, and whichever renames last publishes a
+    spliced file that is individually valid JSON and collectively nobody's
+    data. The state file is written outside the snapshot lock, so this is not
+    theoretical there.
     """
-    tmp = path.with_name(path.name + ".part")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{next(_TEMP_SEQ)}.part")
     try:
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, path)
@@ -438,53 +505,162 @@ class LockBusy(RuntimeError):
     a five-minute schedule declines to pile a second run on top of a slow one."""
 
 
+def _process_alive(pid: int, node: str) -> bool | None:
+    """Is that process still running? None when we cannot know.
+
+    Only meaningful when the lock was taken on THIS machine — a pid from
+    another host would collide with an unrelated local process and we would
+    cheerfully declare a live holder dead. On POSIX this is signal 0; on
+    Windows it is OpenProcess through ctypes, which is stdlib, so this adds no
+    dependency.
+    """
+    if not pid or node != platform.node():
+        return None
+    if os.name == "posix":
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True            # exists, owned by someone else
+        except OSError:
+            return None
+    try:                            # Windows
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        k32 = ctypes.windll.kernel32           # type: ignore[attr-defined]
+        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False if k32.GetLastError() == 87 else None  # 87 = no such pid
+        try:
+            code = ctypes.c_ulong()
+            if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return None
+            return code.value == STILL_ACTIVE
+        finally:
+            k32.CloseHandle(handle)
+    except Exception:
+        return None
+
+
+def _read_lock(lock: Path) -> dict | None:
+    try:
+        return json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _lock_is_abandoned(lock: Path, now: datetime, stale_after: float) -> bool:
+    """May this lock be taken over?
+
+    Three cases, and the ordering is what keeps a live holder safe:
+
+    1. The holder's process is demonstrably gone (same machine, pid dead) —
+       take over immediately, no waiting.
+    2. The lock is unreadable or empty. This is the O_EXCL window: a writer
+       has created the file and has not written its payload yet. It is
+       therefore presumed LIVE, not abandoned, until its mtime is stale. The
+       previous code read "unparseable" as "free", which let a second process
+       delete a lock a first process was still in the middle of taking.
+    3. Otherwise, take over only once the recorded start is older than
+       `stale_after` AND the holder is not known to be alive.
+    """
+    blob = _read_lock(lock)
+    if blob is None:
+        try:
+            age = now.timestamp() - lock.stat().st_mtime
+        except OSError:
+            return False
+        return age > stale_after
+    alive = _process_alive(int(blob.get("pid") or 0), str(blob.get("node") or ""))
+    if alive is False:
+        return True
+    if alive is True:
+        return False
+    started = blob.get("started_at")
+    try:
+        dt = datetime.fromisoformat(str(started))
+    except (TypeError, ValueError):
+        return True
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (now - dt).total_seconds() > stale_after
+
+
 @contextmanager
 def single_writer(directory: Path, *, now: datetime | None = None,
                   stale_after: float = LOCK_STALE_SECONDS,
                   holder: str = "sleeper_sync") -> Iterator[Path]:
     """Exclusive write access to the cache directory.
 
-    O_CREAT|O_EXCL rather than fcntl because this has to hold on Windows, which
-    is where it actually runs. A lock older than `stale_after` is taken over:
-    the alternative is that one killed process stops every future scheduled run
-    forever, which is a worse failure than the double-write it prevents.
+    O_CREAT|O_EXCL on a file rather than fcntl, because this has to hold on
+    Windows, which is where it actually runs.
+
+    Two properties the first cut did not have, both of which a five-minute
+    schedule will eventually find:
+
+    * **Releasing checks ownership.** Every holder writes a random token. On
+      exit we unlink only if the token on disk is still ours. Otherwise a
+      process whose lock was taken over as stale would, on finishing, delete
+      the *replacement* holder's lock and leave two writers running.
+    * **Taking over checks liveness, not just age.** A dead holder is
+      reclaimed at once; a live one is never reclaimed on age alone; and a
+      freshly created, not-yet-written lock counts as live.
     """
     d = Path(directory)
     d.mkdir(parents=True, exist_ok=True)
     lock = d / LOCK_NAME
     stamp = now or _now()
+    token = os.urandom(12).hex()
+    payload = json.dumps({"pid": os.getpid(), "node": platform.node(),
+                          "holder": holder, "token": token,
+                          "started_at": _iso(stamp)})
     for attempt in (0, 1):
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            held = _lock_age(lock, stamp)
-            if attempt == 0 and (held is None or held > stale_after):
-                # Abandoned, or unreadable and therefore not defensible.
+            if attempt == 0 and _lock_is_abandoned(lock, stamp, stale_after):
+                # Unlink the specific abandoned lock, then retry the O_EXCL
+                # create. If another process wins that create, we lose the
+                # race cleanly and report busy rather than proceeding.
                 lock.unlink(missing_ok=True)
                 continue
-            raise LockBusy(
-                f"another {holder} has held the lock for {held:.0f}s"
-                if held is not None else "another sync holds the lock")
+            raise LockBusy(_busy_detail(lock, stamp, holder))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump({"pid": os.getpid(), "holder": holder,
-                           "started_at": _iso(stamp)}, fh)
+                fh.write(payload)
             yield lock
         finally:
-            lock.unlink(missing_ok=True)
+            blob = _read_lock(lock)
+            if blob is not None and blob.get("token") == token:
+                lock.unlink(missing_ok=True)
         return
     raise LockBusy("could not acquire the sync lock")
 
 
 def _lock_age(lock: Path, now: datetime) -> float | None:
+    """Seconds since the lock was taken, or None if it does not say."""
+    blob = _read_lock(lock)
     try:
-        blob = json.loads(lock.read_text(encoding="utf-8"))
         started = datetime.fromisoformat(str(blob["started_at"]))
-    except (OSError, ValueError, KeyError, TypeError):
+    except (TypeError, ValueError, KeyError):
         return None
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.utc)
     return (now - started).total_seconds()
+
+
+def _busy_detail(lock: Path, now: datetime, holder: str) -> str:
+    blob = _read_lock(lock)
+    if blob is None:
+        return f"another {holder} is taking the lock"
+    age = _lock_age(lock, now)
+    who = blob.get("holder") or "a writer"
+    return (f"{who} holds the lock"
+            + (f" ({age:.0f}s)" if age is not None else ""))
 
 
 # --------------------------------------------------------------------------

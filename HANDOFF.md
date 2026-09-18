@@ -59,6 +59,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\gridiron_task.ps1 `
 own view (last success, next due, failure streak, drift). `-Action Uninstall`
 removes it. Install is idempotent — re-running replaces, never duplicates.
 
+The task runs with the **Interactive** logon type — no stored credential, no
+elevation — on a **time-based repeating trigger starting one minute after
+install**, so installing it while already signed in works immediately instead
+of waiting for the next logon. Install prints the first run time and the
+`NextRunTime` Windows reports, so the two can be compared on the spot.
+
 **Explicit requirement:** this is a scheduled task, not a service. It runs
 only while that desktop is powered on and that user is signed in. That is the
 price of not storing a password and not asking for admin, and it is the right
@@ -268,12 +274,13 @@ narrow it is the owner's call.
 | Guarantee | How | Test |
 |---|---|---|
 | Snapshot and manifest are always a coherent pair | Every publish writes an **immutable generation** `sleeper_league_<stamp>.json` and repoints the manifest at it atomically; no file is ever rewritten in place | `test_a_successful_sync_publishes_a_generation_the_manifest_points_at`, `test_an_unfinished_generation_is_never_read` |
-| One writer at a time, **including the weekly puller** | Both writers publish through `livesync.publish_snapshot`, which takes an `O_EXCL` lock (Windows-safe, no `fcntl`); an abandoned lock is taken over after 240s | `test_an_overlapping_run_declines_instead_of_double_writing`, `test_the_weekly_puller_publishes_through_the_same_generation_scheme` |
-| A concurrent writer's entries are never clobbered | The manifest is **re-read inside the lock** and only `sleeper_league` is touched; `pull_week.py` merges on-disk entries it did not touch before saving | `test_a_concurrent_writer_s_unrelated_entries_are_not_overwritten` |
+| One writer at a time, **including the weekly puller** | Both publish through `livesync.publish_snapshot`, which takes an `O_EXCL` lock (Windows-safe, no `fcntl`). Release checks a random **token**, so a reclaimed holder cannot delete its replacement's lock. Takeover checks **liveness** (`os.kill(pid,0)` / `OpenProcess` via ctypes), not age alone: a dead holder is reclaimed at once, a live one never, and a freshly created not-yet-written lock counts as live | `test_a_reclaimed_holder_cannot_delete_its_replacement_s_lock`, `test_a_live_holder_is_never_stolen_on_age_alone`, `test_a_killed_holder_is_reclaimed_immediately_not_after_the_timeout`, `test_a_lock_being_taken_is_not_mistaken_for_an_abandoned_one` |
+| A concurrent writer's entries are never clobbered | The manifest is **re-read inside the lock** and only `sleeper_league` is touched. `pull_week.py` never owns `sleeper_league` at save time — the committed on-disk entry always wins, including over the one that run published, because the 16 MB player fetch is long enough for several syncs to land | `test_a_sync_during_a_slow_player_fetch_is_not_rolled_back_by_the_puller` (real interleaving, executed) |
+| The manifest is published atomically | `Manifest.save()` writes a pid-unique temp and `os.replace`s it. A truncated manifest is worse than a stale one: it is the only thing naming the published generation, so losing it orphans every snapshot file. Every `.part` name carries the pid so two writers never share a scratch file | `test_a_manifest_write_that_dies_leaves_the_previous_one_whole` (injected `OSError`), `test_state_writes_do_not_share_a_scratch_file` |
 | Failure never loses data | Fetch → validate → *then* write. Nothing opens for writing until a whole payload passed every check | `test_a_failed_sync_preserves_the_last_good_snapshot` (9 failure modes) |
-| Identity is checked before publication | League id, season (league object *and* NFL state), team count, owner present and owning a roster | `test_validation_names_every_problem_and_separates_partial_from_wrong` |
+| Fail closed before publication, **both writers** | League id; season on the league object *and* NFL state, with a **missing** season refused rather than assumed; `scoring_settings` and `roster_positions` present; team count; owner present and owning a roster; duplicate roster ids; non-object list members; fewer matchup rows than rosters in a regular week. `pull_week.pull_sleeper` runs the same gate | `test_fail_closed_on_a_defective_payload` (8 cases), `test_the_weekly_puller_validates_before_publishing` |
 | Sequential GETs are not claimed to be atomic | The read window is timed and recorded in the snapshot; NFL state is read at both ends and a mid-read rollover discards the snapshot and retries once | `test_a_week_rollover_mid_read_discards_the_snapshot`, `test_the_read_window_is_recorded_not_assumed_away` |
-| Settings drift is detected, never auto-verified | Watched scoring/roster/settings keys are fingerprinted and diffed each sync; drift is recorded and shouted, and `SETTINGS_VERIFIED` is untouched (rule #1) | `test_settings_drift_is_reported_and_never_marks_anything_verified` |
+| Settings drift is detected, sticky, never auto-verified | Watched keys fingerprinted and diffed each sync; drift is recorded, shouted, and **stays flagged** through later clean syncs until a human clears it. `SETTINGS_VERIFIED` is never written (rule #1) | `test_settings_drift_is_reported_and_never_marks_anything_verified`, `test_settings_drift_stays_sticky_across_later_clean_syncs` |
 | Restart-safe | State is a separate file; a corrupt one resets counters but never blocks a sync | `test_state_survives_a_restart_and_a_corrupt_state_file_does_not_block` |
 | No league mutation | `gridiron.sleeper` is GET-only by construction; the sync adds no endpoint | `test_sleeper.py::test_module_is_read_only` |
 

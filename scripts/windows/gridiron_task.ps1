@@ -8,10 +8,14 @@
 
     * NO ADMIN. Registered under the current user with default (Limited)
       privileges. Nothing here asks for elevation.
-    * NO STORED PASSWORD. The task runs with the S4U logon type, so Windows
-      never keeps a credential for it. The cost of that choice is stated
-      plainly below: the task only runs while the desktop is on and this user
-      is signed in. It is not a service and does not survive a logoff.
+    * NO STORED PASSWORD. The task runs with the Interactive logon type, so
+      Windows never keeps a credential for it and it runs inside the signed-in
+      session. The cost is stated plainly: the task only runs while the
+      desktop is on and this user is signed in. It is not a service and does
+      not survive a logoff.
+    * STARTS WITHIN A MINUTE, not at the next logon. The trigger is
+      time-based and repeating, so installing it while already signed in does
+      what the person installing it expects.
     * NO VISIBLE WINDOW. Hidden, -WindowStyle Hidden, and the task's own
       Hidden setting.
     * NO OVERLAPPING RUNS. MultipleInstances = IgnoreNew, plus an execution
@@ -50,12 +54,15 @@ switch ($Action) {
                  "-File `"$runner`" -RepoRoot `"$RepoRoot`" -Python `"$Python`"") `
       -WorkingDirectory $RepoRoot
 
-    # Repeat forever from logon. A 10-year duration rather than [TimeSpan]::MaxValue
-    # because some Windows builds reject the latter when the task is written.
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+    # A TIME-BASED repeating trigger starting a minute from now. An -AtLogOn
+    # trigger would not fire until the next sign-in, so installing it in an
+    # already-signed-in session would appear to do nothing until tomorrow.
+    # 10-year duration rather than [TimeSpan]::MaxValue because some Windows
+    # builds reject the latter when the task is written.
+    $start = (Get-Date).AddMinutes(1)
+    $trigger = New-ScheduledTaskTrigger -Once -At $start `
         -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
-        -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
+        -RepetitionDuration (New-TimeSpan -Days 3650)
 
     $settings = New-ScheduledTaskSettingsSet `
       -MultipleInstances IgnoreNew `
@@ -67,13 +74,18 @@ switch ($Action) {
     $settings.DisallowStartIfOnBatteries = $false
     $settings.StopIfGoingOnBatteries = $false
 
+    # Interactive: runs in the signed-in session, no credential stored, no
+    # elevation. S4U would ask Windows to mint a service-for-user token, which
+    # some policies refuse outright and which buys nothing here.
     $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
-      -LogonType S4U -RunLevel Limited
+      -LogonType Interactive -RunLevel Limited
 
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
       -Settings $settings -Principal $principal -Force | Out-Null
 
+    $info = Get-ScheduledTaskInfo -TaskName $TaskName
     Write-Host "installed '$TaskName' every $IntervalMinutes min"
+    Write-Host "  first run: $start   (NextRunTime reports $($info.NextRunTime))"
     Write-Host "  runs as : $env:USERDOMAIN\$env:USERNAME (no stored password, no admin)"
     Write-Host "  REQUIRES: this desktop powered on and this user signed in."
     Write-Host "            It is a scheduled task, not a service - a logoff stops it."

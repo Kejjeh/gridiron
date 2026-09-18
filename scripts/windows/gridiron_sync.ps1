@@ -49,22 +49,35 @@ if ((Test-Path $log) -and ((Get-Item $log).Length -gt 512KB)) {
 }
 
 $script = Join-Path $RepoRoot "scripts\sync\sleeper_sync.py"
-$args = @($script, 'run', '--quiet')
+# Quoted: the default checkout path contains "Documents\Claude\Projects" today
+# and could contain a space tomorrow. An unquoted path with a space is silently
+# split into two arguments and python reports a file it cannot find.
+$args = @("`"$script`"", 'run', '--quiet')
 if ($IfDue) { $args += '--if-due' }
 
 $env:PYTHONPATH = Join-Path $RepoRoot "src"
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
-$out = Join-Path $logDir "last_stdout.txt"
-$err = Join-Path $logDir "last_stderr.txt"
+# Unique per run. Two overlapping wrappers redirecting to one file is a
+# sharing violation on Windows, and the run that loses it dies for a reason
+# that has nothing to do with the league.
+$runId = "{0}-{1}" -f (Get-Date -Format "yyyyMMddTHHmmssZ"), $PID
+$out = Join-Path $logDir "run_$runId.out"
+$err = Join-Path $logDir "run_$runId.err"
+
+# -WindowStyle Hidden, not -NoNewWindow: the two are mutually exclusive, and
+# -NoNewWindow inherits the scheduler's console, which is the configuration
+# that flashes a window at a signed-in user.
 $p = Start-Process -FilePath $Python -ArgumentList $args -WorkingDirectory $RepoRoot `
-                   -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+                   -WindowStyle Hidden -PassThru `
+                   -RedirectStandardOutput $out -RedirectStandardError $err
 
 if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
   # A hung sync is killed, not waited on. The previous snapshot is untouched
   # either way, and the next run is only five minutes away.
   try { $p.Kill() } catch { }
   Add-Content $log "$stamp TIMEOUT after ${TimeoutSeconds}s; killed"
+  Remove-Item $out, $err -ErrorAction SilentlyContinue
   exit 1
 }
 
@@ -73,4 +86,8 @@ foreach ($f in @($out, $err)) {
   if (Test-Path $f) { $tail += (Get-Content $f -Tail 3 | Where-Object { $_ -ne '' }) }
 }
 Add-Content $log "$stamp exit=$($p.ExitCode) $($tail -join ' | ')"
+Remove-Item $out, $err -ErrorAction SilentlyContinue
+Get-ChildItem $logDir -Filter "run_*" -ErrorAction SilentlyContinue |
+  Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-6) } |
+  Remove-Item -ErrorAction SilentlyContinue
 exit $p.ExitCode
