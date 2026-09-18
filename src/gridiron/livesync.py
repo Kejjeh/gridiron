@@ -85,10 +85,6 @@ KEEP_GENERATIONS = 3
 STATE_NAME = "sync_state.json"
 LOCK_NAME = "sync.lock"
 
-#: A held lock older than this is treated as abandoned — a killed process, a
-#: laptop suspended mid-run. Comfortably longer than a sync (seconds) and
-#: shorter than the interval, so a crashed run cannot wedge the schedule.
-LOCK_STALE_SECONDS = 240
 
 
 _TEMP_SEQ = itertools.count()
@@ -273,14 +269,23 @@ def validate_snapshot(payload: Any, *, league_id: str = SLEEPER_LEAGUE_ID,
             out.append(Rejection(
                 "empty",
                 f"no matchups for regular-season week {week}", partial=True))
-        elif rosters and len(matchups) < len(rosters):
-            # Every roster plays every week. Fewer matchup rows than rosters
-            # is a truncated response, and publishing it would read downstream
-            # as teams having no game — which is what a bye looks like.
-            out.append(Rejection(
-                "partial",
-                f"{len(matchups)} matchup rows for {len(rosters)} rosters in "
-                f"week {week}", partial=True))
+        elif rosters:
+            # Every roster plays every week, exactly once. A count check
+            # accepts twelve copies of one roster; the SET must match.
+            m_ids = [str(m.get("roster_id")) for m in matchups]
+            r_ids = {str(r.get("roster_id")) for r in rosters}
+            if len(set(m_ids)) != len(m_ids):
+                out.append(Rejection(
+                    "malformed", f"duplicate roster_id in week {week} matchups"))
+            elif set(m_ids) != r_ids:
+                missing = sorted(r_ids - set(m_ids))
+                extra = sorted(set(m_ids) - r_ids)
+                out.append(Rejection(
+                    "partial",
+                    f"week {week} matchups do not cover the roster set"
+                    + (f"; missing {missing}" if missing else "")
+                    + (f"; unknown {extra}" if extra else ""),
+                    partial=not extra))
     return tuple(out)
 
 
@@ -467,8 +472,23 @@ def publish_snapshot(directory: Path, payload: Mapping[str, Any], *,
     touched, so a concurrent nflverse pull that recorded `weekly_stats` while
     we were fetching does not get erased by a stale in-memory copy.
     """
+    with single_writer(Path(directory), now=now, holder=holder):
+        return _publish_locked(directory, payload, now=now, source=source,
+                               rows=rows, week=week, season=season)
+
+
+def _publish_locked(directory: Path, payload: Mapping[str, Any], *,
+                    now: datetime, source: str, rows: int,
+                    week: int | None = None,
+                    season: int = SEASON_YEAR) -> Path:
+    """The publish itself, for a caller that ALREADY holds the lock.
+
+    Split out because the OS lock is not reentrant: `sync_once` holds it across
+    the whole read-fetch-publish-save sequence, and re-acquiring it here would
+    deadlock rather than merely be redundant.
+    """
     d = Path(directory)
-    with single_writer(d, now=now, holder=holder):
+    if True:
         from gridiron.ingest import Manifest
 
         target = d / generation_name(now)
@@ -484,7 +504,7 @@ def publish_snapshot(directory: Path, payload: Mapping[str, Any], *,
                         as_of=now)
         manifest.save()
         _prune_generations(d, keep=target.name)
-    return target
+        return target
 
 
 def _prune_generations(directory: Path, *, keep: str) -> None:
@@ -505,162 +525,92 @@ class LockBusy(RuntimeError):
     a five-minute schedule declines to pile a second run on top of a slow one."""
 
 
-def _process_alive(pid: int, node: str) -> bool | None:
-    """Is that process still running? None when we cannot know.
+def _os_lock(fh) -> bool:
+    """Take an exclusive, non-blocking OS lock on the open file. False if held.
 
-    Only meaningful when the lock was taken on THIS machine — a pid from
-    another host would collide with an unrelated local process and we would
-    cheerfully declare a live holder dead. On POSIX this is signal 0; on
-    Windows it is OpenProcess through ctypes, which is stdlib, so this adds no
-    dependency.
+    The OS owns this, which is the entire point. A lock implemented by creating
+    and deleting a file cannot be made safe: two processes can both observe an
+    abandoned lock, both unlink it, and both create their own — and a token
+    written into the file only tells a holder whether to release, long after
+    both have already entered. There is no ordering of userspace steps that
+    fixes it. An OS lock has no such window, and the kernel drops it when the
+    holder dies, so a killed process needs no timeout and no reclaiming.
     """
-    if not pid or node != platform.node():
-        return None
     if os.name == "posix":
+        import fcntl
+
         try:
-            os.kill(pid, 0)
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True            # exists, owned by someone else
         except OSError:
-            return None
-    try:                            # Windows
-        import ctypes
+            return False
+    import msvcrt                    # Windows
 
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        STILL_ACTIVE = 259
-        k32 = ctypes.windll.kernel32           # type: ignore[attr-defined]
-        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False if k32.GetLastError() == 87 else None  # 87 = no such pid
-        try:
-            code = ctypes.c_ulong()
-            if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return None
-            return code.value == STILL_ACTIVE
-        finally:
-            k32.CloseHandle(handle)
-    except Exception:
-        return None
-
-
-def _read_lock(lock: Path) -> dict | None:
     try:
-        return json.loads(lock.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-
-def _lock_is_abandoned(lock: Path, now: datetime, stale_after: float) -> bool:
-    """May this lock be taken over?
-
-    Three cases, and the ordering is what keeps a live holder safe:
-
-    1. The holder's process is demonstrably gone (same machine, pid dead) —
-       take over immediately, no waiting.
-    2. The lock is unreadable or empty. This is the O_EXCL window: a writer
-       has created the file and has not written its payload yet. It is
-       therefore presumed LIVE, not abandoned, until its mtime is stale. The
-       previous code read "unparseable" as "free", which let a second process
-       delete a lock a first process was still in the middle of taking.
-    3. Otherwise, take over only once the recorded start is older than
-       `stale_after` AND the holder is not known to be alive.
-    """
-    blob = _read_lock(lock)
-    if blob is None:
-        try:
-            age = now.timestamp() - lock.stat().st_mtime
-        except OSError:
-            return False
-        return age > stale_after
-    alive = _process_alive(int(blob.get("pid") or 0), str(blob.get("node") or ""))
-    if alive is False:
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
         return True
-    if alive is True:
+    except OSError:
         return False
-    started = blob.get("started_at")
+
+
+def _os_unlock(fh) -> None:
     try:
-        dt = datetime.fromisoformat(str(started))
-    except (TypeError, ValueError):
-        return True
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return (now - dt).total_seconds() > stale_after
+        if os.name == "posix":
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        else:
+            import msvcrt
+
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass                         # closing the handle releases it anyway
 
 
 @contextmanager
 def single_writer(directory: Path, *, now: datetime | None = None,
-                  stale_after: float = LOCK_STALE_SECONDS,
                   holder: str = "sleeper_sync") -> Iterator[Path]:
-    """Exclusive write access to the cache directory.
+    """Exclusive write access to the cache directory, held by the OS.
 
-    O_CREAT|O_EXCL on a file rather than fcntl, because this has to hold on
-    Windows, which is where it actually runs.
+    The lock file is PERSISTENT and is never unlinked. Its existence means
+    nothing; only the OS lock on it does. That is what removes the
+    create/delete race: every process locks the same inode, so there is no
+    moment at which two of them can each believe they hold it.
 
-    Two properties the first cut did not have, both of which a five-minute
-    schedule will eventually find:
-
-    * **Releasing checks ownership.** Every holder writes a random token. On
-      exit we unlink only if the token on disk is still ours. Otherwise a
-      process whose lock was taken over as stale would, on finishing, delete
-      the *replacement* holder's lock and leave two writers running.
-    * **Taking over checks liveness, not just age.** A dead holder is
-      reclaimed at once; a live one is never reclaimed on age alone; and a
-      freshly created, not-yet-written lock counts as live.
+    Not reentrant, deliberately. `fcntl.flock` on a second descriptor in the
+    same process would block or fail, so anything that needs to publish while
+    already holding the lock calls `_publish_locked` rather than nesting.
     """
     d = Path(directory)
     d.mkdir(parents=True, exist_ok=True)
     lock = d / LOCK_NAME
     stamp = now or _now()
-    token = os.urandom(12).hex()
-    payload = json.dumps({"pid": os.getpid(), "node": platform.node(),
-                          "holder": holder, "token": token,
-                          "started_at": _iso(stamp)})
-    for attempt in (0, 1):
+    fh = open(lock, "a+")
+    try:
+        if not _os_lock(fh):
+            raise LockBusy(f"another writer holds {lock.name}")
         try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            if attempt == 0 and _lock_is_abandoned(lock, stamp, stale_after):
-                # Unlink the specific abandoned lock, then retry the O_EXCL
-                # create. If another process wins that create, we lose the
-                # race cleanly and report busy rather than proceeding.
-                lock.unlink(missing_ok=True)
-                continue
-            raise LockBusy(_busy_detail(lock, stamp, holder))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(payload)
+            # Diagnostics only. Nothing reads this to decide anything.
+            fh.seek(0)
+            fh.truncate()
+            fh.write(json.dumps({"pid": os.getpid(), "node": platform.node(),
+                                 "holder": holder, "started_at": _iso(stamp)}))
+            fh.flush()
             yield lock
         finally:
-            blob = _read_lock(lock)
-            if blob is not None and blob.get("token") == token:
-                lock.unlink(missing_ok=True)
-        return
-    raise LockBusy("could not acquire the sync lock")
+            _os_unlock(fh)
+    finally:
+        fh.close()
 
 
-def _lock_age(lock: Path, now: datetime) -> float | None:
-    """Seconds since the lock was taken, or None if it does not say."""
-    blob = _read_lock(lock)
+def lock_holder(directory: Path) -> dict | None:
+    """Who last took the lock, for status output. Never used to decide."""
     try:
-        started = datetime.fromisoformat(str(blob["started_at"]))
-    except (TypeError, ValueError, KeyError):
+        return json.loads((Path(directory) / LOCK_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=timezone.utc)
-    return (now - started).total_seconds()
-
-
-def _busy_detail(lock: Path, now: datetime, holder: str) -> str:
-    blob = _read_lock(lock)
-    if blob is None:
-        return f"another {holder} is taking the lock"
-    age = _lock_age(lock, now)
-    who = blob.get("holder") or "a writer"
-    return (f"{who} holds the lock"
-            + (f" ({age:.0f}s)" if age is not None else ""))
 
 
 # --------------------------------------------------------------------------
@@ -718,6 +668,8 @@ def sync_once(client, directory: Path, *, now: datetime | None = None,
               league_id: str = SLEEPER_LEAGUE_ID, season: int = SEASON_YEAR,
               owner_username: str | None = MY_SLEEPER_USERNAME,
               manifest=None) -> SyncResult:
+    # `manifest` is accepted and ignored: the manifest is now re-read inside
+    # the lock, which is the only copy that can be trusted.
     """Refresh the league snapshot, or fail without touching the good one.
 
     The ordering below is deliberate and is the reason a failure is safe:
@@ -727,6 +679,26 @@ def sync_once(client, directory: Path, *, now: datetime | None = None,
     """
     stamp = now or _now()
     d = Path(directory)
+    try:
+        with single_writer(d, now=stamp, holder="sleeper_sync"):
+            return _sync_locked(client, d, stamp, league_id, season,
+                                owner_username)
+    except LockBusy as exc:
+        # A previous run is still working. Nothing is read, nothing is written,
+        # and the counters are left alone — recording an attempt here would
+        # mean a busy tick could reset a streak it never tested.
+        return SyncResult(False, "busy", str(exc), SyncState.load(d))
+
+
+def _sync_locked(client, d: Path, stamp: datetime, league_id: str, season: int,
+                 owner_username: str | None) -> SyncResult:
+    """The whole sync, serialized.
+
+    State load, fetch, validate, publish and state save all happen inside one
+    lock hold. Reading the state before taking the lock was its own race: a
+    slow run could finish after a faster later one and write back both an older
+    snapshot pointer and stale counters over it.
+    """
     state = SyncState.load(d)
     state.last_attempt = _iso(stamp)
 
@@ -756,6 +728,9 @@ def sync_once(client, directory: Path, *, now: datetime | None = None,
         code = "partial" if all(p.partial for p in problems) else "invalid"
         return fail(code, "; ".join(str(p) for p in problems)[:500])
 
+    from gridiron.ingest import Manifest
+
+    manifest = Manifest.load(d)
     prior = current_snapshot(d, manifest)
     previous = _read_json(prior) if prior is not None else None
     drift = settings_changes(_mapping(previous or {}).get("league")
@@ -764,14 +739,10 @@ def sync_once(client, directory: Path, *, now: datetime | None = None,
 
     week = int(payload["week"])
     try:
-        publish_snapshot(d, payload, now=stamp,
-                         source="sleeper.snapshot (live sync)",
-                         rows=len(_dicts(payload.get("rosters"))),
-                         week=week, season=int(season))
-    except LockBusy as exc:
-        # Not a data failure. Another writer is mid-publish and the snapshot
-        # on disk is whole; the next five-minute run will simply try again.
-        return fail("busy", str(exc))
+        _publish_locked(d, payload, now=stamp,
+                        source="sleeper.snapshot (live sync)",
+                        rows=len(_dicts(payload.get("rosters"))),
+                        week=week, season=int(season))
     except OSError as exc:
         return fail("write_failed", f"{type(exc).__name__}: {exc}"[:300])
 
@@ -835,8 +806,9 @@ def status_lines(state: SyncState, directory: Path, *,
                    f"{', '.join(state.settings_drift)}")
         out.append("              settings remain UNVERIFIED-BY-THIS-TOOL; run "
                    "scripts/verify_league_settings.py and decide by hand (rule #1)")
-    lock = d / LOCK_NAME
-    if lock.exists():
-        held = _lock_age(lock, stamp)
-        out.append(f"lock          held{f' for {held:.0f}s' if held else ''}")
+    who = lock_holder(d)
+    if who:
+        out.append(f"lock          last taken by {who.get('holder')} at "
+                   f"{who.get('started_at')} (file is persistent; presence "
+                   f"does not mean held)")
     return out

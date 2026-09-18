@@ -228,18 +228,12 @@ def test_a_manual_run_and_a_scheduled_run_are_the_same_code_path(cache):
     assert _sync(cache, FakeClient(), now=T0 + timedelta(minutes=1)).ok
 
 
-def test_an_abandoned_lock_is_taken_over_rather_than_wedging_the_schedule(cache):
-    (cache / ls.LOCK_NAME).write_text(json.dumps(
-        {"pid": 1, "holder": "dead", "started_at": ls._iso(T0)}), encoding="utf-8")
-    late = T0 + timedelta(seconds=ls.LOCK_STALE_SECONDS + 60)
-    assert _sync(cache, FakeClient(), now=late).ok
-
-
 def test_the_lock_is_released_when_a_publish_raises(cache):
     with pytest.raises(ValueError):
         with ls.single_writer(cache, now=T0):
             raise ValueError("boom")
-    assert not (cache / ls.LOCK_NAME).exists()
+    # The lock FILE persists by design; the OS lock on it is what was released.
+    assert (cache / ls.LOCK_NAME).exists()
     assert _sync(cache, FakeClient()).ok
 
 
@@ -447,77 +441,8 @@ def test_a_manifest_write_that_dies_leaves_the_previous_one_whole(cache):
     assert after.path == entry.path
     assert (cache / after.path).read_bytes() == good_snapshot
     assert not list(cache.glob("manifest.json.*.part"))      # no scratch left
-    assert not (cache / ls.LOCK_NAME).exists()               # lock released
-
-
-def test_a_lock_being_taken_is_not_mistaken_for_an_abandoned_one(cache):
-    """The O_EXCL window: created, payload not yet written.
-
-    Reading "unparseable" as "free" let a second process delete a lock a first
-    process was still in the middle of taking, and then both would proceed.
-    """
-    # Real wall clock here: an unreadable lock is aged by its mtime, which is
-    # the only timestamp such a lock has.
-    real_now = datetime.now(timezone.utc)
-    (cache / ls.LOCK_NAME).write_text("", encoding="utf-8")   # mid-creation
-    assert not ls._lock_is_abandoned(cache / ls.LOCK_NAME, real_now,
-                                     ls.LOCK_STALE_SECONDS)
-    with pytest.raises(ls.LockBusy):
-        with ls.single_writer(cache, now=real_now):
-            pass
-    assert (cache / ls.LOCK_NAME).exists()      # the other writer's, untouched
-    # Once it is genuinely old, it is reclaimable.
-    assert ls._lock_is_abandoned(
-        cache / ls.LOCK_NAME,
-        real_now + timedelta(seconds=ls.LOCK_STALE_SECONDS + 60),
-        ls.LOCK_STALE_SECONDS)
-
-
-def test_a_killed_holder_is_reclaimed_immediately_not_after_the_timeout(cache):
-    """A dead pid on this machine needs no waiting period."""
-    import os as _os
-    dead_pid = 999_999
-    (cache / ls.LOCK_NAME).write_text(json.dumps({
-        "pid": dead_pid, "node": ls.platform.node(), "holder": "killed",
-        "token": "abc", "started_at": ls._iso(T0)}), encoding="utf-8")
-    assert ls._process_alive(dead_pid, ls.platform.node()) is False
-    # T0 itself: not one second of staleness has elapsed.
-    assert _sync(cache, FakeClient(), now=T0).ok
-
-
-def test_a_live_holder_is_never_stolen_on_age_alone(cache):
-    """Our own pid is alive by definition, so age must not be enough."""
-    (cache / ls.LOCK_NAME).write_text(json.dumps({
-        "pid": os.getpid(), "node": ls.platform.node(), "holder": "slow",
-        "token": "abc", "started_at": ls._iso(T0)}), encoding="utf-8")
-    ancient = T0 + timedelta(hours=9)
-    assert not ls._lock_is_abandoned(cache / ls.LOCK_NAME, ancient,
-                                     ls.LOCK_STALE_SECONDS)
-    res = _sync(cache, FakeClient(), now=ancient)
-    assert not res.ok and res.code == "busy"
-
-
-def test_a_reclaimed_holder_cannot_delete_its_replacement_s_lock(cache):
-    """Ownership is by token, not by filename.
-
-    Without it, a holder whose lock was reclaimed as stale would, on finishing,
-    unlink the REPLACEMENT's lock — leaving two writers live and the directory
-    unlocked.
-    """
-    entered = []
-    with pytest.raises(ls.LockBusy):
-        with ls.single_writer(cache, now=T0, holder="first") as lock:
-            entered.append(json.loads(lock.read_text())["token"])
-            # Someone reclaims it and becomes the new holder.
-            lock.write_text(json.dumps({
-                "pid": os.getpid(), "node": ls.platform.node(),
-                "holder": "second", "token": "replacement",
-                "started_at": ls._iso(T0)}), encoding="utf-8")
-            raise ls.LockBusy("simulated takeover")
-    assert entered
-    # The first holder's exit left the replacement's lock exactly where it was.
-    assert (cache / ls.LOCK_NAME).exists()
-    assert json.loads((cache / ls.LOCK_NAME).read_text())["token"] == "replacement"
+    with ls.single_writer(cache):                            # lock released
+        pass
 
 
 def test_state_writes_do_not_share_a_scratch_file(cache):
@@ -603,3 +528,86 @@ def test_settings_drift_stays_sticky_across_later_clean_syncs(cache):
         assert state.settings_drift_at == ls._iso(T0 + timedelta(minutes=5))
     assert "SETTINGS DRIFT" in "\n".join(
         ls.status_lines(ls.SyncState.load(cache), cache, now=T0))
+
+
+# --- the lock, with real processes ------------------------------------------
+HOLDER = """
+import sys, time
+sys.path.insert(0, sys.argv[2])
+from gridiron import livesync as ls
+with ls.single_writer(sys.argv[1], holder="child"):
+    print("held", flush=True)
+    time.sleep(60)
+"""
+
+
+def _hold_in_child(cache):
+    import subprocess, sys
+    from gridiron.paths import REPO_ROOT
+    proc = subprocess.Popen([sys.executable, "-c", HOLDER, str(cache),
+                             str(REPO_ROOT / "src")],
+                            stdout=subprocess.PIPE, text=True)
+    assert proc.stdout.readline().strip() == "held"
+    return proc
+
+
+def test_two_processes_cannot_both_hold_the_lock(cache):
+    _sync(cache, FakeClient())
+    child = _hold_in_child(cache)
+    try:
+        res = _sync(cache, FakeClient(), now=T0 + timedelta(minutes=5))
+        assert not res.ok and res.code == "busy"
+        with pytest.raises(ls.LockBusy):
+            with ls.single_writer(cache):
+                pass
+        # A busy tick touches nothing: not the pointer, not the counters.
+        assert ls.SyncState.load(cache).last_attempt == ls._iso(T0)
+    finally:
+        child.kill(); child.wait()
+
+
+def test_a_killed_holder_releases_the_lock_with_no_timeout_and_no_reclaim(cache):
+    child = _hold_in_child(cache)
+    child.kill(); child.wait()
+    # The OS dropped it with the process. No age check, no takeover, and the
+    # lock FILE is still there — its presence means nothing.
+    assert (cache / ls.LOCK_NAME).exists()
+    assert _sync(cache, FakeClient()).ok
+    assert (cache / ls.LOCK_NAME).exists()          # never unlinked
+
+
+def test_the_lock_is_not_reentrant_and_publish_does_not_nest_it(cache):
+    """`sync_once` holds the lock across fetch and publish; the publish path
+    it uses must not try to take it again."""
+    with ls.single_writer(cache, now=T0):
+        ls._publish_locked(cache, _payload(), now=T0, source="t",
+                           rows=NUM_TEAMS, week=2, season=2026)
+    assert Manifest.load(cache, 2026).get("sleeper_league") is not None
+
+
+def test_state_is_read_inside_the_lock_so_a_slow_run_cannot_overwrite_a_newer_one(cache):
+    """Two syncs, the first slow. With the state read outside the lock the
+    slow one would finish last and write back a stale pointer and counters."""
+    class Slow(FakeClient):
+        def snapshot(self, week=None):
+            # A newer sync completes while this one is mid-fetch. It must be
+            # refused (busy), not interleaved.
+            inner = _sync(cache, FakeClient(), now=T0 + timedelta(minutes=5))
+            assert not inner.ok and inner.code == "busy"
+            return super().snapshot(week)
+    res = _sync(cache, Slow(), now=T0)
+    assert res.ok
+    st = ls.SyncState.load(cache)
+    assert st.successes == 1 and st.last_success == ls._iso(T0)
+
+
+def test_regular_week_matchups_must_cover_the_roster_set_exactly(cache):
+    _sync(cache, FakeClient())
+    dup = _payload()
+    for m in dup["matchups"]:
+        m["roster_id"] = 1                           # 12 rows, one roster
+    assert not _sync(cache, FakeClient(payload=dup), now=T0 + timedelta(minutes=5)).ok
+    unknown = _payload()
+    unknown["matchups"][0]["roster_id"] = 99
+    res = _sync(cache, FakeClient(payload=unknown), now=T0 + timedelta(minutes=10))
+    assert not res.ok and "unknown" in res.detail

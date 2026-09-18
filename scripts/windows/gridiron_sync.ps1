@@ -23,6 +23,12 @@
 .PARAMETER TimeoutSeconds
   Hard wall for one sync. Well under the five-minute interval so a hung run is
   killed before the next one is due, rather than the two of them overlapping.
+
+.NOTES
+  Proof that the wrapper cannot report a false success — run on the desktop:
+
+    .\scripts\windows\gridiron_sync.ps1 -Python .\scripts\windows\selftest\fake_python_exit7.cmd
+    $LASTEXITCODE          # must be 7, and the log line must read exit=7
 #>
 [CmdletBinding()]
 param(
@@ -72,6 +78,11 @@ $p = Start-Process -FilePath $Python -ArgumentList $args -WorkingDirectory $Repo
                    -WindowStyle Hidden -PassThru `
                    -RedirectStandardOutput $out -RedirectStandardError $err
 
+# Touch the handle BEFORE waiting. Without this, .NET never caches the process
+# handle and ExitCode reads as $null after WaitForExit on this PowerShell path
+# — which logged "exit=" and let a failed sync pass as nothing in particular.
+$null = $p.Handle
+
 if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
   # A hung sync is killed, not waited on. The previous snapshot is untouched
   # either way, and the next run is only five minutes away.
@@ -81,13 +92,22 @@ if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
   exit 1
 }
 
+$p.Refresh()
+$code = $p.ExitCode
 $tail = @()
 foreach ($f in @($out, $err)) {
   if (Test-Path $f) { $tail += (Get-Content $f -Tail 3 | Where-Object { $_ -ne '' }) }
 }
-Add-Content $log "$stamp exit=$($p.ExitCode) $($tail -join ' | ')"
+if ($null -eq $code) {
+  # Unknown is not success. A wrapper that cannot say how its child exited
+  # must not report a clean run to the scheduler.
+  Add-Content $log "$stamp exit=UNKNOWN (ExitCode null after WaitForExit) $($tail -join ' | ')"
+  Remove-Item $out, $err -ErrorAction SilentlyContinue
+  exit 1
+}
+Add-Content $log "$stamp exit=$code $($tail -join ' | ')"
 Remove-Item $out, $err -ErrorAction SilentlyContinue
 Get-ChildItem $logDir -Filter "run_*" -ErrorAction SilentlyContinue |
   Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-6) } |
   Remove-Item -ErrorAction SilentlyContinue
-exit $p.ExitCode
+exit $code
