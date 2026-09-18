@@ -49,7 +49,7 @@ switch ($Action) {
     if (-not (Test-Path $runner)) { Write-Error "runner not found: $runner"; exit 2 }
     if (-not (Test-Path $Python)) { Write-Error "interpreter not found: $Python"; exit 2 }
 
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    $taskAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
       -Argument ("-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden " +
                  "-File `"$runner`" -RepoRoot `"$RepoRoot`" -Python `"$Python`"") `
       -WorkingDirectory $RepoRoot
@@ -80,7 +80,7 @@ switch ($Action) {
     $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
       -LogonType Interactive -RunLevel Limited
 
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+    Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $trigger `
       -Settings $settings -Principal $principal -Force | Out-Null
 
     $info = Get-ScheduledTaskInfo -TaskName $TaskName
