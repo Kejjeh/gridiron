@@ -30,6 +30,7 @@ from pathlib import Path
 from gridiron import ingest as ing
 from gridiron.freshness import CADENCES
 from gridiron.ids import CROSSWALK_URL
+from gridiron import livesync as ls
 from gridiron.league_config import SEASON_YEAR
 from gridiron.paths import ensure_dirs
 from gridiron.scoring import scoring_coverage
@@ -115,21 +116,35 @@ def pull_crosswalk(manifest: ing.Manifest, now: datetime, force: bool) -> None:
         print(f"  crosswalk: FAILED {exc}", file=sys.stderr)
 
 
+def _adopt(manifest: ing.Manifest, name: str) -> None:
+    """Re-read one entry from the committed manifest into this in-memory one."""
+    disk = ing.Manifest.load(manifest.directory, manifest.season)
+    entry = disk.get(name)
+    if entry is not None:
+        manifest.entries[name] = entry
+
+
 def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
                  with_players: bool) -> int:
     client = SleeperReadOnly()
-    snap_path = manifest.directory / "sleeper_league.json"
     week = 0
     try:
         snapshot = client.snapshot()
-        atomic(snap_path, lambda t: t.write_text(json.dumps(snapshot, indent=1),
-                                                 encoding="utf-8"))
         week = int(snapshot["week"])
-        manifest.record("sleeper_league", path=snap_path,
-                        rows=len(snapshot.get("rosters") or []),
-                        source="api.sleeper.app (read-only)", weeks=[week])
-        print(f"  sleeper_league: week {week}, "
-              f"{len(snapshot.get('rosters') or [])} rosters")
+        # Published through livesync so this writer and the five-minute sync
+        # share ONE lock and ONE generation scheme. A lock only one of two
+        # writers takes is not a lock, and two writers overwriting one
+        # well-known filename is exactly how a reader ends up pairing a new
+        # snapshot with the previous pull's as_of.
+        rows = len(snapshot.get("rosters") or [])
+        ls.publish_snapshot(manifest.directory, snapshot, now=now,
+                            source="api.sleeper.app (read-only)", rows=rows,
+                            week=week, season=manifest.season,
+                            holder="pull_week")
+        # publish_snapshot committed its own re-read of the manifest; adopt
+        # that entry so this run's later save() cannot write a stale one back.
+        _adopt(manifest, "sleeper_league")
+        print(f"  sleeper_league: week {week}, {rows} rosters")
     except Exception as exc:
         manifest.record_failure("sleeper_league",
                                 source="api.sleeper.app (read-only)",
@@ -205,6 +220,11 @@ def main(argv: list[str] | None = None) -> int:
     directory.mkdir(parents=True, exist_ok=True)
     manifest = ing.Manifest.load(directory, args.season)
 
+    #: Entries this run is responsible for. Everything else in the manifest
+    #: belongs to another writer and is taken from disk at save time, never
+    #: from this process's memory.
+    touched = set(NFLVERSE_SOURCES) | {"crosswalk", "sleeper_league",
+                                       "sleeper_players"}
     print(f"[pull] season {args.season} -> {directory}")
     print("[pull] nflverse")
     pull_nflverse(manifest, args.season, now, args.force)
@@ -213,7 +233,22 @@ def main(argv: list[str] | None = None) -> int:
     print("[pull] sleeper (read-only)")
     pull_sleeper(manifest, now, args.force, not args.no_players)
     check_scoring_inputs(manifest)
-    manifest.save()
+    # Save under the same lock the sync uses, merging in anything a concurrent
+    # writer committed while this pull was running. Without the merge, a long
+    # nflverse pull would end by writing back a manifest whose sleeper_league
+    # entry predates every five-minute sync that ran in the meantime.
+    try:
+        with ls.single_writer(directory, now=datetime.now(timezone.utc),
+                              holder="pull_week"):
+            disk = ing.Manifest.load(directory, args.season)
+            for name, entry in disk.entries.items():
+                if name not in touched:
+                    manifest.entries[name] = entry
+            manifest.save()
+    except ls.LockBusy as exc:
+        print(f"[pull] could not take the write lock ({exc}); manifest NOT "
+              f"written — re-run when the other writer finishes", file=sys.stderr)
+        return 1
 
     failed = [e.name for e in manifest.entries.values() if e.error]
     unscorable = [e.name for e in manifest.entries.values() if e.missing_columns]

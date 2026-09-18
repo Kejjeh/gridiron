@@ -1,9 +1,9 @@
 # HANDOFF
 
-State: **milestone 1 complete, reconciled with main, and both blockers from
-Astra's review of `28ae09a` fixed.** Branch
-`claude/compassionate-shannon-yq0hw5`, open as PR #1, awaiting re-review.
-Not merged, not deployed.
+State: **milestone 1 is merged to main (`c6429b8`, PR #1). Milestone 2 — the
+five-minute live league sync — is on branch
+`claude/compassionate-shannon-yq0hw5`, branched fresh from `c6429b8`, open for
+review. Not merged, not installed.**
 
 No identifiers in this file: the league id and the owner's Sleeper handle live
 in `src/gridiron/league_config.py`, and the rendered roster report is
@@ -31,7 +31,42 @@ PYTHONPATH=src python scripts/ingest/pull_week.py     # network, read-only
 PYTHONPATH=src python scripts/weekly/report.py        # offline, prints
 PYTHONPATH=src python scripts/weekly/report.py --write --anonymous
 PYTHONPATH=src python scripts/verify_league_settings.py
+
+PYTHONPATH=src python scripts/sync/sleeper_sync.py run       # network, ~1s
+PYTHONPATH=src python scripts/sync/sleeper_sync.py run --if-due
+PYTHONPATH=src python scripts/sync/sleeper_sync.py status    # offline
 ```
+
+**The two cadences are different jobs and must stay different jobs.**
+`sleeper_sync.py` is five Sleeper GETs — league, users, rosters, current-week
+matchups, NFL state — a few hundred KB, run every five minutes. `pull_week.py`
+is nflverse frames plus the 16 MB Sleeper player dump, run daily at most; that
+dump is on a once-a-day cadence because Sleeper's own documentation asks for
+it, and the sync has a test that fails if it ever reaches for it.
+
+### Installing the five-minute sync on the Windows desktop
+
+From the checkout, in PowerShell (no admin, no stored password):
+
+```
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\gridiron_task.ps1 `
+  -Action Install `
+  -RepoRoot "C:\Users\Joshua\Documents\Claude\Projects\Football-Live" `
+  -Python   "C:\Users\Joshua\Documents\Claude\Projects\Football\.venv\Scripts\python.exe"
+```
+
+`-Action Status` reports both the task's view (last/next run) and the sync's
+own view (last success, next due, failure streak, drift). `-Action Uninstall`
+removes it. Install is idempotent — re-running replaces, never duplicates.
+
+**Explicit requirement:** this is a scheduled task, not a service. It runs
+only while that desktop is powered on and that user is signed in. That is the
+price of not storing a password and not asking for admin, and it is the right
+trade for a tool whose worst failure is five minutes of staleness that the
+status command reports honestly.
+
+**No AI runs on the schedule.** The task starts `python.exe`. Nothing wakes
+Claude or Codex per refresh and no tokens are spent.
 
 `pull_week.py` fetches nflverse weekly stats, snap counts, schedules and
 injuries, the dynastyprocess id crosswalk, and a read-only Sleeper snapshot
@@ -217,9 +252,8 @@ narrow it is the owner's call.
 
 ## Next
 
-1. **Astra re-review of this branch.** Nothing is merged or deployed. The two
-   blockers are invariants 5 and 6 above, with the repro each was found by
-   turned into a test.
+1. **Astra review + local install of the live sync.** The install command is
+   above. Nothing is merged or installed.
 2. **Week 2 rollover check.** After Sunday's slate, `pull_week.py` then
    `report.py` should show `weekly_stats covers wk1-2` and the lag return to
    0. That is the first live exercise of the phase boundary.
@@ -228,6 +262,20 @@ narrow it is the owner's call.
 4. **Then** the rule #5 gate: a projection cannot ship until it beats a
    baseline containing every existing feature, out-of-sample. Roster audit,
    waiver board and start/sit all sit behind that gate.
+
+## Live sync: the guarantees, and where each is held
+
+| Guarantee | How | Test |
+|---|---|---|
+| Snapshot and manifest are always a coherent pair | Every publish writes an **immutable generation** `sleeper_league_<stamp>.json` and repoints the manifest at it atomically; no file is ever rewritten in place | `test_a_successful_sync_publishes_a_generation_the_manifest_points_at`, `test_an_unfinished_generation_is_never_read` |
+| One writer at a time, **including the weekly puller** | Both writers publish through `livesync.publish_snapshot`, which takes an `O_EXCL` lock (Windows-safe, no `fcntl`); an abandoned lock is taken over after 240s | `test_an_overlapping_run_declines_instead_of_double_writing`, `test_the_weekly_puller_publishes_through_the_same_generation_scheme` |
+| A concurrent writer's entries are never clobbered | The manifest is **re-read inside the lock** and only `sleeper_league` is touched; `pull_week.py` merges on-disk entries it did not touch before saving | `test_a_concurrent_writer_s_unrelated_entries_are_not_overwritten` |
+| Failure never loses data | Fetch → validate → *then* write. Nothing opens for writing until a whole payload passed every check | `test_a_failed_sync_preserves_the_last_good_snapshot` (9 failure modes) |
+| Identity is checked before publication | League id, season (league object *and* NFL state), team count, owner present and owning a roster | `test_validation_names_every_problem_and_separates_partial_from_wrong` |
+| Sequential GETs are not claimed to be atomic | The read window is timed and recorded in the snapshot; NFL state is read at both ends and a mid-read rollover discards the snapshot and retries once | `test_a_week_rollover_mid_read_discards_the_snapshot`, `test_the_read_window_is_recorded_not_assumed_away` |
+| Settings drift is detected, never auto-verified | Watched scoring/roster/settings keys are fingerprinted and diffed each sync; drift is recorded and shouted, and `SETTINGS_VERIFIED` is untouched (rule #1) | `test_settings_drift_is_reported_and_never_marks_anything_verified` |
+| Restart-safe | State is a separate file; a corrupt one resets counters but never blocks a sync | `test_state_survives_a_restart_and_a_corrupt_state_file_does_not_block` |
+| No league mutation | `gridiron.sleeper` is GET-only by construction; the sync adds no endpoint | `test_sleeper.py::test_module_is_read_only` |
 
 ## Not done deliberately
 
