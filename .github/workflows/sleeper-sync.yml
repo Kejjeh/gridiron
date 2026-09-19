@@ -1,0 +1,50 @@
+name: Sleeper cloud sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Best-effort hourly schedule, offset from the top-of-hour queue.
+    - cron: '17 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sleeper-cloud-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # Activation is deliberate: configure spending limits before enabling.
+    if: vars.GRIDIRON_CLOUD_SYNC_ENABLED == 'true' && github.event.repository.private == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      PYTHONPATH: src
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Refresh and validate Sleeper snapshot
+        run: python scripts/sync/sleeper_sync.py run --quiet --interval 3600
+      - name: Record freshness without exposing rosters
+        run: |
+          echo '### Sleeper snapshot' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Validated read-only refresh succeeded. Download sleeper-snapshot from this run.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Runner-local counters restart each run. Use run history for cloud failures; snapshot as_of is authoritative.' >> "$GITHUB_STEP_SUMMARY"
+          python scripts/sync/sleeper_sync.py status --interval 3600 >> "$GITHUB_STEP_SUMMARY"
+      - name: Save successful private snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sleeper-snapshot
+          path: |
+            data/research/cache/season*/manifest.json
+            data/research/cache/season*/sleeper_league_*.json
+            data/research/cache/season*/sync_state.json
+          if-no-files-found: error
+          retention-days: 7
