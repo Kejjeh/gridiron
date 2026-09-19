@@ -48,4 +48,3 @@ jobs:
             data/research/cache/season*/sync_state.json
           if-no-files-found: error
           retention-days: 7
-

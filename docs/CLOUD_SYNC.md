@@ -64,4 +64,3 @@ After activation: manually dispatch once on main, require a successful run and
 private artifact, inspect manifest freshness without printing roster contents,
 then confirm a scheduled run. Disable GRIDIRON_CLOUD_SYNC_ENABLED to stop future
 jobs. Do not re-enable the desktop task as a fallback.
-
