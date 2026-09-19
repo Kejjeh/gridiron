@@ -31,13 +31,13 @@ jobs:
         with:
           python-version: '3.12'
       - name: Refresh and validate Sleeper snapshot
-        run: python scripts/sync/sleeper_sync.py run --quiet
+        run: python scripts/sync/sleeper_sync.py run --quiet --interval 3600
       - name: Record freshness without exposing rosters
         run: |
           echo '### Sleeper snapshot' >> "$GITHUB_STEP_SUMMARY"
           echo 'Validated read-only refresh succeeded. Download sleeper-snapshot from this run.' >> "$GITHUB_STEP_SUMMARY"
           echo 'Runner-local counters restart each run. Use run history for cloud failures; snapshot as_of is authoritative.' >> "$GITHUB_STEP_SUMMARY"
-          python scripts/sync/sleeper_sync.py status >> "$GITHUB_STEP_SUMMARY"
+          python scripts/sync/sleeper_sync.py status --interval 3600 >> "$GITHUB_STEP_SUMMARY"
       - name: Save successful private snapshot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -48,3 +48,4 @@ jobs:
             data/research/cache/season*/sync_state.json
           if-no-files-found: error
           retention-days: 7
+

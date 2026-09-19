@@ -9,7 +9,7 @@ used; no local .env or private desktop cache is uploaded.
 ## Activation and cost gate
 
 The workflow must reach main before GitHub will schedule it. It currently
-requests hourly runs at minute 17; final cadence is awaiting owner selection.
+requests hourly runs at minute 17, approved by the owner on September 19.
 The job remains disabled until repository variable GRIDIRON_CLOUD_SYNC_ENABLED
 is exactly true. It also refuses to run if the repository becomes public.
 Before activation, verify the GitHub Actions budget stops usage at the included
@@ -64,3 +64,4 @@ After activation: manually dispatch once on main, require a successful run and
 private artifact, inspect manifest freshness without printing roster contents,
 then confirm a scheduled run. Disable GRIDIRON_CLOUD_SYNC_ENABLED to stop future
 jobs. Do not re-enable the desktop task as a fallback.
+
