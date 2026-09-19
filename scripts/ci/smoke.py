@@ -48,6 +48,7 @@ IMPORTS = [
     "gridiron.ingest",
     "gridiron.usage",
     "gridiron.weekly",
+    "gridiron.livesync",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on
@@ -57,6 +58,7 @@ PATTERNS = [
     "test_freshness.py",
     "test_sleeper.py",
     "test_ingest.py",
+    "test_livesync.py",
     "test_report_cli.py",
     "test_scoring_nflverse.py",
     "test_verify_league_settings.py",

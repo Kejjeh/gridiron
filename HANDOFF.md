@@ -1,9 +1,9 @@
 # HANDOFF
 
-State: **milestone 1 complete, reconciled with main, and both blockers from
-Astra's review of `28ae09a` fixed.** Branch
-`claude/compassionate-shannon-yq0hw5`, open as PR #1, awaiting re-review.
-Not merged, not deployed.
+State: **milestone 1 is merged to main (`c6429b8`, PR #1). Milestone 2 — the
+five-minute live league sync — is on branch
+`claude/compassionate-shannon-yq0hw5`, branched fresh from `c6429b8`, open for
+review. Not merged, not installed.**
 
 No identifiers in this file: the league id and the owner's Sleeper handle live
 in `src/gridiron/league_config.py`, and the rendered roster report is
@@ -31,7 +31,48 @@ PYTHONPATH=src python scripts/ingest/pull_week.py     # network, read-only
 PYTHONPATH=src python scripts/weekly/report.py        # offline, prints
 PYTHONPATH=src python scripts/weekly/report.py --write --anonymous
 PYTHONPATH=src python scripts/verify_league_settings.py
+
+PYTHONPATH=src python scripts/sync/sleeper_sync.py run       # network, ~1s
+PYTHONPATH=src python scripts/sync/sleeper_sync.py run --if-due
+PYTHONPATH=src python scripts/sync/sleeper_sync.py status    # offline
 ```
+
+**The two cadences are different jobs and must stay different jobs.**
+`sleeper_sync.py` is five Sleeper GETs — league, users, rosters, current-week
+matchups, NFL state — a few hundred KB, run every five minutes. `pull_week.py`
+is nflverse frames plus the 16 MB Sleeper player dump, run daily at most; that
+dump is on a once-a-day cadence because Sleeper's own documentation asks for
+it, and the sync has a test that fails if it ever reaches for it.
+
+### Installing the five-minute sync on the Windows desktop
+
+From the checkout, in PowerShell (no admin, no stored password):
+
+```
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\gridiron_task.ps1 `
+  -Action Install `
+  -RepoRoot "C:\Users\Joshua\Documents\Claude\Projects\Football-Live" `
+  -Python   "C:\Users\Joshua\Documents\Claude\Projects\Football\.venv\Scripts\python.exe"
+```
+
+`-Action Status` reports both the task's view (last/next run) and the sync's
+own view (last success, next due, failure streak, drift). `-Action Uninstall`
+removes it. Install is idempotent — re-running replaces, never duplicates.
+
+The task runs with the **Interactive** logon type — no stored credential, no
+elevation — on a **time-based repeating trigger starting one minute after
+install**, so installing it while already signed in works immediately instead
+of waiting for the next logon. Install prints the first run time and the
+`NextRunTime` Windows reports, so the two can be compared on the spot.
+
+**Explicit requirement:** this is a scheduled task, not a service. It runs
+only while that desktop is powered on and that user is signed in. That is the
+price of not storing a password and not asking for admin, and it is the right
+trade for a tool whose worst failure is five minutes of staleness that the
+status command reports honestly.
+
+**No AI runs on the schedule.** The task starts `python.exe`. Nothing wakes
+Claude or Codex per refresh and no tokens are spent.
 
 `pull_week.py` fetches nflverse weekly stats, snap counts, schedules and
 injuries, the dynastyprocess id crosswalk, and a read-only Sleeper snapshot
@@ -217,9 +258,8 @@ narrow it is the owner's call.
 
 ## Next
 
-1. **Astra re-review of this branch.** Nothing is merged or deployed. The two
-   blockers are invariants 5 and 6 above, with the repro each was found by
-   turned into a test.
+1. **Astra review + local install of the live sync.** The install command is
+   above. Nothing is merged or installed.
 2. **Week 2 rollover check.** After Sunday's slate, `pull_week.py` then
    `report.py` should show `weekly_stats covers wk1-2` and the lag return to
    0. That is the first live exercise of the phase boundary.
@@ -228,6 +268,21 @@ narrow it is the owner's call.
 4. **Then** the rule #5 gate: a projection cannot ship until it beats a
    baseline containing every existing feature, out-of-sample. Roster audit,
    waiver board and start/sit all sit behind that gate.
+
+## Live sync: the guarantees, and where each is held
+
+| Guarantee | How | Test |
+|---|---|---|
+| Snapshot and manifest are always a coherent pair | Every publish writes an **immutable generation** `sleeper_league_<stamp>.json` and repoints the manifest at it atomically; no file is ever rewritten in place | `test_a_successful_sync_publishes_a_generation_the_manifest_points_at`, `test_an_unfinished_generation_is_never_read` |
+| One writer at a time, **including the weekly puller** | An **OS-held lock** on a persistent, never-unlinked file: `fcntl.flock` on POSIX, `msvcrt.locking` on Windows, both non-blocking. No create/delete, no age, no takeover — a file-existence lock cannot be made race-free (two processes can both see it abandoned and both replace it), and the kernel drops an OS lock when the holder dies. `sync_once` holds it across state read → fetch → publish → state save, so a slow run cannot finish last and write stale counters over a newer one; the publish path it uses (`_publish_locked`) does not re-acquire, because the lock is not reentrant | `test_two_processes_cannot_both_hold_the_lock` and `test_a_killed_holder_releases_the_lock_with_no_timeout_and_no_reclaim` (real child processes), `test_state_is_read_inside_the_lock_so_a_slow_run_cannot_overwrite_a_newer_one`, `test_the_lock_is_not_reentrant_and_publish_does_not_nest_it` |
+| A concurrent writer's entries are never clobbered | The manifest is **re-read inside the lock** and only `sleeper_league` is touched. `pull_week.py` never owns `sleeper_league` at save time — the committed on-disk entry always wins, including over the one that run published, because the 16 MB player fetch is long enough for several syncs to land | `test_a_sync_during_a_slow_player_fetch_is_not_rolled_back_by_the_puller` (real interleaving, executed) |
+| The manifest is published atomically | `Manifest.save()` writes a pid-unique temp and `os.replace`s it. A truncated manifest is worse than a stale one: it is the only thing naming the published generation, so losing it orphans every snapshot file. Every `.part` name carries the pid so two writers never share a scratch file | `test_a_manifest_write_that_dies_leaves_the_previous_one_whole` (injected `OSError`), `test_state_writes_do_not_share_a_scratch_file` |
+| Failure never loses data | Fetch → validate → *then* write. Nothing opens for writing until a whole payload passed every check | `test_a_failed_sync_preserves_the_last_good_snapshot` (9 failure modes) |
+| Fail closed before publication, **both writers** | League id; season on the league object *and* NFL state, with a **missing** season refused rather than assumed; `scoring_settings` and `roster_positions` present; team count; owner present and owning a roster; duplicate roster ids; non-object list members; regular-week matchup roster ids unique and equal to the roster set (a count check accepts twelve copies of one roster). `pull_week.pull_sleeper` runs the same gate | `test_fail_closed_on_a_defective_payload` (8 cases), `test_the_weekly_puller_validates_before_publishing` |
+| Sequential GETs are not claimed to be atomic | The read window is timed and recorded in the snapshot; NFL state is read at both ends and a mid-read rollover discards the snapshot and retries once | `test_a_week_rollover_mid_read_discards_the_snapshot`, `test_the_read_window_is_recorded_not_assumed_away` |
+| Settings drift is detected, sticky, never auto-verified | Watched keys fingerprinted and diffed each sync; drift is recorded, shouted, and **stays flagged** through later clean syncs until a human clears it. `SETTINGS_VERIFIED` is never written (rule #1) | `test_settings_drift_is_reported_and_never_marks_anything_verified`, `test_settings_drift_stays_sticky_across_later_clean_syncs` |
+| Restart-safe | State is a separate file; a corrupt one resets counters but never blocks a sync | `test_state_survives_a_restart_and_a_corrupt_state_file_does_not_block` |
+| No league mutation | `gridiron.sleeper` is GET-only by construction; the sync adds no endpoint | `test_sleeper.py::test_module_is_read_only` |
 
 ## Not done deliberately
 
