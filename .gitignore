@@ -23,5 +23,10 @@ data/outputs/week*_report.csv
 data/outputs/weekly_report_latest.md
 data/outputs/weekly_report_latest.csv
 
+# The decision dashboard and the decision-time archive name the owner's
+# players and lineup: local files, regenerable from the cache in one command.
+data/outputs/dashboard/
+data/ledger/decisions/
+
 # research-agent scratch drafts (synthesized into docs/research/*.md)
 docs/research/drafts/

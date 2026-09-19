@@ -49,6 +49,13 @@ IMPORTS = [
     "gridiron.usage",
     "gridiron.weekly",
     "gridiron.livesync",
+    "gridiron.models.validated_signals",
+    "gridiron.projection",
+    "gridiron.lineup",
+    "gridiron.waivers",
+    "gridiron.evaluate",
+    "gridiron.decisions",
+    "gridiron.dashboard",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on
@@ -60,6 +67,12 @@ PATTERNS = [
     "test_ingest.py",
     "test_livesync.py",
     "test_report_cli.py",
+    "test_dashboard_cli.py",
+    "test_projection.py",
+    "test_lineup.py",
+    "test_waivers.py",
+    "test_evaluate.py",
+    "test_decisions.py",
     "test_scoring_nflverse.py",
     "test_verify_league_settings.py",
     "test_ledger*.py",

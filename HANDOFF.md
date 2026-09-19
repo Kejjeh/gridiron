@@ -1,13 +1,30 @@
 # HANDOFF
 
 State: **milestone 1 is merged to main (`c6429b8`, PR #1). Milestone 2 — the
-five-minute live league sync — is on branch
-`claude/compassionate-shannon-yq0hw5`, branched fresh from `c6429b8`, open for
-review. Not merged, not installed.**
+five-minute live league sync — is PR #3 on `claude/compassionate-shannon-yq0hw5`
+(head `d16eb2e`, Astra's installer fix; installed on the desktop and verified
+over 180 refreshes). Milestone 3 — the weekly decision dashboard — is on
+`claude/weekly-dashboard`, branched from `d16eb2e`, open for review as a
+draft PR stacked on PR #3. Not merged.**
 
 No identifiers in this file: the league id and the owner's Sleeper handle live
-in `src/gridiron/league_config.py`, and the rendered roster report is
-gitignored. Nothing here names a player the owner holds.
+in `src/gridiron/league_config.py`, and every rendered roster artifact — the
+weekly report, the dashboard, the decision archive — is gitignored. Nothing
+here names a player the owner holds.
+
+## The dashboard, in one paragraph
+
+`scripts/weekly/dashboard.py` renders one offline HTML page from the cache:
+input freshness first, then the chronological out-of-sample record of the
+baseline, then the roster projected in league scoring with every component
+visible, the matchup with an UNCALIBRATED closed-form P(win), the best legal
+lineup under kickoff locks with every single-swap alternative (Δpts, z,
+ΔP(win)), and available-player upgrades each paired with an explicit drop.
+It writes a decision-time archive that later grading reads INSTEAD of
+re-projecting, so a grade cannot see the future. Everything it cannot
+support it abstains from, per row and per section, with the reason on the
+page. Section "Weekly decision dashboard" below has the guarantees table and
+the limitations.
 
 ## Read this first
 
@@ -35,7 +52,17 @@ PYTHONPATH=src python scripts/verify_league_settings.py
 PYTHONPATH=src python scripts/sync/sleeper_sync.py run       # network, ~1s
 PYTHONPATH=src python scripts/sync/sleeper_sync.py run --if-due
 PYTHONPATH=src python scripts/sync/sleeper_sync.py status    # offline
+
+PYTHONPATH=src python scripts/weekly/dashboard.py --write            # offline; HTML+JSON+archive
+PYTHONPATH=src python scripts/weekly/dashboard.py --write --anonymous --no-archive
+PYTHONPATH=src python scripts/weekly/dashboard_scenarios.py --screenshot   # synthetic pages
 ```
+
+The dashboard writes `data/outputs/dashboard/week{NN}_dashboard.html` (plus
+`.json` and a `dashboard_latest` pair) and the decision archive under
+`data/ledger/decisions/season{YYYY}/`. All of it is gitignored: it names
+the owner's players. `--now` renders as of a given instant (locks and
+freshness), which is how the scenarios and tests pin a Saturday.
 
 **The two cadences are different jobs and must stay different jobs.**
 `sleeper_sync.py` is five Sleeper GETs — league, users, rosters, current-week
@@ -258,16 +285,24 @@ narrow it is the owner's call.
 
 ## Next
 
-1. **Astra review + local install of the live sync.** The install command is
-   above. Nothing is merged or installed.
-2. **Week 2 rollover check.** After Sunday's slate, `pull_week.py` then
+1. **Astra review of the dashboard PR.** Render it on the desktop from the
+   live cache (`dashboard.py --write`), open the HTML, and check the three
+   synthetic scenarios (`dashboard_scenarios.py --screenshot`) against the
+   PNGs in `docs/review/dashboard/`. Nothing is merged.
+2. **First graded week.** After week 3 finals land in the cache, grade the
+   week-3 archive: `gridiron.decisions.grade_archive(read_archive(path),
+   actuals)` with actuals = week-3 `league_points` by gsis id from the
+   scored frame. That is the first rule #7 settlement; no script wraps it
+   yet, deliberately, until the first one has been done by hand.
+3. **Week 2 rollover check.** After Sunday's slate, `pull_week.py` then
    `report.py` should show `weekly_stats covers wk1-2` and the lag return to
    0. That is the first live exercise of the phase boundary.
-3. **DST scoring**, which needs team-level aggregation from nflverse
+4. **DST scoring**, which needs team-level aggregation from nflverse
    play-by-play — the one place the report currently renders a hole.
-4. **Then** the rule #5 gate: a projection cannot ship until it beats a
-   baseline containing every existing feature, out-of-sample. Roster audit,
-   waiver board and start/sit all sit behind that gate.
+5. **Then** the rule #5 gate for anything BEYOND the baseline: the dashboard
+   ships the baseline (which is what the gate measures against) and zero
+   features on top of it. `gridiron.models.validated_signals` is the
+   registry; `gridiron.evaluate` produces the evidence.
 
 ## Live sync: the guarantees, and where each is held
 
@@ -284,11 +319,60 @@ narrow it is the owner's call.
 | Restart-safe | State is a separate file; a corrupt one resets counters but never blocks a sync | `test_state_survives_a_restart_and_a_corrupt_state_file_does_not_block` |
 | No league mutation | `gridiron.sleeper` is GET-only by construction; the sync adds no endpoint | `test_sleeper.py::test_module_is_read_only` |
 
+## Weekly decision dashboard: the guarantees, and where each is held
+
+| Guarantee | How | Test |
+|---|---|---|
+| Offline, from the cache alone | The CLI reads only the manifest's files; no module under it imports a network client | `test_the_dashboard_renders_from_the_cache_with_no_network` (socket broken) |
+| Every source read declares its freshness on the page | `SOURCES` is re-derived from the script's own `read_frame`/`read_json`/`file` calls and compared to the freshness table | `test_every_source_the_dashboard_reads_declares_its_freshness` |
+| Projections are transparent | `Projection.components` (volume × rate × multiplier = points) and `inputs` (games, observed share, prior, weight) are rendered under every number; the mean is their sum | `test_the_mean_is_the_sum_of_its_printed_components` |
+| Projections are chronological | `build_evidence(through_week=...)` cuts BEFORE aggregation; the evaluation predicts each week from the ones before it, and perturbing later weeks moves nothing earlier | `test_evidence_is_cut_before_aggregation_...`, `test_each_week_is_predicted_only_from_the_weeks_before_it` |
+| Rule #6 is the model's shape | Usage share shrunk toward the measured role's prior with the documented n0; efficiency is the positional prior × line multiplier; the player's own efficiency is never read | `test_usage_is_shrunk_toward_the_role_prior_...`, `test_the_line_moves_efficiency_not_volume` |
+| Abstain, never guess | mean=None with a reason for: no admissible box score, DST, no pooled QB/K prior, unresolved id, incomplete scoring columns; withheld (0, model mean kept visible) for bye / Out / IR | `test_it_abstains_*`, `test_withheld_keeps_the_model_mean_visible`, `test_missing_inputs_abstain_everywhere_and_fill_nothing_in` |
+| Rule #11 | Questionable / Doubtful are flagged on the row and NEVER adjusted; a designation from a stale player pull is labelled STALE, and an Out from a stale pull says so | `test_complete_projects_matches_and_recommends_with_labels`, `test_stale_inputs_are_shown_labelled_...` |
+| Lineups are legal | Position/FLEX eligibility, nobody twice, nobody off IR, nobody moved after kickoff; an unprojected starter is frozen (not swapped out), an unprojected bench player is never proposed | `test_lineup.py`, `test_the_best_lineup_is_legal_under_the_locks` |
+| Lock state unknown ⇒ abstain | No schedule ⇒ `kickoff_index` is None ⇒ start/sit and upgrades both refuse, with the reason | `test_unknown_lock_state_abstains_from_everything`, `test_unknown_locks_abstain_the_whole_board` |
+| No same-value churn | Retained starters keep their slots when equally legal | `test_same_value_churn_is_not_reported_as_a_change` |
+| Every upgrade names its drop | Add/drop pairs are scored by the change in the best LEGAL lineup; LINEUP vs DEPTH kinds kept apart; a locked starter is never the drop | `test_a_lineup_upgrade_names_the_drop_and_the_slot_it_enters`, `test_the_drop_is_never_a_locked_starter_...` |
+| P(win) is never presented as calibrated | Closed form from `gridiron.winprob`, labelled UNCALIBRATED on the page and in the archive; abstains when any non-DST starter on either side is unprojected; `EvaluationReport.pwin_calibrated` is False by construction | `test_complete_...`, `test_missing_...` |
+| The archive is the page | `Dashboard.record()` is written atomically at render time; grading reads it and the week's actuals only, never re-projects; a missing actual is `ungradeable`, not zero | `test_the_archive_is_the_page_and_grading_it_leaks_nothing`, `test_decisions.py` |
+| Rule #5 gate is mechanical | `gridiron.models.validated_signals`: an entry in FEATS without VALIDATED evidence fails the import (smoke.py imports it first) | `test_the_rule_5_gate_fails_the_import_for_an_unvalidated_feature` |
+| Owner data stays local | `data/outputs/dashboard/` and `data/ledger/decisions/` gitignored; hygiene test scans tracked outputs for dashboard/archive markers; stdout names nobody; opponent is "roster #N" | `test_hygiene_no_roster_in_repo.py`, `test_the_stdout_summary_names_no_player`, `test_the_opponent_is_a_roster_number_...` |
+
+### Limitations, stated
+
+- **The baseline is unvalidated and says so.** On the synthetic scenario its
+  MAE does NOT beat season PPG (that fixture is built from one week copied
+  with scaled counts, which is the case PPG is best at). On the real cache
+  there is one week of box scores, so nothing can be evaluated yet. The
+  page carries the verdict either way; the verdict changes only when the
+  cache does.
+- **SD is a literature CV, not a fit.** §2.1's CVs by position; the
+  evaluation reports the ±1 SD coverage so a reader can see how wrong that is.
+- **P(win) assumes independence** between all starters (no stack / same-game
+  correlation, no DST on either side). It is a closed form, not the Monte
+  Carlo QUANT §2.5 asks for at |margin| < 15. Labelled on every render.
+- **QB and K priors are pooled from the frame**, not from a verified
+  constant, and the n0 for those per-game rates (3 games) is stated by
+  analogy, not fit. Backup QBs with one thin game are pulled toward the
+  starter prior; the "why" panel shows the weight.
+- **No FAAB pricing, no waiver-vs-free-agent state, no rest-of-season value.**
+  Upgrade gains are this week's projected points only.
+- **No DST projection**, so the DST slot is never optimized and both
+  matchup totals exclude it.
+- **Availability is a flag, not a probability.** Questionable and Doubtful
+  are shown unadjusted (rule #11); a human verifies before kickoff.
+- **The archive is graded by hand** until the first settlement has been
+  done once; there is no `grade_week.py` yet.
+- **Screenshots are of the synthetic scenarios only** (`docs/review/dashboard/`),
+  never of the owner's page.
+
 ## Not done deliberately
 
 - No lineup change, waiver claim, trade or message. Ever, by construction.
-- No projections, rankings or start/sit advice while the rule #5 gate is
-  unmet. A guessed recommendation presented as verified is the failure mode
-  this repo exists against.
+- No projection feature beyond the baseline while the rule #5 gate is
+  unmet; the baseline itself is labelled UNVALIDATED on every page. A
+  guessed recommendation presented as verified is the failure mode this
+  repo exists against.
 - No blocked-kick scoring and no DST scoring invented to fill the gap.
 - No history rewrite, no merge, no deploy, no PR watcher.

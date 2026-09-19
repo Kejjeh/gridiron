@@ -59,6 +59,20 @@ def normalize_id(value: object) -> str:
     return s
 
 
+#: Sleeper -> nflverse team abbreviation where the two disagree. Measured
+#: on the 2026 caches: Sleeper says LAR for the Rams, nflverse says LA;
+#: Sleeper also still carries OAK on retired player records. Everything
+#: else matches. A team code is a join key for schedules and locks, so the
+#: alias lives here, in the one crosswalk module, not at each call site.
+TEAM_ALIASES: dict[str, str] = {"LAR": "LA", "OAK": "LV"}
+
+
+def nflverse_team(sleeper_team: object) -> str:
+    """The nflverse spelling of a Sleeper team abbreviation."""
+    t = normalize_id(sleeper_team).upper()
+    return TEAM_ALIASES.get(t, t)
+
+
 def is_dst_id(sleeper_id: object) -> bool:
     """Sleeper names team defenses by team abbreviation, not a numeric id."""
     s = normalize_id(sleeper_id)

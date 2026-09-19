@@ -22,6 +22,8 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
 - Weekly (in-season): `PYTHONPATH=src python scripts/ingest/pull_week.py` then
   `PYTHONPATH=src python scripts/weekly/report.py --write`. Report reads the
   cache only — offline, and it states every input's as-of week and staleness.
+- Dashboard (offline): `PYTHONPATH=src python scripts/weekly/dashboard.py --write`;
+  synthetic scenarios: `scripts/weekly/dashboard_scenarios.py --screenshot`.
 - Settings drift check: `PYTHONPATH=src python scripts/verify_league_settings.py`.
 
 ## Rules (full text in docs/memory/rules.md — cite by number)

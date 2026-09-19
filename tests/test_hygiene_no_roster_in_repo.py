@@ -30,7 +30,8 @@ OUTPUTS = ROOT / "data" / "outputs"
 #: is 983 rows of league-wide ADP keyed by `sleeper_id` and exposes nobody's
 #: roster; treating an id column as private would ban the public files rule
 #: #10 exists to keep committing.
-ROSTER_MARKERS = ("lineup,player", "| lineup ", "## Roster")
+ROSTER_MARKERS = ("lineup,player", "| lineup ", "## Roster",
+                  "Roster projections", "\"current_lineup\"")
 
 
 def _git(*args: str) -> str:
@@ -46,6 +47,9 @@ def tracked_outputs() -> list[str]:
     "data/outputs/week02_report.md",
     "data/outputs/week07_report.csv",
     "data/outputs/weekly_report_latest.csv",
+    "data/outputs/dashboard/week03_dashboard.html",
+    "data/outputs/dashboard/dashboard_latest.json",
+    "data/ledger/decisions/season2026/week03_20260926T120000Z.json",
 ])
 def test_a_rendered_weekly_report_is_ignored(pattern):
     """`git check-ignore` is the real answer to 'would this get committed?' —
@@ -66,6 +70,15 @@ def test_no_tracked_output_file_is_a_roster_report():
     assert not offenders, (
         f"roster-bearing report(s) tracked in the repo: {offenders}. "
         f"Render them locally; they are regenerable from the cache.")
+
+
+def test_the_dashboard_writer_only_writes_under_data_outputs_and_the_ledger():
+    source = (ROOT / "scripts" / "weekly" / "dashboard.py").read_text("utf-8")
+    assert "OUTPUTS /" in source
+    for escape in ("..", "os.path.expanduser", "Path.home()", "/tmp"):
+        assert escape not in source, f"dashboard writer references {escape}"
+    archive = (ROOT / "src" / "gridiron" / "decisions.py").read_text("utf-8")
+    assert "LEDGER /" in archive
 
 
 def test_the_report_writer_only_writes_under_data_outputs():
