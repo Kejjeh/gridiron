@@ -3,19 +3,18 @@
 State: **milestones 1, 2 and the cloud sync are all merged to main (`8fbf468`).
 Milestone 3 — the weekly decision board — is on `claude/weekly-dashboard`,
 reconciled with main and open as draft PR #4 based on main. Not merged.**
-The branch carries four review passes: the first repaired five findings at
-`f82623e`; the second seven more at `47708e3` (schedule completeness,
-immutable archives, archive ordering, grading that claimed no conduct,
-withheld wording, coverage-gated box scores, and the cloud carry); the third
-at `585cb2a` removed bye inference outright, carried the last-good INPUTS
-beside the records, and made malformed archives reject individually; the
-fourth closed the hole the third left — a carried manifest entry was handed
-to `ing.Entry(**raw)`, which checks keys and never values, so `path: ["bad"]`
-raised `TypeError` out of `Path()` and killed the restore of every sound
-source beside it, while `rows: "many"` and an unparseable `as_of` passed the
-carry and raised mid-render instead. Check out the head below; anything at
-`585cb2a` or earlier carries the unvalidated-entry defect, and anything at
-`47708e3` or earlier still infers byes.
+Five review passes have landed here. Every finding was reproduced with
+executed code before anything changed and carries a regression; the
+per-finding record is in `docs/DECISIONS.md` and the PR body, not repeated
+here. For reading the code, only the boundaries matter — each commit below is
+where the fix LANDED, so anything earlier still has the behaviour beside it:
+
+| fixed in | before it |
+|---|---|
+| `650d8f2` | box scores gated nothing at all; archives overwrote each other; a `${{ }}` expression ran inside a `run:` block |
+| `3f9e1db` | absence inferred a bye (first "the rows parsed", then bracketing); no input carry, so a failed refresh on a clean runner rendered nothing |
+| `032a0d5` | carried manifest entries went unvalidated into `ing.Entry(**raw)` |
+| head | a carried file could displace a local one filed under a different source name |
 
 The desktop five-minute sync is **installed but its scheduled task is
 DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud
@@ -199,6 +198,15 @@ renderer a file that never travelled with the carry. Every field is now read
 through a total reader before the entry is constructed, a failure rejects
 that entry alone with its reason, and `as_of` is passed through byte for byte
 because it is the one field the carry must never restate.
+
+**And collisions are judged by destination, not by entry name.** The first
+version of that rule compared the carried entry's NAME against the local
+cache and then copied by FILENAME, which are not the same check: a carried
+`weekly_stats` pointing at `shared.json` displaced a local `sleeper_state`
+pointing at the same file, and the local entry — current `as_of`, empty
+`error`, so nothing withheld on it — was left describing bytes it had never
+seen. A carried entry whose destination the cache already holds is now
+refused and names the local owner it would have hit.
 A refresh that DOES succeed overwrites the file and clears the mark for that
 source, so a run where Sleeper works and nflverse does not carries exactly the
 sources that failed. A carried file never displaces one this run pulled.
@@ -376,14 +384,15 @@ The three honesty invariants from milestone 1 still hold: blank is never zero,
 a missing schedule renders `?` and never BYE, and "not on this week's injury
 report" reads differently from "no injury report loaded".
 
-## Verification — decision board branch (2026-09-20, fourth pass)
+## Verification — decision board branch (2026-09-20, fifth pass)
 
 | check | result |
 |---|---|
 | `python scripts/ci/smoke.py` | PASS — 26 imports, 30 contract files |
-| `run_summary.py -- python -m pytest` | **526 passed** (518 at `3f9e1db`, 501 at `585cb2a`, 433 at `47708e3`, 413 at `f82623e`) |
-| `pytest tests/test_carryover.py` | 29 passed (21 at `3f9e1db`, 11 at `585cb2a`) |
-| the 8 new carried-entry tests against the code at `3f9e1db` | **8 failed** — red before, green after, with the reported `TypeError: expected str, bytes or os.PathLike object, not list` among them |
+| `run_summary.py -- python -m pytest` | **531 passed** (526 at `032a0d5`, 518 at `3f9e1db`, 501 at `585cb2a`, 433 at `47708e3`, 413 at `f82623e`) |
+| `pytest tests/test_carryover.py` | 34 passed (29 at `032a0d5`, 21 at `3f9e1db`) |
+| the 5 new collision tests against the code at `032a0d5` | **5 failed** — red before, green after. The reported case: a local `sleeper_state` → `shared.json` holding CURRENT, a carried `weekly_stats` → `shared.json` holding OLD; the carry accepted it, wrote OLD over CURRENT, and left `sleeper_state` with `error=''` still vouching for it |
+| the 8 carried-entry tests against the code at `3f9e1db` | **8 failed** — red before, green after, with the reported `TypeError: expected str, bytes or os.PathLike object, not list` among them |
 | `pytest tests/test_workflow_inputs.py` | 34 passed |
 | `pytest tests/test_lock_and_drop_regressions.py` | 26 passed |
 | `dashboard_scenarios.py --screenshot` | 4 scenarios offline; all fit at a measured 375px, widest element ends at 363px (third pass; unchanged by this one, which touches no rendering) |
@@ -393,9 +402,9 @@ report" reads differently from "no injury report loaded".
 | two isolated runner directories, second with every refresh failed | run 2 renders (exit 0) from carried inputs: 0 of 3 actions endorsed, all three classes withheld, every source dated to run 1's pull, diffed against run 1's frozen page, run 1's record byte-identical afterwards |
 | `python -m compileall src/gridiron scripts` | clean |
 
-All sixteen findings across the four passes were **reproduced with executed
+All seventeen findings across the five passes were **reproduced with executed
 code before anything changed**, and each has a regression pinning the
-corrected behaviour. Five of them corrected earlier work on this same branch,
+corrected behaviour. Six of them corrected earlier work on this same branch,
 and the superseding rows are recorded in `docs/DECISIONS.md` rather than the
 originals being edited away:
 
@@ -417,6 +426,13 @@ originals being edited away:
   and the sharpest case — an absolute `path`, basenamed for the copy but
   written into the manifest verbatim — is now refused rather than handed to
   `Manifest.file()`, which would have returned a file outside the cache.
+* the fourth pass's own collision check compared the carried entry's NAME
+  against the local cache and then copied by FILENAME. Fifth pass: the check
+  is the destination, so a carried file can no longer overwrite a local one
+  filed under a different source name — and `_safe_basename` stopped
+  trimming whitespace, which had quietly turned `" x.parquet "` into a
+  different filename while claiming to refuse anything it could not accept
+  as written.
 
 **Not executed:** no real device was used for the phone check (it is a
 headless-browser measurement); `ruff` is not installed in this container, so
@@ -592,7 +608,8 @@ narrow it is the owner's call.
 | Grading never claims the owner did anything | An archive records what the page SHOWED. Nothing in this project watches the owner, so every pair is a hypothetical COMPARISON; a `decision` requires an observation passed in from outside, and `decisions` is empty without one. Comparisons the page WITHHELD are excluded from the agreement rate, and a waiver pair whose add was never proven available is excluded too | `test_no_comparison_is_a_decision_without_an_observation`, `test_an_observation_is_the_only_thing_that_makes_a_decision`, `test_advice_the_page_withheld_is_not_scored_as_advice`, `test_grading_a_withheld_page_scores_no_advice_and_claims_no_decision` |
 | History survives an ephemeral runner | `gridiron.carryover` restores prior frozen records from a private store before the render and publishes this run's back afterwards, so "since the last snapshot" and later grading work in the cloud. A restored file is INPUT: filename-vs-contents, content digest, season, future stamps and age are all checked, and a failure leaves the file alone | `test_two_ephemeral_runs_carry_one_history_between_them`, `test_an_edited_record_is_refused_by_its_own_digest`, `test_a_renamed_record_is_refused_...`, `test_a_record_stamped_in_the_future_is_refused` |
 | A failed refresh cannot become "current" | A run that freezes no page restamps nothing; restored records keep the times they were written with, so last-good data can never present itself as today's | `test_a_failed_refresh_cannot_turn_last_good_into_current` |
-| A carried manifest ENTRY is validated field by field, before construction | `ing.Entry(**raw)` checks which KEYS it was handed and never what they hold, so it is not validation. Every field is read through a total reader first: `path` must be a plain filename that travelled with the carry (not a list, not absolute — `dir / "/etc/passwd"` IS `/etc/passwd` — and not a traversal, which basenaming would silently redirect rather than refuse), `rows` a non-negative count, `as_of` a parseable time, `weeks` a list of weeks, and an unknown field refuses the entry. A bad entry is rejected BY NAME and its sound siblings still carry | `test_a_carried_path_that_is_not_a_string_is_refused_not_raised`, `test_an_absolute_carried_path_cannot_reach_outside_the_cache`, `test_a_traversing_carried_path_is_refused_rather_than_basenamed`, `test_carried_fields_the_renderer_reads_are_checked_before_construction`, `test_a_publish_whose_manifest_points_at_a_bad_path_still_stores_the_rest` |
+| A carried manifest ENTRY is validated field by field, before construction | `ing.Entry(**raw)` checks which KEYS it was handed and never what they hold, so it is not validation. Every field is read through a total reader first: `path` must be a plain filename that travelled with the carry (not a list, not absolute — `dir / "/etc/passwd"` IS `/etc/passwd` — not a traversal, and not whitespace-padded; each of those is REFUSED, never repaired into something that names a different file), `rows` a non-negative count, `as_of` a parseable time, `weeks` a list of weeks, and an unknown field refuses the entry. A bad entry is rejected BY NAME and its sound siblings still carry | `test_a_carried_path_that_is_not_a_string_is_refused_not_raised`, `test_an_absolute_carried_path_cannot_reach_outside_the_cache`, `test_a_traversing_carried_path_is_refused_rather_than_basenamed`, `test_a_padded_carried_path_is_refused_rather_than_trimmed`, `test_carried_fields_the_renderer_reads_are_checked_before_construction`, `test_a_publish_whose_manifest_points_at_a_bad_path_still_stores_the_rest` |
+| A carried file never displaces one already here — judged by DESTINATION | The entry NAME is not the collision: a carried `weekly_stats` and a local `sleeper_state` can both point at `shared.json` and share no name. Overwriting left the LOCAL entry — current `as_of`, empty `error`, so the gate did NOT withhold on it — vouching for bytes it had never seen. The check is now the destination filename against everything the cache holds, case-folded on every platform because the store is published by one machine and restored on another; a conflict refuses the carried entry and names the local owner it would have hit | `test_a_carried_file_never_displaces_a_local_one_under_another_name`, `test_a_carried_file_cannot_displace_a_local_one_through_a_case_alias`, `test_two_carried_entries_naming_one_file_do_not_overwrite_each_other`, `test_a_carried_entry_cannot_overwrite_the_manifest_it_is_read_from` |
 | A workflow input is data, not script | No `${{ ... }}` expansion appears inside any `run:` block in any workflow — the runner substitutes those before the shell parses the script. The dispatched week arrives through `env:` and is refused unless it is a bare ASCII integer in 1–22 | `test_no_workflow_expands_an_expression_inside_a_shell_script`, `test_everything_else_is_refused_as_data`, `test_the_dispatched_week_reaches_python_through_the_environment` |
 | Rule #5 gate is mechanical | `gridiron.models.validated_signals`: an entry in FEATS without VALIDATED evidence fails the import (smoke.py imports it first) | `test_the_rule_5_gate_fails_the_import_for_an_unvalidated_feature` |
 | Owner data stays local | `data/outputs/dashboard/` and `data/ledger/decisions/` gitignored; hygiene test scans tracked outputs for dashboard/archive markers; stdout names nobody; opponent is "roster #N" | `test_hygiene_no_roster_in_repo.py`, `test_the_stdout_summary_names_no_player`, `test_the_opponent_is_a_roster_number_...` |

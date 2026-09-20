@@ -703,3 +703,113 @@ def test_a_cache_manifest_this_run_cannot_read_stops_the_carry_rather_than_guess
     publish = carryover.publish_inputs(cache, tmp_path / "s2", season=2026,
                                        now=SCN.NOW)
     assert not publish.accepted and "could not be read" in publish.note
+
+
+# --------------------------------------- a carried file never displaces one
+# that is already here — decided by DESTINATION, not by entry name.
+#
+# The name check was not the same check. A carried `weekly_stats` pointing at
+# `shared.json` and a local `sleeper_state` pointing at the same `shared.json`
+# share no name, so the carry copied over the local file — and the LOCAL entry
+# was left describing bytes it had never seen, with `error` empty and a current
+# `as_of`, so the gate did not withhold on it either.
+
+def _local_cache(cache: Path, name: str, filename: str, body: str,
+                 as_of: str = "2026-09-20T13:00:00+00:00") -> None:
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / filename).write_text(body, encoding="utf-8")
+    ing.Manifest(cache, {name: ing.Entry(name=name, path=filename, rows=1,
+                                         as_of=as_of, source="synthetic")},
+                 2026).save()
+
+
+def _entry(name: str, path: str, as_of: str = "2026-09-20T12:00:00+00:00") -> dict:
+    return {"name": name, "path": path, "rows": 1, "as_of": as_of,
+            "source": "synthetic"}
+
+
+LATER = datetime(2026, 9, 20, 14, 0, tzinfo=timezone.utc)
+
+
+def test_a_carried_file_never_displaces_a_local_one_under_another_name(tmp_path):
+    store, cache = tmp_path / "store", tmp_path / "cache"
+    _local_cache(cache, "sleeper_state", "shared.json", "CURRENT")
+    before = (cache / "shared.json").read_bytes()
+    meta_before = json.loads((cache / ing.MANIFEST_NAME).read_text(
+        encoding="utf-8"))["entries"]["sleeper_state"]
+
+    _carried(store, {"weekly_stats": _entry("weekly_stats", "shared.json"),
+                     "injuries": _entry("injuries", "injuries.parquet")},
+             files=("shared.json", "injuries.parquet"))
+    (store / carryover.INPUTS_DIR / "season2026" / "shared.json").write_text(
+        "OLD", encoding="utf-8")
+
+    report = carryover.restore_inputs(store, cache, season=2026, now=LATER)
+
+    # The local file and its metadata are untouched, byte for byte.
+    assert (cache / "shared.json").read_bytes() == before
+    meta_after = json.loads((cache / ing.MANIFEST_NAME).read_text(
+        encoding="utf-8"))["entries"]["sleeper_state"]
+    assert meta_after == meta_before
+    # The collision is reported, naming the local owner it would have hit.
+    assert [v.name for v in report.rejected] == ["shared.json"]
+    assert "sleeper_state" in report.rejected[0].reason
+    # ...and the sound, independent carried sibling still comes across.
+    assert (cache / "injuries.parquet").is_file()
+    assert [v.name for v in report.accepted] == ["injuries.parquet"]
+    assert set(ing.Manifest.load(cache, 2026).entries) == {"sleeper_state", "injuries"}
+
+
+def test_a_carried_file_cannot_displace_a_local_one_through_a_case_alias(tmp_path):
+    """The store is written by one machine and read by another — a Windows
+    desktop publishing and a Linux runner restoring is the normal path — so a
+    case alias is refused on every platform, not only the ones where the
+    filesystem would collide."""
+    store, cache = tmp_path / "store", tmp_path / "cache"
+    _local_cache(cache, "sleeper_state", "shared.json", "CURRENT")
+    _carried(store, {"weekly_stats": _entry("weekly_stats", "Shared.JSON")},
+             files=("Shared.JSON",))
+    report = carryover.restore_inputs(store, cache, season=2026, now=LATER)
+    assert (cache / "shared.json").read_text(encoding="utf-8") == "CURRENT"
+    assert not report.accepted
+    assert "already holds" in report.rejected[0].reason
+
+
+def test_two_carried_entries_naming_one_file_do_not_overwrite_each_other(tmp_path):
+    """Nothing here can tell whether two sources that name the same file mean
+    the same bytes, and a carry may never be the thing that finds out."""
+    store, cache = tmp_path / "store", tmp_path / "cache"
+    _carried(store, {"aaa_first": _entry("aaa_first", "shared.json"),
+                     "zzz_second": _entry("zzz_second", "shared.json")},
+             files=("shared.json",))
+    report = carryover.restore_inputs(store, cache, season=2026, now=LATER)
+    assert [v.name for v in report.accepted] == ["shared.json"]
+    assert set(ing.Manifest.load(cache, 2026).entries) == {"aaa_first"}
+    assert "already holds" in report.rejected[0].reason
+
+
+def test_a_carried_entry_cannot_overwrite_the_manifest_it_is_read_from(tmp_path):
+    store, cache = tmp_path / "store", tmp_path / "cache"
+    _local_cache(cache, "sleeper_state", "sleeper_state.json", "CURRENT")
+    _carried(store, {"weekly_stats": _entry("weekly_stats", ing.MANIFEST_NAME)},
+             files=("sleeper_state.json",))
+    index = json.loads((cache / ing.MANIFEST_NAME).read_text(encoding="utf-8"))
+    report = carryover.restore_inputs(store, cache, season=2026, now=LATER)
+    assert json.loads((cache / ing.MANIFEST_NAME).read_text(
+        encoding="utf-8")) == index
+    assert not report.accepted
+
+
+def test_a_padded_carried_path_is_refused_rather_than_trimmed(tmp_path):
+    """`" weekly_stats.parquet "` names a different file from
+    `"weekly_stats.parquet"`. Trimming it is the same defect as basenaming an
+    absolute path: the entry is accepted and what it means is changed."""
+    assert carryover._safe_basename(" weekly_stats.parquet ") is None
+    assert carryover._safe_basename("weekly_stats.parquet ") is None
+    assert carryover._safe_basename("\tweekly_stats.parquet") is None
+    assert carryover._safe_basename("weekly_stats.parquet") == "weekly_stats.parquet"
+    report, cache = _restore_inputs(
+        tmp_path, {"weekly_stats": _malformed(path=" weekly_stats.parquet "),
+                   "sleeper_state": dict(GOOD_INPUT)}, files=BOTH_FILES)
+    assert [v.name for v in report.rejected] == ["weekly_stats"]
+    assert [v.name for v in report.accepted] == ["sleeper_state.json"]

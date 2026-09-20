@@ -55,6 +55,7 @@ written and can never be read as today's.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass, field, fields, replace
@@ -191,8 +192,13 @@ def _safe_basename(value: object) -> str | None:
     text = _as_text(value)
     if text is None:
         return None
-    text = text.strip()
-    if not text or text in {".", ".."}:
+    if not text or text != text.strip():
+        # NOT stripped. `" weekly_stats.parquet "` names a different file from
+        # `"weekly_stats.parquet"`, and quietly trimming it is the same defect
+        # as basenaming an absolute path: it accepts the entry while changing
+        # which bytes it means.
+        return None
+    if text in {".", ".."}:
         return None
     if "/" in text or "\\" in text:          # POSIX and Windows separators
         return None
@@ -591,6 +597,20 @@ def _validated_entry(name: object, raw: object) -> tuple[ing.Entry | None, str]:
                      missing_columns=missing), ""
 
 
+def _dest_key(name: str) -> str:
+    """How two carried filenames are told apart when deciding a collision.
+
+    Case-folded on EVERY platform, not just the case-insensitive ones. The
+    store is written by one machine and read by another — a cache published
+    from Windows and restored on a Linux runner is the normal path here — so
+    the safe rule is the strictest of the platforms involved, not the one
+    doing the reading. Refusing `Shared.json` beside `shared.json` on Linux
+    costs one rejected entry and says why; accepting it on Windows silently
+    overwrites a file this run pulled.
+    """
+    return os.path.normcase(name).casefold()
+
+
 def _load_local(cache_dir: Path, season: int) -> ing.Manifest | None:
     """This machine's own manifest, or None if it cannot be read.
 
@@ -806,6 +826,21 @@ def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
                      "nothing was laid down rather than risk displacing one"),))
     local_files = _cache_files(local)
 
+    # Which FILENAMES the cache already holds, and who owns each. The entry
+    # NAME is not enough to decide a collision: a carried `weekly_stats`
+    # pointing at `shared.json` and a local `sleeper_state` pointing at the
+    # same `shared.json` share no name at all, and overwriting the file leaves
+    # the LOCAL entry — as_of current, `error` empty, so the gate does not
+    # withhold on it — vouching for bytes it never described.
+    occupied: dict[str, str] = {}
+    owner: dict[str, str] = {}
+    if cache_dir.is_dir():
+        for present in cache_dir.iterdir():
+            if present.is_file():
+                occupied[_dest_key(present.name)] = present.name
+    for local_name, local_path in local_files.items():
+        owner[_dest_key(local_path.name)] = local_name
+
     verdicts: list[Verdict] = []
     carried: dict[str, ing.Entry] = {}
     raw_entries = blob.get("entries")
@@ -819,6 +854,22 @@ def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
             verdicts.append(Verdict(entry.name, False,
                                     "this run already has its own copy; the "
                                     "carried one is not used"))
+            continue
+        key = _dest_key(entry.path)
+        dest = cache_dir / entry.path
+        # Decided by DESTINATION, not by name, and refused rather than merged:
+        # there is no way to tell from here whether two sources that name the
+        # same file mean the same bytes, and a carry may never be the thing
+        # that finds out.
+        if key in occupied or dest.exists():
+            held = occupied.get(key, entry.path)
+            by = owner.get(key)
+            verdicts.append(Verdict(
+                entry.path, False,
+                f"the carried {entry.name} would be written to {held}, which "
+                f"this run already holds"
+                + (f" as its own {by}" if by else "")
+                + "; a carried file never displaces one that is already here"))
             continue
         src = source / entry.path
         if not src.is_file():
@@ -834,6 +885,10 @@ def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
             continue
         # `as_of` is copied through untouched. `error` and `last_attempt`
         # describe THIS run, which did not refresh anything.
+        # Claimed, so a second carried entry naming the same file is refused
+        # by the same rule rather than quietly overwriting the first.
+        occupied[key] = entry.path
+        owner[key] = entry.name
         carried[entry.name] = replace(entry, error=CARRIED_FORWARD,
                                       last_attempt=now.astimezone(timezone.utc)
                                       .isoformat(timespec="seconds"))
