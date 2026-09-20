@@ -108,7 +108,9 @@ lineup, no matchup.
 
 Cadence is rule #8 shaped, in UTC: Wednesday 08:41 (after waivers clear),
 Friday 22:41 (after the final practice report) and Sunday 14:41 (before the
-early kickoffs), plus manual dispatch with an optional `--week`. Those are
+early kickoffs), plus manual dispatch with an optional week. That input is
+passed to Python through `env:` and never interpolated into a shell command,
+and it is refused unless it is a bare ASCII integer in 1-22. Those are
 best-effort GitHub crons: runs get delayed and dropped under load, which is
 stated in the workflow and is why the page gates on input age instead.
 
@@ -129,6 +131,46 @@ different and none of them is reversible for free:
 **A is live and is the recommendation.** B and C both widen where roster data
 lives, and neither was authorized. Nothing further should be built here until
 the owner picks; if A is good enough, this question is closed.
+
+### Carrying history across runs, and what that retention is really worth
+
+A hosted runner starts from an empty checkout, and the decision ledger is
+gitignored because the records name the owner's players (rule #10). So until
+now every scheduled cloud run was a FIRST run: "since the last snapshot" had
+nothing to compare against and reported no change, and the frozen page died
+with the container that made it, which makes grading it next week impossible.
+
+Two steps now bracket the render. Before it, `carryover.py restore` pulls
+prior records out of a private store; after it, `carryover.py publish` puts
+this run's back. The store is a **GitHub Actions cache** keyed
+`gridiron-decisions-<run id>` with a `gridiron-decisions-` restore prefix —
+the repository's own private storage, needing no token, no service and no new
+dependency.
+
+**Stated honestly, because it is easy to mistake for a backup: it is not
+durable storage.** An Actions cache entry is evicted after 7 days without a
+read, and evicted early when the repository crosses its 10 GB cache limit. A
+gap in the schedule longer than that breaks the chain. When it breaks the page
+says it has no previous snapshot rather than reporting that nothing changed —
+which is the failure this whole section exists to prevent. The run artifact is
+the copy that survives independently, with its own 14-day retention. Neither
+is a backup, and the carry is bounded on purpose: 40 records per season, none
+older than 45 days.
+
+A restored file is **input, not history**. `gridiron.carryover` validates each
+candidate before it may count: the filename must agree with the contents (both
+the write time and an 8-hex digest of the record), the season must match, a
+record stamped in the future is refused outright — it is the one thing that
+could outrank the page being built — and anything past the age limit is left
+behind. A file that fails is reported and left exactly where it is; nothing is
+repaired, and nothing is deleted.
+
+Refresh failures in the cloud are **not fatal and never promote last-good data
+to current**. The Sleeper and nflverse steps are `continue-on-error`, so a
+degraded page still renders from the last good cache — and that page says so,
+withholds the actions resting on the failed source, and drops their
+imperatives. A run that freezes nothing restamps nothing, so a restored record
+keeps the time it was written with.
 
 **The two cadences are different jobs and must stay different jobs.**
 `sleeper_sync.py` is five Sleeper GETs — league, users, rosters, current-week
@@ -361,14 +403,23 @@ narrow it is the owner's call.
 2. **Owner: pick a phone-access option** (see the table above). A is built
    and needs no further work; B and C need authorization before anything is
    written.
-3. **Turn on the dashboard workflow** by setting `GRIDIRON_CLOUD_SYNC_ENABLED`
-   once the PR lands, then dispatch it manually once and confirm the private
-   artifact appears with no roster content in the run summary.
+3. **Dispatch the dashboard workflow once, after review.**
+   `GRIDIRON_CLOUD_SYNC_ENABLED` is already `true`, so nothing needs setting;
+   what is untested is the workflow itself, which has never run. The first
+   dispatch is also the first test of the carry: run it TWICE and confirm the
+   second run's summary reports "since the last snapshot" against the first
+   rather than "no previous snapshot", and that neither summary names a
+   player.
 4. **First graded week.** After week 3 finals land in the cache, grade the
    week-3 archive: `gridiron.decisions.grade_archive(read_archive(path),
    actuals)` with actuals = week-3 `league_points` by gsis id from the
    scored frame. That is the first rule #7 settlement; no script wraps it
-   yet, deliberately, until the first one has been done by hand.
+   yet, deliberately, until the first one has been done by hand. Note what it
+   will and will not tell you: every pair comes back HYPOTHETICAL, and the
+   agreement rate covers only the comparisons the page ENDORSED. To grade an
+   actual decision, pass `observed={"start_sit:<slot>:<held>:<alt>": ACTED}`
+   for the moves the owner really made — that mapping is the only thing that
+   turns a comparison into a decision.
 5. **Week 2 rollover check.** After Sunday's slate, `pull_week.py` then
    `report.py` should show `weekly_stats covers wk1-2` and the lag return to
    0. That is the first live exercise of the phase boundary.
@@ -407,8 +458,12 @@ narrow it is the owner's call.
 | Rule #11 | Questionable / Doubtful are flagged on the row and NEVER adjusted; a designation from a stale player pull is labelled STALE, and an Out from a stale pull says so | `test_complete_projects_matches_and_recommends_with_labels`, `test_stale_inputs_are_shown_labelled_...` |
 | Lineups are legal | Position/FLEX eligibility, nobody twice, nobody off IR, nobody moved after kickoff; an unprojected starter is frozen (not swapped out), an unprojected bench player is never proposed | `test_lineup.py`, `test_the_best_lineup_is_legal_under_the_locks` |
 | Lock state unknown ⇒ never movable | Locks are three-valued. No schedule at all ⇒ `kickoff_index` is None ⇒ start/sit and upgrades both refuse. A game with no readable kickoff time ⇒ UNKNOWN for both teams, never a guessed 13:00. A team absent from an INCOMPLETE week ⇒ UNKNOWN, not a bye. Only OPEN is movable | `test_unknown_lock_state_abstains_from_everything`, `test_a_game_with_no_kickoff_time_is_unknown_not_one_oclock`, `test_a_week_that_could_not_be_read_is_never_a_league_wide_bye`, `test_a_partially_readable_week_freezes_only_the_players_it_cannot_time` |
-| A proven bye is distinguished from ignorance | "No game this week" is OPEN only when the week's schedule parsed completely AND the team plays in another week of the same frame; otherwise UNKNOWN | `test_a_team_absent_from_a_complete_week_is_a_bye_and_one_it_never_heard_of_is_not` |
-| Stale inputs withhold the ACTIONS, not the evidence | `gridiron.gating` gates lineup / waiver / matchup on the league snapshot, player dump, injuries and schedule. A withheld action keeps its comparison, loses its imperative, and names what to verify. The archive records which actions were endorsed | `test_stale_inputs_withhold_every_action_but_keep_the_comparison`, `test_a_fresh_cache_still_endorses_its_actions`, `test_box_score_staleness_does_not_withhold_anything` |
+| A proven bye is distinguished from ignorance | "No game this week" is OPEN only when the frame shows the team playing BOTH BEFORE AND AFTER this week — a gap bracketed by real rows — and the week's rows are intact. Parsing every row that arrived is not evidence that every row arrived, so a frame that simply stops early yields UNKNOWN, not a league of byes | `test_a_bye_needs_a_game_on_both_sides_of_the_gap`, `test_a_week_that_simply_stops_early_is_not_a_league_of_byes`, `test_a_bye_is_proven_by_games_on_both_sides_of_the_gap` |
+| A schedule that contradicts itself establishes nothing | Two week rows giving one team two different kickoffs discard BOTH times and mark the team UNKNOWN; a row naming only one team is half a game, so its kickoff is not trusted either; a row listing one team on both sides is dropped | `test_two_rows_giving_one_team_two_kickoffs_establish_neither`, `test_a_row_naming_one_team_is_half_a_game_and_times_nobody`, `test_a_row_listing_one_team_on_both_sides_is_not_a_game` |
+| Stale inputs withhold the ACTIONS, not the evidence | `gridiron.gating` gates lineup / waiver / matchup on the league snapshot, player dump, injuries and schedule. A withheld action keeps its comparison, loses its imperative, and names what to verify. The archive records which actions were endorsed | `test_stale_inputs_withhold_every_action_but_keep_the_comparison`, `test_a_fresh_cache_still_endorses_its_actions` |
+| A withheld card loses the instruction, not just the badge | A WITHHELD action renders neutral last-known wording ("the last snapshot ranked X above your cheapest legal drop"), anchored to the snapshot's as-of time, above the explanation. "Consider claiming", "Fill it with" and "start X over Y" appear only on endorsed cards | `test_a_withheld_card_states_the_last_known_picture_not_an_instruction`, `test_a_fresh_page_still_gives_the_instruction` |
+| Box scores are judged on COVERAGE, never on age | `box_score_blockers`: four-day-old box scores on a Wednesday withhold nothing — that is the publication cadence (rule #8). A source MISSING, whose refresh FAILED, with a hole inside its covered weeks, or more than one week behind the evidence boundary withholds every action, because every action is scored through a projection built from it | `test_box_scores_four_days_old_but_caught_up_still_withhold_nothing`, `test_box_scores_months_behind_the_evidence_boundary_do_withhold`, `test_a_failed_box_score_refresh_withholds_...`, `test_a_hole_inside_the_covered_weeks_withholds` |
+| The edge is never claimed to be bigger than it is | z is Δ in multiples of the combined SD, so z = 0.7 means the edge is 0.7× that uncertainty — SMALLER than it. Every swap above the 0.5 noise floor used to assert the opposite. `_edge_sentence` states the ratio; the floor is unchanged | `test_the_edge_is_never_called_larger_than_the_uncertainty_it_is_smaller_than` |
 | A file's timestamp is not a parse | A schedule that is FRESH on disk but not fully readable still withholds lineup and waiver actions | `test_an_unreadable_schedule_blocks_actions_even_though_the_file_is_fresh`, `test_a_half_readable_schedule_freezes_by_name_and_invents_nothing` |
 | Temporary absence is not zero roster value | Bye / Out / IR / suspended players are excluded from the drop ranking, listed separately with the reason, and the board abstains if nothing droppable is left | `test_a_player_who_is_out_this_week_is_not_the_cheapest_thing_to_drop`, `test_a_bare_ir_projection_without_a_withholding_marker_is_still_protected`, `test_a_board_with_nothing_left_to_drop_abstains_and_says_how_many` |
 | Unrostered is not addable | Add eligibility is UNVERIFIED with its evidence and the league's waiver rule; the page never says "add now" | `test_an_unrostered_player_is_never_promised_as_addable`, `test_protected_players_are_named_on_the_page_not_silently_dropped` |
@@ -419,6 +474,12 @@ narrow it is the owner's call.
 | Every upgrade names its drop | Add/drop pairs are scored by the change in the best LEGAL lineup; LINEUP vs DEPTH kinds kept apart; a locked starter is never the drop | `test_a_lineup_upgrade_names_the_drop_and_the_slot_it_enters`, `test_the_drop_is_never_a_locked_starter_...` |
 | P(win) is never presented as calibrated | Closed form from `gridiron.winprob`, labelled UNCALIBRATED on the page and in the archive; abstains when any non-DST starter on either side is unprojected; `EvaluationReport.pwin_calibrated` is False by construction | `test_complete_...`, `test_missing_...` |
 | The archive is the page | `Dashboard.record()` is written atomically at render time; grading reads it and the week's actuals only, never re-projects; a missing actual is `ungradeable`, not zero | `test_the_archive_is_the_page_and_grading_it_leaks_nothing`, `test_decisions.py` |
+| An archive is evidence, so it is immutable | The filename carries an 8-hex content digest, so two DIFFERENT pages written in the same second get two files instead of one replacing the other; rewriting identical content is a no-op and writing different content to an existing path raises `ArchiveCollision` | `test_a_second_different_page_cannot_replace_the_first`, `test_rewriting_the_same_page_is_a_no_op_and_a_different_one_raises` |
+| "The previous snapshot" is the previous one in TIME | `list_archives` orders by the parsed filename stamp, not by filename. Sorting names put `week05_<september>` after `week04_<october>` and returned a month-old record as the newest; a name that does not parse is skipped rather than ordered by guess | `test_the_previous_archive_is_the_previous_one_in_time_not_by_filename`, `test_an_unparseable_archive_name_is_skipped_...` |
+| Grading never claims the owner did anything | An archive records what the page SHOWED. Nothing in this project watches the owner, so every pair is a hypothetical COMPARISON; a `decision` requires an observation passed in from outside, and `decisions` is empty without one. Comparisons the page WITHHELD are excluded from the agreement rate, and a waiver pair whose add was never proven available is excluded too | `test_no_comparison_is_a_decision_without_an_observation`, `test_an_observation_is_the_only_thing_that_makes_a_decision`, `test_advice_the_page_withheld_is_not_scored_as_advice`, `test_grading_a_withheld_page_scores_no_advice_and_claims_no_decision` |
+| History survives an ephemeral runner | `gridiron.carryover` restores prior frozen records from a private store before the render and publishes this run's back afterwards, so "since the last snapshot" and later grading work in the cloud. A restored file is INPUT: filename-vs-contents, content digest, season, future stamps and age are all checked, and a failure leaves the file alone | `test_two_ephemeral_runs_carry_one_history_between_them`, `test_an_edited_record_is_refused_by_its_own_digest`, `test_a_renamed_record_is_refused_...`, `test_a_record_stamped_in_the_future_is_refused` |
+| A failed refresh cannot become "current" | A run that freezes no page restamps nothing; restored records keep the times they were written with, so last-good data can never present itself as today's | `test_a_failed_refresh_cannot_turn_last_good_into_current` |
+| A workflow input is data, not script | No `${{ ... }}` expansion appears inside any `run:` block in any workflow — the runner substitutes those before the shell parses the script. The dispatched week arrives through `env:` and is refused unless it is a bare ASCII integer in 1–22 | `test_no_workflow_expands_an_expression_inside_a_shell_script`, `test_everything_else_is_refused_as_data`, `test_the_dispatched_week_reaches_python_through_the_environment` |
 | Rule #5 gate is mechanical | `gridiron.models.validated_signals`: an entry in FEATS without VALIDATED evidence fails the import (smoke.py imports it first) | `test_the_rule_5_gate_fails_the_import_for_an_unvalidated_feature` |
 | Owner data stays local | `data/outputs/dashboard/` and `data/ledger/decisions/` gitignored; hygiene test scans tracked outputs for dashboard/archive markers; stdout names nobody; opponent is "roster #N" | `test_hygiene_no_roster_in_repo.py`, `test_the_stdout_summary_names_no_player`, `test_the_opponent_is_a_roster_number_...` |
 
@@ -430,6 +491,25 @@ narrow it is the owner's call.
   there is one week of box scores, so nothing can be evaluated yet. The
   page carries the verdict either way; the verdict changes only when the
   cache does.
+- **A bye needs a frame that extends past the week.** Bracketing is what
+  proves a bye, so on the LAST week a schedule frame carries, no absence can
+  be confirmed and every absent team's players are frozen as UNKNOWN. That is
+  the safe direction and it is visible on the page, but it means a board
+  rendered against a truncated or end-of-season frame will freeze more than a
+  complete one would. Nothing invents the missing rows.
+- **Provenance is integrity, not authenticity.** The digest check proves a
+  restored record has not been edited or renamed since it was written. It is
+  not a signature: anyone who could write to the store could also write a
+  consistent record. The store is the private repository's own cache, so that
+  set is the people who already have the data.
+- **Grading claims nothing about conduct, because it cannot.** Every
+  comparison is hypothetical unless an observation is supplied by hand.
+  Nothing in this project watches Sleeper for what the owner actually did, so
+  the first hand-graded week will have to state the owner's real choices as
+  input if they are to be graded as choices at all.
+- **The box-score coverage gate has one week of slack**, which is the
+  publication cadence and not a fit. A source exactly one week behind the
+  evidence boundary passes; that is the Tuesday-morning state every week.
 - **SD is a literature CV, not a fit.** §2.1's CVs by position; the
   evaluation reports the ±1 SD coverage so a reader can see how wrong that is.
 - **P(win) assumes independence** between all starters (no stack / same-game
@@ -496,3 +576,13 @@ narrow it is the owner's call.
   milestone. The projection is byte-for-byte the reviewed baseline.
 - Desktop scheduling stays DISABLED. Nothing here re-enables it, and the
   cloud path is deliberately independent of it.
+- No durable cloud storage, no database, no object store and no new service
+  for the decision records. The carry uses the repository's own Actions cache
+  and states its eviction rules rather than implying permanence.
+- No signature on a restored record. Integrity is checked; authenticity would
+  need a key, and a key would need somewhere to live.
+- No inference of what the owner did from what the roster looks like. The
+  roster still holding a player proves nobody removed him, not that anyone
+  chose to keep him, and grading now says so instead of assuming.
+- No league-size constant or bye table hardcoded to decide schedule
+  completeness. A bye is proven from the frame's own rows or it is UNKNOWN.

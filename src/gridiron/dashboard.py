@@ -54,9 +54,10 @@ from gridiron.evaluate import EvaluationReport, chronological_evaluation
 from gridiron.freshness import SourceFreshness, Status, WeekContext, degradations
 from gridiron.ids import Crosswalk, is_dst_id, nflverse_team, normalize_id
 from gridiron.league_config import DEFAULT_SCORING, LEAGUE_NAME, ScoringRules
-from gridiron.gating import ACTIONS, ActionGate, build_gate
+from gridiron.gating import (ACTIONS, ActionGate, box_score_blockers,
+                             build_gate)
 from gridiron.lineup import (
-    KickoffIndex, LineupPlan, Player, eligible, kickoff_index, lock_state,
+    NOISE_Z, KickoffIndex, LineupPlan, Player, eligible, kickoff_index, lock_state,
     plan_lineup, slot_order,
 )
 from gridiron.projection import (
@@ -186,8 +187,14 @@ class Dashboard:
             "gate": self.gate.record(),
             "locks": None if self.locks is None else {
                 "week": self.locks.week, "complete": self.locks.complete,
+                "rows_intact": self.locks.rows_intact,
+                "extends_past": self.locks.extends_past,
                 "timed_teams": sorted(self.locks.kickoffs),
                 "time_unknown": sorted(self.locks.time_unknown),
+                "conflicting": sorted(self.locks.conflicting),
+                "proven_bye": sorted(self.locks.proven_bye),
+                "partial_rows": self.locks.partial_rows,
+                "slate_short": self.locks.slate_short,
                 "dropped_rows": self.locks.dropped_rows,
                 "problems": list(self.locks.problems)},
             "changes": None if self.changes is None else {
@@ -393,21 +400,42 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
     if kickoffs is None:
         notes.append("kickoff locks unknown (no schedule): no lineup or waiver move is "
                      "recommended")
-    elif not kickoffs.complete:
+    elif not kickoffs.rows_intact:
         notes.append(
-            f"kickoff schedule INCOMPLETE — {kickoffs.summary()}. Players whose "
+            f"kickoff schedule DAMAGED — {kickoffs.summary()}. Players whose "
             f"kickoff could not be established are frozen and named; no time was "
             f"invented for them and no missing team was read as a bye. "
             + "; ".join(kickoffs.problems[:4]))
+    elif kickoffs.slate_short and not kickoffs.extends_past:
+        # Not damage, and not a reason to withhold every action: the rows that
+        # arrived are all sound. It only means absence cannot be read as a bye,
+        # which `lock_state` already handles one player at a time.
+        notes.append(
+            f"kickoff schedule ends at week {kickoffs.week}, and "
+            f"{kickoffs.slate_short} team(s) the schedule knows about have no "
+            f"game row this week. With no later week to compare against, those "
+            f"absences are UNKNOWN rather than byes, and any player on those "
+            f"teams is frozen.")
 
     extra: dict[str, list[tuple[str, str]]] = {}
-    if kickoffs is not None and not kickoffs.complete:
+    if kickoffs is not None and not kickoffs.rows_intact:
+        # Only genuine row damage gates the whole class. A frame that simply
+        # stops at this week withholds nothing by itself — the per-player
+        # UNKNOWN lock is the proportionate response, and blanket-withholding
+        # on it would fire on every end-of-season render and train the reader
+        # to ignore the gate.
         blocker = ("schedules",
                    f"the week-{week} schedule is present but not fully readable "
                    f"({kickoffs.summary()}) — a file's timestamp says when it was "
                    f"written, not whether its contents parse")
         extra["lineup"] = [blocker]
         extra["waiver"] = [blocker]
+    # Box scores are judged on coverage, never on age: see gating's module
+    # docstring. These reach every action, because every action is scored
+    # through a projection built from these frames.
+    for action, reasons in box_score_blockers(
+            sources, evidence_boundary=context.evidence_boundary).items():
+        extra.setdefault(action, []).extend(reasons)
     gate = build_gate(sources, extra=extra)
     notes.extend(gate.notes())
 
@@ -438,8 +466,9 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                      f"no change list this run")})
 
     if write_archive_file:
-        path = archive_path(context.season, week, now, archive_root)
-        write_archive(dash.record(), path)
+        record = dash.record()
+        path = archive_path(context.season, week, now, archive_root, record)
+        write_archive(record, path)
         dash = Dashboard(**{**dash.__dict__, "archive": path})
     return dash
 
@@ -512,6 +541,14 @@ class Action:
     deadline: datetime | None
     deadline_note: str
     backup: str
+    #: The same card with the imperative taken out. A WITHHELD action must
+    #: not read "start him" or "add him" merely because a badge above it says
+    #: WITHHELD — the badge is a label and the sentence is the instruction,
+    #: and a reader who skims the sentence has been told to act on a stale
+    #: input. These say what the last snapshot SHOWED, in the past tense,
+    #: and are what `title`/`body` render when the action is withheld.
+    neutral_headline: str = ""
+    neutral_detail: str = ""
     evidence: tuple[str, ...] = field(default=())
     withheld_reasons: tuple[str, ...] = field(default=())
     verify: tuple[str, ...] = field(default=())
@@ -528,6 +565,19 @@ class Action:
         return self.status == "ACTIONABLE"
 
     @property
+    def title(self) -> str:
+        """What the card actually says. Imperative only when endorsed."""
+        if not self.actionable and self.neutral_headline:
+            return self.neutral_headline
+        return self.headline
+
+    @property
+    def body(self) -> str:
+        if not self.actionable and self.neutral_detail:
+            return self.neutral_detail
+        return self.detail
+
+    @property
     def rank(self) -> tuple:
         order = {"NOW": 0, "UNKNOWN": 1, "TODAY": 2, "THIS WEEK": 3, "INFO": 4}
         return (order.get(self.urgency, 5), _KIND_RANK.get(self.kind, 9),
@@ -535,12 +585,43 @@ class Action:
 
     def record(self) -> dict:
         return {"kind": self.kind, "status": self.status, "urgency": self.urgency,
+                "title": self.title, "body": self.body,
                 "headline": self.headline, "detail": self.detail,
                 "deadline": self.deadline.isoformat() if self.deadline else None,
                 "deadline_note": self.deadline_note, "backup": self.backup,
                 "evidence": list(self.evidence), "verify": list(self.verify),
                 "withheld_reasons": list(self.withheld_reasons),
                 "delta_points": self.delta_points, "z": self.z}
+
+
+def _edge_sentence(delta: float, z: float | None) -> str:
+    """How big the edge is, said truthfully.
+
+    z IS the ratio of the edge to the combined uncertainty of the two
+    projections (z = Δ / √(SD²+SD²)), so a z of 0.7 means the edge is 0.7
+    TIMES that uncertainty — smaller than it. The card used to read "the edge
+    is larger than the combined uncertainty" for everything above the 0.5
+    noise floor, which is false across the whole 0.5–1.0 band and was the
+    most confident sentence on the page. The floor is unchanged; only the
+    claim is, and it now states the ratio rather than asserting a comparison.
+    """
+    if z is None:
+        return (f"{_num(delta, 2)} projected points. The uncertainty of the two "
+                f"projections could not be computed, so the size of this edge "
+                f"relative to its own error bars is unknown.")
+    az = abs(z)
+    if az < NOISE_Z:
+        return (f"{_num(delta, 2)} projected points, z={_num(z, 2)}. That edge is "
+                f"inside the noise of the two projections — either choice is "
+                f"defensible and doing nothing is fine.")
+    if az < 1.0:
+        return (f"{_num(delta, 2)} projected points, z={_num(z, 2)}: the edge is "
+                f"{az:.2f}x the combined uncertainty of the two projections, so it "
+                f"leans this way but is still SMALLER than that uncertainty. Both "
+                f"projections are UNVALIDATED.")
+    return (f"{_num(delta, 2)} projected points, z={_num(z, 2)}: the edge is "
+            f"{az:.2f}x the combined uncertainty of the two projections, so it is "
+            f"larger than that uncertainty. Both projections are UNVALIDATED.")
 
 
 def _urgency(deadline: datetime | None, now: datetime) -> str:
@@ -612,6 +693,12 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
     """
     lineup_gate, waiver_gate = gate.gate("lineup"), gate.gate("waiver")
     out: list[Action] = []
+    #: How a withheld card refers to the moment its numbers describe. Every
+    #: neutral sentence is anchored to it, so "was" has a date attached
+    #: rather than being a vague hedge.
+    seen = ("as of the league snapshot taken " + snapshot_as_of
+            if not snapshot_as_of.startswith("at an UNKNOWN")
+            else "as of a league snapshot that carries no time")
 
     def status_of(g) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
         if g.allowed:
@@ -641,6 +728,12 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                 f"{slots[i]} is EMPTY — it scores 0 as it stands",
                 f"Fill it with {who}.", deadline, note,
                 _slot_backup(plan, i, {best.sleeper_id} if best else set()),
+                neutral_headline=f"{slots[i]} was EMPTY in the last snapshot",
+                neutral_detail=(f"{slots[i]} held no player {seen}, and an "
+                                f"unfilled slot scores 0. The best legal bench "
+                                f"option in that same snapshot was {who}. "
+                                f"Whether the slot is still empty is not "
+                                f"something this page can see."),
                 evidence=("an unfilled slot scores nothing; this is not a "
                           "projection question",),
                 withheld_reasons=l_why, verify=l_verify))
@@ -655,12 +748,22 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                          if replacement else
                          "No projected bench player is eligible for this slot, so "
                          "the roster has no legal replacement."))
+            neutral = (f"{slots[i]}: {cur.name} was projected 0 in the last "
+                       f"snapshot ({why}), and was in the lineup {seen}."
+                       + (f" The best legal alternative in that snapshot was "
+                          f"{replacement.name} ({replacement.position}, "
+                          f"{_num(replacement.value, 2)} pts)."
+                          if replacement else
+                          " No projected bench player was eligible for the slot."))
             out.append(Action(
                 "inactive_starter", l_status, _urgency(deadline, now),
                 f"{slots[i]}: {cur.name} is in your lineup and is NOT playing",
                 detail, deadline, note,
                 _slot_backup(plan, i, {cur.sleeper_id} |
                              ({replacement.sleeper_id} if replacement else set())),
+                neutral_headline=(f"{slots[i]}: {cur.name} was in the lineup and "
+                                  f"projected 0 in the last snapshot"),
+                neutral_detail=neutral,
                 evidence=(cur.availability,) if cur.availability else (),
                 withheld_reasons=l_why, verify=l_verify,
                 delta_points=(float(replacement.value or 0.0) if replacement else None)))
@@ -678,15 +781,15 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
             (f"Optional: {a.bench.name} over {a.starter.name} at {a.slot}"
              if noise else
              f"{a.slot}: start {a.bench.name} over {a.starter.name}"),
-            (f"{_num(a.delta_points, 2)} projected points, z={_num(a.z, 2)}. "
-             + ("That edge is inside the noise of the two projections — either "
-                "choice is defensible and doing nothing is fine."
-                if noise else
-                "The edge is larger than the combined uncertainty of the two "
-                "projections, though both projections are UNVALIDATED.")),
+            _edge_sentence(a.delta_points, a.z),
             deadline, note,
             _slot_backup(plan, a.slot_index, {a.bench.sleeper_id,
                                               a.starter.sleeper_id}),
+            neutral_headline=(f"{a.slot}: the last snapshot projected "
+                              f"{a.bench.name} above {a.starter.name}"),
+            neutral_detail=(f"{_edge_sentence(a.delta_points, a.z)} Those numbers "
+                            f"are {seen} and are not a recommendation to make "
+                            f"the change now."),
             evidence=(f"{a.bench.name}: {_num(a.bench.value, 2)} ± {_num(a.bench.sd, 2)}",
                       f"{a.starter.name}: {_num(a.starter.value, 2)} ± "
                       f"{_num(a.starter.sd, 2)}"),
@@ -711,6 +814,15 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
             deadline, note,
             f"if {u.add.name} is claimed by someone else, the next candidate on the "
             f"shortlist below applies with the same drop",
+            neutral_headline=(f"The last snapshot ranked {u.add.name} "
+                              f"({u.add.position}) above your cheapest legal drop"),
+            neutral_detail=(f"{u.describe()}, {seen}. The drop it costs is "
+                            f"{u.drop.name} ({u.drop.position}, "
+                            f"{_num(u.drop.value, 2)} projected that week). "
+                            f"Eligibility {elig.state} in that snapshot too: this "
+                            f"page cannot tell a free agent from a player on "
+                            f"waivers, and it does not know whether "
+                            f"{u.add.name} is still unrostered."),
             evidence=elig.basis, withheld_reasons=w_why,
             verify=tuple(w_verify) + (elig.verify,),
             delta_points=u.lineup_gain or u.depth_gain, order=i))
@@ -840,9 +952,15 @@ def _action_card(a: "Action") -> str:
     bar.append(f"<span class=\"badge {'held' if held else 'go'}\">{_e(a.status)}</span>")
     out = [f"<div class=\"act act-{_e(a.urgency.replace(' ', '-'))}"
            f"{' withheld' if held else ''}\">",
-           "<div class=\"bar\">" + "".join(bar) + "</div>",
-           f"<h3>{_e(a.headline)}</h3>",
-           f"<p>{_e(a.detail)}</p>",
+           "<div class=\"bar\">" + "".join(bar) + "</div>"]
+    if held:
+        # Said before the card's own wording, so the frame is set even for a
+        # reader who never reaches the explanation underneath.
+        out.append("<p class=\"why\"><b>Last known picture — no action is being "
+                   "recommended.</b></p>")
+    out += [
+           f"<h3>{_e(a.title)}</h3>",
+           f"<p>{_e(a.body)}</p>",
            f"<p class=\"deadline\">{_e(a.deadline_note)}</p>"]
     if a.backup:
         out.append(f"<p class=\"backup\">Backup — {_e(a.backup)}</p>")
@@ -995,8 +1113,11 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         out.append("<details><summary>frozen (not moved) and why</summary><ul>"
                    + "".join(f"<li>{_e(p.name)} ({_e(p.position)}, {_e(p.lineup)}): {_e(r)}</li>"
                              for p, r in plan.frozen) + "</ul></details>")
-    out.append("<p class=\"small sub\">z = Δ / √(SD²+SD²); |z| &lt; 0.5 is within noise — the "
-               "edge is smaller than the uncertainty of the two projections, and both "
+    out.append("<p class=\"small sub\">z = Δ / √(SD²+SD²) — the edge expressed in "
+               "multiples of the combined uncertainty of the two projections. "
+               "|z| &lt; 0.5 is read as within noise here; note that anything below "
+               "|z| = 1 still means the edge is SMALLER than that uncertainty, so a "
+               "\"favoured\" row at z = 0.7 is a lean, not a finding. Both "
                "projections are UNVALIDATED. A swap is listed only if Sleeper would "
                "accept it now: position-eligible, both players proven unlocked, nobody "
                "promoted off IR.</p></div>")

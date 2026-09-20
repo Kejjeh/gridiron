@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from gridiron.freshness import SourceFreshness, Status
-from gridiron.gating import build_gate
+from gridiron.gating import box_score_blockers, build_gate
 from gridiron.lineup import (
     OPEN, UNKNOWN, Player, kickoff_index, lock_state, plan_lineup, slot_order,
 )
@@ -240,3 +240,144 @@ def test_a_withheld_gate_still_names_what_to_verify():
     assert any("roster and starting lineup" in v for v in g.verify())
     assert "WITHHELD" in g.banner() and "LAST KNOWN" in g.banner()
     assert gate.record()["lineup"]["allowed"] is False
+
+
+# ==========================================================================
+# Second review pass, against the dashboard at 47708e3. The reviewer passed
+# all 433 tests and then probed the parts the tests did not reach:
+#
+#   1. A frame holding BUF/MIA in week 2 and only NYJ/NE in week 3 made BUF
+#      OPEN/BYE in week 3. Parsing every row that arrived is not evidence
+#      that every row arrived, and the truncated pull is indistinguishable
+#      from a clean one by parse success alone.
+#   2. Two week rows giving one team two different kickoffs resolved
+#      silently to whichever was read last.
+#   3. A row naming one team was accepted as a timed game.
+#   4. Box scores were exempt from gating unconditionally, so a cache nobody
+#      had refreshed since September would keep endorsing actions forever.
+# ==========================================================================
+
+def _sched(rows):
+    return pd.DataFrame(rows)
+
+
+def _game(week, home, away, day, time_="13:00"):
+    return {"week": week, "home_team": home, "away_team": away,
+            "gameday": day, "gametime": time_}
+
+
+def test_a_week_that_simply_stops_early_is_not_a_league_of_byes():
+    """The reviewer's exact frame. Every row parses; nothing is damaged; and
+    the week is still missing half the teams the frame knows about."""
+    sched = _sched([_game(2, "BUF", "MIA", "2026-09-13"),
+                    _game(3, "NYJ", "NE", "2026-09-20")])
+    idx = kickoff_index(sched, 3)
+
+    assert idx.rows_intact, "nothing about the rows that arrived is wrong"
+    assert not idx.complete, "and that is not the same as the week being whole"
+    assert idx.proven_bye == frozenset()
+    assert not idx.extends_past
+
+    lock = lock_state("BUF", idx, NOW)
+    assert lock.state == UNKNOWN and not lock.movable
+    assert "not evidence that every row arrived" in lock.note
+    # the teams that DID arrive are unaffected
+    assert lock_state("NYJ", idx, NOW).state in (OPEN, "LOCKED")
+
+
+def test_a_bye_is_proven_by_games_on_both_sides_of_the_gap():
+    """The honest case must still work, or every bye week freezes the board."""
+    sched = _sched([_game(2, "BUF", "MIA", "2026-09-13"),
+                    _game(3, "NYJ", "NE", "2026-09-20"),
+                    _game(4, "BUF", "NYJ", "2026-09-27")])
+    idx = kickoff_index(sched, 3)
+    assert idx.extends_past and idx.proven_bye == frozenset({"BUF"})
+    lock = lock_state("BUF", idx, NOW)
+    assert lock.state == OPEN and lock.movable and "BYE" in lock.note
+    # MIA plays only in week 2: nothing brackets its absence.
+    assert lock_state("MIA", idx, NOW).state == UNKNOWN
+
+
+def test_two_rows_giving_one_team_two_kickoffs_establish_neither():
+    sched = _sched([_game(3, "BUF", "MIA", "2026-09-20", "13:00"),
+                    _game(3, "BUF", "NYJ", "2026-09-20", "20:00")])
+    idx = kickoff_index(sched, 3)
+
+    assert "BUF" in idx.conflicting
+    assert "BUF" not in idx.kickoffs, "neither time is used"
+    assert "BUF" in idx.time_unknown
+    assert not idx.rows_intact
+    assert any("different kickoffs" in p for p in idx.problems)
+    assert lock_state("BUF", idx, NOW).state == UNKNOWN
+    # the uncontradicted teams keep their times
+    assert idx.kickoffs.get("MIA") is not None
+
+
+def test_a_row_naming_one_team_is_half_a_game_and_times_nobody():
+    sched = _sched([{"week": 3, "home_team": "BUF", "away_team": "",
+                     "gameday": "2026-09-20", "gametime": "13:00"}])
+    idx = kickoff_index(sched, 3)
+
+    assert idx.partial_rows == 1 and not idx.rows_intact
+    assert dict(idx.kickoffs) == {}, "a damaged row's kickoff is not trusted"
+    assert "BUF" in idx.time_unknown
+    assert any("names only one team" in p for p in idx.problems)
+    assert lock_state("BUF", idx, NOW).state == UNKNOWN
+
+
+def test_a_row_listing_one_team_on_both_sides_is_not_a_game():
+    sched = _sched([_game(3, "BUF", "BUF", "2026-09-20"),
+                    _game(3, "NYJ", "NE", "2026-09-20")])
+    idx = kickoff_index(sched, 3)
+    assert idx.dropped_rows == 1 and not idx.rows_intact
+    assert "BUF" not in idx.kickoffs
+    assert lock_state("BUF", idx, NOW).state == UNKNOWN
+
+
+# ------------------------------------------------- box scores: coverage, not age
+
+def _box(name, status, through, weeks, failed=False):
+    return SourceFreshness(name, status, None, 10, through, "pulled 120h ago",
+                           tuple(weeks), failed)
+
+
+def test_box_scores_four_days_old_but_caught_up_still_withhold_nothing():
+    """Wednesday. Sunday's box scores are the newest there are. That is the
+    publication cadence (rule #8), not a stale cache."""
+    blockers = box_score_blockers(
+        [_box("weekly_stats", Status.STALE, 2, [1, 2]),
+         _box("snap_counts", Status.STALE, 1, [1])],
+        evidence_boundary=2)
+    assert blockers == {}
+
+
+def test_box_scores_months_behind_the_evidence_boundary_do_withhold():
+    """The exemption used to be unconditional, so a cache nobody refreshed
+    since September kept endorsing actions indefinitely."""
+    blockers = box_score_blockers(
+        [_box("weekly_stats", Status.STALE, 2, [1, 2])], evidence_boundary=9)
+    assert set(blockers) == {"lineup", "waiver", "matchup"}
+    why = blockers["lineup"][0][1]
+    assert "covers only through week 2" in why and "7 weeks behind" in why
+
+
+def test_a_failed_box_score_refresh_withholds_even_when_coverage_looks_right():
+    blockers = box_score_blockers(
+        [_box("weekly_stats", Status.STALE, 2, [1, 2], failed=True)],
+        evidence_boundary=2)
+    assert "the latest refresh FAILED" in blockers["lineup"][0][1]
+
+
+def test_a_hole_inside_the_covered_weeks_withholds():
+    blockers = box_score_blockers(
+        [_box("weekly_stats", Status.STALE, 5, [1, 2, 4, 5])], evidence_boundary=5)
+    assert "missing wk3" in blockers["lineup"][0][1]
+
+
+def test_a_box_score_gate_names_what_to_re_run():
+    sources = [_src(n, Status.FRESH, "current") for n in
+               ("sleeper_league", "sleeper_players", "injuries", "schedules")]
+    gate = build_gate(sources, extra=box_score_blockers(
+        [_box("weekly_stats", Status.STALE, 1, [1])], evidence_boundary=9))
+    assert not gate.allows("lineup")
+    assert any("pull_week.py" in v for v in gate.gate("lineup").verify())

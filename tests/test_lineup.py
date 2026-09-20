@@ -158,7 +158,7 @@ def test_kickoff_locks_follow_the_schedule_in_eastern_time():
         {"week": 2, "gameday": "2026-09-21", "gametime": "20:15", "home_team": "C", "away_team": "D"},
     ])
     idx = kickoff_index(sched, 2)
-    assert idx.complete and idx.games == 2
+    assert idx.rows_intact and idx.games == 2
     assert idx.kickoffs["A"] == idx.kickoffs["B"] == datetime(2026, 9, 20, 17, 0, tzinfo=UTC)
     before = datetime(2026, 9, 20, 16, 59, tzinfo=UTC)
     after = datetime(2026, 9, 20, 17, 0, tzinfo=UTC)
@@ -169,17 +169,33 @@ def test_kickoff_locks_follow_the_schedule_in_eastern_time():
     assert lock_state("C", idx, after).state == OPEN     # Monday night not yet
 
 
-def test_a_team_absent_from_a_complete_week_is_a_bye_and_one_it_never_heard_of_is_not():
-    """The two absences are different facts and must not share a branch."""
+def test_a_bye_needs_a_game_on_both_sides_of_the_gap():
+    """Three absences, three different facts, and only one of them is a bye.
+
+    Z is missing from week 2 but plays in weeks 1 and 3, so the gap is
+    bracketed by the frame's own rows and is a scheduled bye. Y is missing
+    from week 2 and plays only in week 1, so the frame stops before it could
+    show a week-3 game: that is the shape of a truncated pull, not evidence
+    of a bye. ZZ is a name this schedule has never carried at all.
+    """
     sched = pd.DataFrame([
         {"week": 1, "gameday": "2026-09-13", "gametime": "13:00", "home_team": "A", "away_team": "Z"},
+        {"week": 1, "gameday": "2026-09-13", "gametime": "13:00", "home_team": "B", "away_team": "Y"},
         {"week": 2, "gameday": "2026-09-20", "gametime": "13:00", "home_team": "A", "away_team": "B"},
+        {"week": 3, "gameday": "2026-09-27", "gametime": "13:00", "home_team": "A", "away_team": "Z"},
     ])
     idx = kickoff_index(sched, 2)
     now = datetime(2026, 9, 20, 18, 0, tzinfo=UTC)
-    bye = lock_state("Z", idx, now)                      # plays in week 1, not week 2
+
+    bye = lock_state("Z", idx, now)
     assert bye.state == OPEN and "BYE" in bye.note
-    stranger = lock_state("ZZ", idx, now)                # never appears at all
+    assert idx.proven_bye == frozenset({"Z"})
+
+    unbracketed = lock_state("Y", idx, now)
+    assert unbracketed.state == UNKNOWN and not unbracketed.movable
+    assert "before and after" in unbracketed.note
+
+    stranger = lock_state("ZZ", idx, now)
     assert stranger.state == UNKNOWN and "not a bye" in stranger.note
 
 

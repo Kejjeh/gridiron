@@ -170,32 +170,81 @@ class Lock:
 class KickoffIndex:
     """What one week's schedule actually supports, including its holes.
 
-    A plain `team -> kickoff` dict cannot express the two states that matter
-    most here: a team whose game we found but could not time, and a week
-    whose rows we could not fully read. Both used to collapse into "absent
-    from the dict", which `lock_state` then reported as a bye — so an
-    unreadable schedule authorised every swap on the board. The holes are
-    fields now, and absence only means "bye" when `complete` is True.
+    A plain `team -> kickoff` dict cannot express the states that matter most
+    here: a team whose game we found but could not time, a week whose rows we
+    could not fully read, and — the one this type exists for — a week whose
+    rows all parsed and which may STILL be missing games nobody told us about.
+
+    Parsing every row we were handed is not evidence that we were handed every
+    row. A truncated upstream pull produces a frame in which every row is
+    perfectly well formed, so "no parse errors" is a statement about the rows
+    that arrived and says nothing about the ones that did not. That is why
+    absence from `kickoffs` never means BYE on its own: a bye is asserted only
+    for a team in `proven_bye`, which requires positive evidence (below).
     """
 
     week: int
     kickoffs: Mapping[str, datetime]
-    #: Teams with a row for this week whose kickoff time could not be read.
+    #: Teams with a row for this week whose kickoff time could not be read, or
+    #: whose row was damaged enough that its time cannot be trusted either.
     #: We know they play; we do not know when, so they are never movable.
     time_unknown: frozenset[str]
-    #: Every team appearing anywhere in the schedule frame. A team in here
-    #: with no row this week is on a BYE; a team not in here at all is a name
-    #: this schedule has never heard of, which is not a bye.
+    #: Every team appearing anywhere in the schedule frame. A team not in here
+    #: at all is a name this schedule has never heard of, which is not a bye.
     season_teams: frozenset[str]
     #: Week rows that carried no usable team names at all.
     dropped_rows: int
     problems: tuple[str, ...] = field(default=())
+    #: Teams whose absence from this week is BACKED BY EVIDENCE: the frame
+    #: shows them playing in some week before this one AND some week after it,
+    #: so the gap is a scheduled bye rather than the edge of a truncated pull.
+    #: A team absent from the week and absent from this set is UNKNOWN.
+    proven_bye: frozenset[str] = field(default=frozenset())
+    #: Rows naming exactly one team — half a game. The row is demonstrably
+    #: damaged, so its kickoff is not trusted either (see `kickoff_index`).
+    partial_rows: int = 0
+    #: Teams given two different kickoff times by two rows of the same week.
+    #: The schedule contradicts itself about them, so neither time is used.
+    conflicting: frozenset[str] = field(default=frozenset())
+    #: Weeks the frame carries rows for at all, and the largest number of
+    #: teams any one of them fields. A week well below that maximum is not
+    #: proof of truncation (byes shorten weeks legitimately) but it is the
+    #: number a reader needs to judge the week for themselves.
+    frame_weeks: tuple[int, ...] = field(default=())
+    frame_max_slate: int = 0
+
+    @property
+    def rows_intact(self) -> bool:
+        """True when every row of this week that arrived parsed into a fully
+        named, uniquely timed game. Says nothing about rows that never came."""
+        return (not self.time_unknown and not self.dropped_rows
+                and not self.partial_rows and not self.conflicting)
 
     @property
     def complete(self) -> bool:
-        """True when every row of this week parsed into a timed game. Only
-        then does 'not in the index' mean 'bye'."""
-        return not self.time_unknown and self.dropped_rows == 0
+        """Retained name, corrected meaning: the week's rows are intact AND
+        the frame extends past this week, which is the only condition under
+        which absence can be reasoned about at all. Callers use it to decide
+        whether to warn; only `proven_bye` decides whether a player may move.
+        """
+        return self.rows_intact and self.extends_past
+
+    @property
+    def extends_past(self) -> bool:
+        """The frame carries at least one week after this one. Without that,
+        no absence can be bracketed and every absent team stays UNKNOWN."""
+        return any(w > self.week for w in self.frame_weeks)
+
+    @property
+    def teams_playing(self) -> int:
+        return len(set(self.kickoffs) | set(self.time_unknown))
+
+    @property
+    def slate_short(self) -> int:
+        """How many fewer teams this week fields than the frame's busiest
+        week. Non-zero is normal on a bye week and expected at the end of a
+        truncated pull; it is reported, never acted on by itself."""
+        return max(0, self.frame_max_slate - self.teams_playing)
 
     @property
     def games(self) -> int:
@@ -204,9 +253,19 @@ class KickoffIndex:
     def summary(self) -> str:
         bits = [f"{len(self.kickoffs)} team(s) timed"]
         if self.time_unknown:
-            bits.append(f"{len(self.time_unknown)} with NO kickoff time")
+            bits.append(f"{len(self.time_unknown)} with NO usable kickoff time")
+        if self.conflicting:
+            bits.append(f"{len(self.conflicting)} with CONFLICTING times")
+        if self.partial_rows:
+            bits.append(f"{self.partial_rows} half-named row(s)")
         if self.dropped_rows:
             bits.append(f"{self.dropped_rows} unreadable row(s)")
+        if not self.extends_past:
+            bits.append("frame ends at this week, so no absence can be "
+                        "confirmed as a bye")
+        elif self.slate_short:
+            bits.append(f"{self.slate_short} team(s) absent, "
+                        f"{len(self.proven_bye)} of them confirmed on bye")
         return f"week {self.week} schedule: " + ", ".join(bits)
 
 
@@ -215,10 +274,33 @@ def _team(value: object) -> str:
     return "" if t in ("", "NAN", "NONE") else t
 
 
+def _frame_team_weeks(schedule: pd.DataFrame) -> dict[str, set[int]]:
+    """Every week each team is shown playing, anywhere in the frame.
+
+    This is the evidence base for a bye. It reads only rows that name the
+    team and carry a usable week number; a row's kickoff being unreadable
+    does not stop it proving that the team had a game that week.
+    """
+    out: dict[str, set[int]] = {}
+    if "week" not in schedule.columns:
+        return out
+    cols = [c for c in ("home_team", "away_team") if c in schedule.columns]
+    for row in schedule.itertuples():
+        try:
+            wk = int(getattr(row, "week"))
+        except (TypeError, ValueError):
+            continue
+        for col in cols:
+            t = _team(getattr(row, col, ""))
+            if t:
+                out.setdefault(t, set()).add(wk)
+    return out
+
+
 def kickoff_index(schedule: pd.DataFrame | None, week: int) -> KickoffIndex | None:
     """Read one week's kickoffs. None when there is NO schedule to read.
 
-    Two things this deliberately does NOT do, because both were bugs:
+    What this deliberately does NOT do, because each one was a bug:
 
       * It never invents a kickoff time. A row with no `gametime` used to be
         stamped 13:00 ET, which is a guess that reads as fact — and a wrong
@@ -227,28 +309,63 @@ def kickoff_index(schedule: pd.DataFrame | None, week: int) -> KickoffIndex | No
       * It never returns an empty index for a week it could not read. An
         empty dict is indistinguishable from "all 32 teams are on bye", and
         the caller treated `{} is not None` as full lock certainty.
+      * It never treats a clean parse as proof of a complete slate. A frame
+        holding BUF/MIA in week 2 and only NYJ/NE in week 3 parses without a
+        single error, and used to make BUF a proven bye in week 3 — so every
+        swap involving a Buffalo player was offered as legal off a schedule
+        that simply stopped early. A bye is now asserted only for a team the
+        frame shows playing on BOTH sides of the gap.
+      * It never silently resolves a contradiction. Two rows giving one team
+        two different kickoffs mean the schedule does not know when that team
+        plays, so neither time is used and the team is UNKNOWN.
+      * It never trusts half a game. A row naming one team is damaged; its
+        `gametime` field is no more trustworthy than its missing team field,
+        so the named team is timed by no row at all.
     """
     if schedule is None or len(schedule) == 0 or "week" not in schedule.columns:
         return None
-    season_teams = set()
-    for col in ("home_team", "away_team"):
-        if col in schedule.columns:
-            season_teams |= {t for t in (_team(v) for v in schedule[col]) if t}
+    team_weeks = _frame_team_weeks(schedule)
+    season_teams = set(team_weeks)
+    frame_weeks = tuple(sorted({w for weeks in team_weeks.values() for w in weeks}))
+    frame_max_slate = 0
+    for w in frame_weeks:
+        frame_max_slate = max(frame_max_slate,
+                              sum(1 for weeks in team_weeks.values() if w in weeks))
+
     wk = schedule.loc[schedule["week"] == int(week)]
     if len(wk) == 0:
         return None
+
     out: dict[str, datetime] = {}
     time_unknown: set[str] = set()
+    conflicting: set[str] = set()
     problems: list[str] = []
     dropped = 0
+    partial = 0
     for row in wk.itertuples():
-        teams = [t for t in (_team(getattr(row, "home_team", "")),
-                             _team(getattr(row, "away_team", ""))) if t]
+        home, away = (_team(getattr(row, "home_team", "")),
+                      _team(getattr(row, "away_team", "")))
+        teams = [t for t in (home, away) if t]
         day = str(getattr(row, "gameday", "") or "").strip()
         time_ = str(getattr(row, "gametime", "") or "").strip()
         if not teams:
             dropped += 1
             problems.append("a week row carried no team names")
+            continue
+        if len(teams) == 1:
+            # Half a game. We cannot say who the opponent is, and a row that
+            # lost one of its two required team names is not a row whose
+            # kickoff field we should believe either.
+            partial += 1
+            time_unknown.update(teams)
+            problems.append(f"{teams[0]}: the schedule row names only one team, "
+                            f"so the game is half-recorded and its kickoff is "
+                            f"not trusted")
+            continue
+        if home == away:
+            dropped += 1
+            problems.append(f"{home}: a week row lists the same team on both "
+                            f"sides, which is not a game")
             continue
         if not day or day.lower() == "nan" or not time_ or time_.lower() == "nan":
             time_unknown.update(teams)
@@ -269,11 +386,34 @@ def kickoff_index(schedule: pd.DataFrame | None, week: int) -> KickoffIndex | No
             continue
         when = stamp.tz_convert("UTC").to_pydatetime()
         for t in teams:
+            prior = out.get(t)
+            if prior is not None and prior != when:
+                conflicting.add(t)
+                problems.append(
+                    f"{t}: two week-{int(week)} rows give different kickoffs "
+                    f"({prior:%a %H:%M} and {when:%a %H:%M} UTC), so the "
+                    f"schedule does not establish when {t} plays")
+                continue
             out[t] = when
+    # A contradicted team keeps neither time.
+    for t in conflicting:
+        out.pop(t, None)
+    time_unknown |= conflicting
     # A team we timed is not also "unknown".
     time_unknown -= set(out)
+
+    # A bye needs evidence on both sides of the gap. Without a later week in
+    # the frame nothing can be bracketed, and every absent team stays UNKNOWN.
+    playing = set(out) | time_unknown
+    proven_bye = {t for t, weeks in team_weeks.items()
+                  if t not in playing
+                  and any(w < int(week) for w in weeks)
+                  and any(w > int(week) for w in weeks)}
+
     return KickoffIndex(int(week), out, frozenset(time_unknown),
-                        frozenset(season_teams), dropped, tuple(problems))
+                        frozenset(season_teams), dropped, tuple(problems),
+                        frozenset(proven_bye), partial, frozenset(conflicting),
+                        frame_weeks, frame_max_slate)
 
 
 def lock_state(team: str, kickoffs: KickoffIndex | Mapping[str, datetime] | None,
@@ -284,6 +424,8 @@ def lock_state(team: str, kickoffs: KickoffIndex | Mapping[str, datetime] | None
     if kickoffs is None:
         return Lock(UNKNOWN, "lock state UNKNOWN: no schedule loaded for this week")
     if not isinstance(kickoffs, KickoffIndex):     # a bare mapping: legacy callers
+        # A bare mapping carries no frame to bracket an absence against, so a
+        # team missing from it is UNKNOWN, never a bye. Legacy callers only.
         kickoffs = KickoffIndex(0, dict(kickoffs), frozenset(),
                                 frozenset(kickoffs), 0, ())
     t = _team(team)
@@ -294,16 +436,25 @@ def lock_state(team: str, kickoffs: KickoffIndex | Mapping[str, datetime] | None
                              f"but the schedule carries no usable kickoff time for it")
     when = kickoffs.kickoffs.get(t)
     if when is None:
-        if not kickoffs.complete:
-            return Lock(UNKNOWN, f"lock state UNKNOWN: {t} has no readable week-"
-                                 f"{kickoffs.week} game and the week's schedule is "
-                                 f"incomplete ({kickoffs.summary()}), so a bye cannot "
-                                 f"be told apart from a row that failed to parse")
         if t not in kickoffs.season_teams:
             return Lock(UNKNOWN, f"lock state UNKNOWN: {t} does not appear anywhere in "
                                  f"this schedule — an unrecognised team is not a bye")
-        return Lock(OPEN, f"no week-{kickoffs.week} game: BYE (the week's schedule "
-                          f"parsed completely and {t} plays in other weeks)")
+        if not kickoffs.rows_intact:
+            return Lock(UNKNOWN, f"lock state UNKNOWN: {t} has no readable week-"
+                                 f"{kickoffs.week} game and the week's rows are "
+                                 f"damaged ({kickoffs.summary()}), so a bye cannot "
+                                 f"be told apart from a row that failed to parse")
+        if t not in kickoffs.proven_bye:
+            return Lock(UNKNOWN, f"lock state UNKNOWN: {t} has no week-{kickoffs.week} "
+                                 f"row, and this schedule does not show {t} playing "
+                                 f"both before and after week {kickoffs.week} "
+                                 f"({kickoffs.summary()}). Every row that arrived "
+                                 f"parsed, which is not evidence that every row "
+                                 f"arrived, so the gap is unexplained rather than "
+                                 f"a proven bye")
+        return Lock(OPEN, f"no week-{kickoffs.week} game: BYE (this schedule shows "
+                          f"{t} playing before and after week {kickoffs.week}, and "
+                          f"the week's rows are intact)")
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     stamp = when.astimezone(timezone.utc)

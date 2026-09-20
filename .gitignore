@@ -38,3 +38,6 @@ docs/research/drafts/
 # mechanical is what stops a real cache being published by an out-dir typo.
 docs/review/dashboard/caches/
 docs/review/dashboard/*/
+
+# Cloud carryover store (private decision records restored from a cache)
+.carry/

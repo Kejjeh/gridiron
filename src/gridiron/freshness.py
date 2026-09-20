@@ -131,6 +131,11 @@ class SourceFreshness:
     #: only the last of them, which is why a hole in the middle needs its own
     #: field to be visible at all.
     covered_weeks: tuple[int, ...] = field(default=())
+    #: True when the newest thing that happened to this source is a FAILED
+    #: refresh. The data below it may still be perfectly good; what is not
+    #: good is the assumption that it is current. Carried as a field rather
+    #: than left inside `reason` so a gate can test it without reading prose.
+    refresh_failed: bool = False
 
     @property
     def usable(self) -> bool:

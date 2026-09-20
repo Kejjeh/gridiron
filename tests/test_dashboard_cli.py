@@ -291,7 +291,7 @@ def test_a_half_readable_schedule_freezes_by_name_and_invents_nothing(tmp_path):
     rc, html, rec = render(tmp_path, "partial_schedule")
     assert rc == 0 and rec["degraded"]
     locks = rec["locks"]
-    assert locks["complete"] is False
+    assert locks["rows_intact"] is False
     assert len(locks["time_unknown"]) == 4, "both damaged games' teams are named"
     assert locks["timed_teams"], "the games that DID parse are still usable"
     assert not set(locks["time_unknown"]) & set(locks["timed_teams"])
@@ -325,7 +325,7 @@ def test_a_half_readable_schedule_freezes_by_name_and_invents_nothing(tmp_path):
         assert a["bench_id"] not in unknown_ids
         assert a["starter_id"] not in unknown_ids
 
-    assert "INCOMPLETE" in html and "no time was invented" in html
+    assert "DAMAGED" in html and "no time was invented" in html
 
 
 # ------------------------------------------------------------------ missing
@@ -422,3 +422,115 @@ def test_a_snapshot_from_another_season_is_refused(tmp_path, capsys):
     assert CLI.main(["--cache-root", str(root), "--owner", "fixture_owner",
                      "--now", NOW.isoformat()]) == 2
     assert "season 2025" in capsys.readouterr().err
+
+
+# ------------------------------------------- withheld cards lose the imperative
+
+def test_a_withheld_card_states_the_last_known_picture_not_an_instruction(tmp_path):
+    """Second review pass: the badge said WITHHELD and the sentence under it
+    still said "Consider claiming X" and "start X over Y". A reader who skims
+    the sentence has been told to act on a five-day-old roster. The badge is a
+    label; the sentence is the instruction, and the instruction had to go."""
+    _, html, rec = render(tmp_path, "stale")
+    assert rec["actionable"] == 0 and rec["actions"]
+
+    for action in rec["actions"]:
+        assert action["status"] == "WITHHELD"
+        title, body = action["title"], action["body"]
+        for imperative in ("Consider claiming", "Fill it with", "Start ",
+                           "start ", ": start"):
+            assert imperative not in title, (imperative, title)
+        assert not title.startswith(("Add ", "Drop ", "Claim ")), title
+        # it says WHEN the picture is from instead
+        assert "last snapshot" in title.lower() or "was " in title.lower(), title
+        assert body
+
+    # and the page itself carries the neutral wording, not the imperative
+    assert "the last snapshot ranked" in html.lower()
+    assert "Consider claiming" not in html
+    assert "Last known picture — no action is being recommended." in html
+
+
+def test_a_fresh_page_still_gives_the_instruction(tmp_path):
+    """The neutral wording is for withheld cards only. Softening endorsed
+    advice into 'the snapshot ranked X above Y' would be its own failure."""
+    _, html, rec = render(tmp_path, "complete")
+    assert rec["actionable"] == len(rec["actions"]) > 0
+    assert any(a["title"].startswith("Consider claiming") for a in rec["actions"])
+    assert "Consider claiming" in html
+    assert "Last known picture" not in html
+    for action in rec["actions"]:
+        assert action["title"] == action["headline"]
+
+
+def test_the_edge_is_never_called_larger_than_the_uncertainty_it_is_smaller_than(
+        tmp_path):
+    """z is the edge in multiples of the combined SD, so z=0.7 means the edge
+    is 0.7x that uncertainty — smaller than it. Every swap above the 0.5 noise
+    floor used to claim the opposite, in the most confident sentence on the
+    page. The floor is unchanged; the claim is."""
+    from gridiron.dashboard import _edge_sentence
+
+    assert "inside the noise" in _edge_sentence(0.4, 0.05)
+    for z in (0.5, 0.7, 0.99):
+        text = _edge_sentence(5.0, z)
+        assert "SMALLER than that uncertainty" in text, z
+        assert "larger than" not in text, z
+    for z in (1.0, 2.4):
+        text = _edge_sentence(20.0, z)
+        assert "larger than that uncertainty" in text, z
+    assert "unknown" in _edge_sentence(3.0, None)
+
+    _, html, _ = render(tmp_path, "complete")
+    assert "The edge is larger than the combined uncertainty" not in html
+
+
+# ------------------------------------------- grading knows what it was shown
+
+def test_grading_a_withheld_page_scores_no_advice_and_claims_no_decision(tmp_path):
+    """The stale page shows two lineup comparisons and three waiver pairs and
+    endorses none of them. Grading them as recommendations grades advice that
+    was explicitly not given, and calling the roster's contents a 'choice'
+    claims the owner did something nobody watched."""
+    from gridiron.decisions import grade_archive
+
+    _, _, rec = render(tmp_path, "stale")
+    assert rec["withheld_actions"] == ["lineup", "waiver", "matchup"]
+    actuals = {p["gsis_id"]: (p["projected"] or 0.0) + 3.0
+               for p in rec["roster"] if p["gsis_id"]}
+
+    grade = grade_archive(rec, actuals)
+    assert grade.comparisons, "the comparisons are still recorded"
+    assert all(c.stance == "WITHHELD" for c in grade.comparisons)
+    assert grade.scorable == () and grade.agreement() == (0, 0)
+    assert grade.decisions == ()
+    text = grade.summary()
+    assert "0 confirmed owner decision(s)" in text
+    assert "advice was not given" in text
+
+
+def test_grading_a_fresh_page_scores_the_lineup_advice_it_did_endorse(tmp_path):
+    from gridiron.decisions import grade_archive
+
+    _, _, rec = render(tmp_path, "complete")
+    actuals = {p["gsis_id"]: (p["projected"] or 0.0) + 3.0
+               for p in rec["roster"] if p["gsis_id"]}
+    grade = grade_archive(rec, actuals)
+
+    assert all(c.stance == "ENDORSED" for c in grade.comparisons)
+    assert grade.scorable, "endorsed start/sit comparisons are scored"
+    assert all(c.kind == "start_sit" for c in grade.scorable), \
+        "a waiver add this page never proved available is not scored"
+    assert all(c.eligibility == "UNVERIFIED"
+               for c in grade.comparisons if c.kind == "waiver")
+    assert grade.decisions == (), "endorsing is still not observing"
+
+
+def test_the_archive_this_run_wrote_is_content_addressed(tmp_path):
+    """Two pages written in the same second must not share a filename."""
+    _, _, rec = render(tmp_path, "complete")
+    files = list((tmp_path / "arch" / "complete" / "season2026").glob("*.json"))
+    assert len(files) == 1
+    stem = files[0].stem
+    assert re.fullmatch(r"week03_\d{8}T\d{6}Z_[0-9a-f]{8}", stem), stem
+    assert rec["week"] == 3

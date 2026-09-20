@@ -25,7 +25,9 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
 - Decision board (offline): `PYTHONPATH=src python scripts/weekly/dashboard.py
   --write`; scenarios + phone-fit check: `scripts/weekly/dashboard_scenarios.py
   --screenshot`. Freshness GATES actions (`gridiron.gating`), locks are
-  three-valued, and the board is also built in the cloud as a private artifact.
+  three-valued, a bye needs games on both sides of the gap, and the board is
+  built in the cloud as a private artifact with its decision records carried
+  between runs by `gridiron.carryover` (an Actions cache, not durable storage).
 - Settings drift check: `PYTHONPATH=src python scripts/verify_league_settings.py`.
 
 ## Rules (full text in docs/memory/rules.md — cite by number)

@@ -35,10 +35,20 @@ What gates what, and why each one is load-bearing rather than tidy:
   matchup — `sleeper_league` and `sleeper_players`: the opponent's lineup and
             both sides' designations.
 
-Box-score sources (`weekly_stats`, `snap_counts`) are deliberately NOT gates.
-They are stale by construction for most of every week — that is what the
-evidence boundary exists to state — and gating on them would withhold every
-action every Wednesday, which trains the reader to ignore the gate.
+Box-score sources (`weekly_stats`, `snap_counts`) are deliberately not gated
+on AGE. They are old by construction for most of every week — that is what
+the evidence boundary exists to state — and withholding every action every
+Wednesday because Sunday's box scores are four days old trains the reader to
+ignore the gate.
+
+Age is the wrong question for them; COVERAGE is the right one, and
+`box_score_blockers` asks it. Box scores feed every projection on the page,
+so what matters is whether they have caught up to the evidence boundary the
+page is reasoning from. Four days behind on a Wednesday is the publication
+cadence (rule #8). Six WEEKS behind is a cache nobody has refreshed since
+September, and every projection built on it is a statement about a different
+season — which the old exemption, being unconditional, would have passed
+through in silence for as long as the file sat there.
 """
 from __future__ import annotations
 
@@ -65,7 +75,72 @@ VERIFY: dict[str, str] = {
     "injuries": "check this week's practice report / game designations",
     "schedules": "confirm the kickoff time for the affected game",
     "crosswalk": "re-run the ingest so ids resolve",
+    "weekly_stats": "re-run `scripts/ingest/pull_week.py` — the box scores the "
+                    "projections are built from have not caught up to the week "
+                    "this page is reasoning about",
+    "snap_counts": "re-run `scripts/ingest/pull_week.py` — the snap counts the "
+                   "usage priors are built from have not caught up to the week "
+                   "this page is reasoning about",
 }
+
+
+#: Sources that feed every projection but are expected to lag by design.
+BOX_SCORE_SOURCES: tuple[str, ...] = ("weekly_stats", "snap_counts")
+
+#: How many weeks behind the evidence boundary a box-score source may sit
+#: before the actions resting on it are withheld. One week of slack is the
+#: publication cadence, not a fudge factor: PFR snap counts trail the box
+#: scores, both trail the last game of a week, and on the Tuesday after the
+#: boundary advances neither has posted the new week yet. Two weeks behind is
+#: a refresh that did not happen.
+BOX_SCORE_LAG_WEEKS = 1
+
+
+def box_score_blockers(sources: Iterable[SourceFreshness], *,
+                       evidence_boundary: int | None
+                       ) -> dict[str, list[tuple[str, str]]]:
+    """Blockers for box-score sources, judged on coverage rather than age.
+
+    Returns `extra`-shaped entries for every action, because every action on
+    this page is scored through a projection and every projection is built
+    from these frames. A source earns a blocker when it is MISSING, when its
+    latest refresh FAILED, when it has a hole inside the weeks it claims to
+    cover, or when it has not reached the evidence boundary. Being merely old
+    earns nothing.
+    """
+    reasons: list[tuple[str, str]] = []
+    for s in sources:
+        if s.name not in BOX_SCORE_SOURCES:
+            continue
+        if s.status is Status.MISSING:
+            reasons.append((s.name, f"no box-score frame at all ({s.reason})"))
+            continue
+        if s.refresh_failed:
+            reasons.append((s.name, f"the latest refresh FAILED, so the newest "
+                                    f"thing known about this source is an error "
+                                    f"({s.reason})"))
+        if s.week_gaps:
+            gaps = ",".join(f"wk{w}" for w in s.week_gaps)
+            reasons.append((s.name, f"missing {gaps} from inside the weeks it "
+                                    f"covers, so every season-to-date number "
+                                    f"built on it is short by those weeks"))
+        if evidence_boundary is None or evidence_boundary < 1:
+            continue
+        through = s.covers_through_week
+        if through is None:
+            reasons.append((s.name, "carries no week coverage, so whether it has "
+                                    "caught up to the evidence boundary cannot "
+                                    "be established"))
+        elif evidence_boundary - int(through) > BOX_SCORE_LAG_WEEKS:
+            behind = evidence_boundary - int(through)
+            reasons.append((s.name, f"covers only through week {through} while "
+                                    f"the page reasons through week "
+                                    f"{evidence_boundary} — {behind} weeks "
+                                    f"behind, which is a refresh that did not "
+                                    f"happen rather than the usual lag"))
+    if not reasons:
+        return {}
+    return {action: list(reasons) for action in ACTIONS}
 
 
 @dataclass(frozen=True)
