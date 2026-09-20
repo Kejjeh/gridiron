@@ -58,6 +58,7 @@ IMPORTS = [
     "gridiron.decisions",
     "gridiron.carryover",
     "gridiron.dashboard",
+    "gridiron.gameday",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on

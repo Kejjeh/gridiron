@@ -116,6 +116,13 @@ CADENCES: dict[str, Cadence] = {
     "weekly_stats": Cadence("weekly_stats", max_age_hours=72.0),
     "snap_counts": Cadence("snap_counts", max_age_hours=96.0),
     "crosswalk": Cadence("crosswalk", max_age_hours=336.0),  # 14 days
+    # Per-game status (pre-game / in-game / final). Its whole value is being
+    # current: a feed that said "in game" half an hour ago says nothing about
+    # now, so on a gameday it goes STALE in 30 minutes. Terminal statuses
+    # (final, canceled) are monotone and survive staleness; the reader keeps
+    # those and demotes the rest to UNKNOWN.
+    "game_status": Cadence("game_status", max_age_hours=12.0,
+                           gameday_max_age_hours=0.5),
 }
 
 

@@ -141,6 +141,24 @@ jobs:
         # worth reading on a bad day, and it now withholds its own actions.
         run: python scripts/weekly/dashboard.py --write
 
+      # The Game Day page: the platform's own matchup scores, who is yet to
+      # play, what is still legal, and what the board above advised — built
+      # beside the board from the same cache, with a read-only refresh
+      # script for the owner's phone. It reads the archive the board just
+      # wrote and never modifies it. Not fatal: a missing Game Day page must
+      # not cost the board.
+      - name: Render the Game Day page
+        if: always()
+        continue-on-error: true
+        env:
+          GRIDIRON_WEEK: ${{ inputs.week }}
+        run: |
+          if [ -n "${GRIDIRON_WEEK}" ]; then
+            python scripts/weekly/gameday.py --write --week "${GRIDIRON_WEEK}"
+          else
+            python scripts/weekly/gameday.py --write
+          fi
+
       # Publishes the record this run froze AND the cache it rendered from,
       # so the next clean runner has both. A run that rendered nothing has
       # nothing to publish and says so; it does not empty the store.

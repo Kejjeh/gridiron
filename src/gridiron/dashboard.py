@@ -122,6 +122,10 @@ class Dashboard:
     locks: KickoffIndex | None = None
     archive: Path | None = None
     league_name: str = LEAGUE_NAME
+    #: Public identifiers, not credentials: they let a later reader (the Game
+    #: Day page) join this record to the right league and roster by id
+    #: instead of by season and week alone.
+    league_id: str = ""
 
     @property
     def degraded(self) -> bool:
@@ -146,6 +150,7 @@ class Dashboard:
         return {
             "generated": self.generated.isoformat(timespec="seconds"),
             "season": self.context.season, "week": self.context.report_week,
+            "league_id": self.league_id, "my_roster_id": self.my_roster_id,
             "phase": self.context.phase.value,
             "evidence_boundary": self.context.evidence_boundary,
             "stats_through": self.context.stats_through,
@@ -448,9 +453,13 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
     actions = build_actions(plan=plan, board=board, gate=gate, now=now, slots=slots,
                             snapshot_as_of=snapshot_as_of)
 
+    league_id = str(snapshot.get("league_id")
+                    or (league.get("league_id") if isinstance(league, Mapping) else "")
+                    or "")
     dash = Dashboard(context, tuple(sources), tuple(notes), now, tuple(roster), slots,
                      plan, matchup, matchup_reason, board, evaluation,
-                     tuple(unresolved), my_roster_id, gate, actions, None, kickoffs)
+                     tuple(unresolved), my_roster_id, gate, actions, None, kickoffs,
+                     league_id=league_id)
 
     # What changed since the previous frozen page. Read-only: the diff never
     # feeds a projection, so yesterday's numbers cannot enter today's evidence.
@@ -555,6 +564,10 @@ class Action:
     verify: tuple[str, ...] = field(default=())
     delta_points: float | None = None
     z: float | None = None
+    #: The sleeper ids of the players this action moves, in the order the
+    #: sentence names them (bench first for a swap). Carried so a later page
+    #: can re-check legality by ID and never by name (rule #3).
+    player_ids: tuple[str, ...] = field(default=())
     #: Tiebreak WITHIN a kind, set by the producer. Acquisitions need it
     #: because a lineup gain and a depth gain are not comparable quantities —
     #: sorting the two together once put a +15 bye-week depth add above a +6
@@ -592,7 +605,8 @@ class Action:
                 "deadline_note": self.deadline_note, "backup": self.backup,
                 "evidence": list(self.evidence), "verify": list(self.verify),
                 "withheld_reasons": list(self.withheld_reasons),
-                "delta_points": self.delta_points, "z": self.z}
+                "delta_points": self.delta_points, "z": self.z,
+                "player_ids": list(self.player_ids)}
 
 
 def _edge_sentence(delta: float, z: float | None) -> str:
@@ -737,7 +751,8 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                                 f"something this page can see."),
                 evidence=("an unfilled slot scores nothing; this is not a "
                           "projection question",),
-                withheld_reasons=l_why, verify=l_verify))
+                withheld_reasons=l_why, verify=l_verify,
+                player_ids=(best.sleeper_id,) if best else ()))
             continue
         if cur.projection.is_withheld and cur.movable:
             replacement = best if (best and best.sleeper_id != cur.sleeper_id) else None
@@ -767,7 +782,9 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                 neutral_detail=neutral,
                 evidence=(cur.availability,) if cur.availability else (),
                 withheld_reasons=l_why, verify=l_verify,
-                delta_points=(float(replacement.value or 0.0) if replacement else None)))
+                delta_points=(float(replacement.value or 0.0) if replacement else None),
+                player_ids=((replacement.sleeper_id, cur.sleeper_id) if replacement
+                            else (cur.sleeper_id,))))
 
     # 2. Favourable swaps the optimizer found, above the noise floor.
     for a in plan.alternatives:
@@ -795,7 +812,8 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                       f"{a.starter.name}: {_num(a.starter.value, 2)} ± "
                       f"{_num(a.starter.sd, 2)}"),
             withheld_reasons=l_why, verify=l_verify,
-            delta_points=a.delta_points, z=a.z))
+            delta_points=a.delta_points, z=a.z,
+            player_ids=(a.bench.sleeper_id, a.starter.sleeper_id)))
 
     # 3. Acquisitions. Never an imperative: eligibility is never proven here.
     w_status, w_why, w_verify = status_of(waiver_gate)
@@ -836,7 +854,8 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                             f"{u.add.name} is still unrostered."),
             evidence=elig.basis, withheld_reasons=w_why,
             verify=tuple(w_verify) + (elig.verify,),
-            delta_points=u.lineup_gain or u.depth_gain, order=i))
+            delta_points=u.lineup_gain or u.depth_gain, order=i,
+            player_ids=(u.add.sleeper_id, u.drop.sleeper_id)))
 
     out.sort(key=lambda a: a.rank)
     return tuple(out)
@@ -1004,6 +1023,12 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         f"<div class=\"sub\">{_e(ctx.headline())} · evidence boundary week {ctx.evidence_boundary} · "
         f"generated {_e(d.generated.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'))}</div>",
         f"<div class=\"sub small\">{_e(BASELINE_LABEL)}</div>",
+        # The one Game Day entry in the product: the live-scoring page is
+        # built beside this file by scripts/weekly/gameday.py.
+        "<p><a href=\"gameday_latest.html\"><b>Game Day →</b></a> <span class=\"small sub\">"
+        "the Sunday screen: platform score, who is yet to play, what is still legal, "
+        "what changed, and what this board advised (opens the file built beside "
+        "this one)</span></p>",
     ]
     if d.degraded:
         out.append("<div class=\"banner\"><b class=\"bad\">DEGRADED</b> — one or more inputs "

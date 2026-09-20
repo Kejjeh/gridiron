@@ -1,81 +1,103 @@
 # HANDOFF
 
-State: **milestones 1, 2 and the cloud sync are all merged to main (`8fbf468`).
-Milestone 3 — the weekly decision board — is on `claude/weekly-dashboard`,
-reconciled with main and open as draft PR #4 based on main. Not merged.**
-Five review passes have landed here. Every finding was reproduced with
-executed code before anything changed and carries a regression; the
-per-finding record is in `docs/DECISIONS.md` and the PR body, not repeated
-here. For reading the code, only the boundaries matter — each commit below is
-where the fix LANDED, so anything earlier still has the behaviour beside it:
-
-| fixed in | before it |
-|---|---|
-| `650d8f2` | box scores gated nothing at all; archives overwrote each other; a `${{ }}` expression ran inside a `run:` block |
-| `3f9e1db` | absence inferred a bye (first "the rows parsed", then bracketing); no input carry, so a failed refresh on a clean runner rendered nothing |
-| `032a0d5` | carried manifest entries went unvalidated into `ing.Entry(**raw)` |
-| head | a carried file could displace a local one filed under a different source name |
+State: **milestones 1, 2 and the cloud sync are merged to main (`8fbf468`).
+Milestone 3 — the weekly decision board — and milestone 4 — the Game Day
+screen — are on `claude/weekly-dashboard`, open as draft PR #4 based on
+main. Not merged. The head is named in the PR body and in the verification
+section below.** The per-finding history of the five review passes lives in
+`docs/DECISIONS.md` and the PR body, not here.
 
 The desktop five-minute sync is **installed but its scheduled task is
-DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud
-instead: `.github/workflows/sleeper-sync.yml` (hourly, gated on the
+DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud:
+`.github/workflows/sleeper-sync.yml` (hourly, gated on the
 `GRIDIRON_CLOUD_SYNC_ENABLED` repository variable and on the repo being
-private) and, new on this branch, `.github/workflows/dashboard-artifact.yml`,
-which renders the board and uploads it as a private artifact. Nothing about
-the board depends on a PC being awake.
+private) and `.github/workflows/dashboard-artifact.yml`, which renders the
+board AND the Game Day page and uploads both as one private artifact.
+Nothing depends on a PC being awake.
 
 No identifiers in this file: the league id and the owner's Sleeper handle live
 in `src/gridiron/league_config.py`, and every rendered roster artifact — the
-weekly report, the dashboard, the decision archive — is gitignored. Nothing
-here names a player the owner holds.
+weekly report, the board, the Game Day page, the decision archive — is
+gitignored. Nothing here names a player the owner holds.
 
-## The decision board, in one paragraph
+## The product, in two pages
 
-`scripts/weekly/dashboard.py` renders one offline, phone-readable HTML page
-from the cache. It leads with **what to do**: each action carries the real
-kickoff behind its deadline, a legal backup for when the first choice cannot
-be made, and its own ACTIONABLE or WITHHELD verdict. Then the inputs and the
-gate they drive, what changed since the previous snapshot, the start/sit
-comparisons, a short acquisition shortlist where every row names its drop as
-the cost, the roster projections, and only then the matchup — where the
-closed-form P(win) sits behind a disclosure, clearly UNCALIBRATED, ranking
-nothing. It writes a decision-time archive that later grading reads INSTEAD of
-re-projecting, so a grade cannot see the future. Everything it cannot support
-it abstains from, per row and per section, with the reason on the page.
+**The board** (`scripts/weekly/dashboard.py`) is the pregame page. It leads
+with what to do, ranked by deadline, each action carrying its real kickoff, a
+legal backup and its own ACTIONABLE / WITHHELD verdict; then the inputs and
+the gate they drive, what changed since the previous frozen page, the
+start/sit comparisons, a short acquisition shortlist, the roster projections,
+and the matchup, where the closed-form P(win) sits behind a disclosure marked
+UNCALIBRATED and ranks nothing. It freezes a decision-time archive that later
+grading reads instead of re-projecting.
 
-**A freshness label is not a gate.** `gridiron.gating` turns the freshness of
-the league snapshot, the player dump, the injury table and the schedule into
-per-action permission. When one of them is stale or unreadable the action is
-WITHHELD: the comparison behind it stays on the page, labelled as the last
-known picture, and the imperative disappears.
+**Game Day** (`scripts/weekly/gameday.py`, module `gridiron.gameday`) is the
+Sunday page, linked from the top of the board and built beside it. On a phone
+it answers, in this order: am I ahead and how current is that; who on each
+side is yet to play, playing, final, or unknown; what can I still legally do;
+what changed since my last reliable snapshot; what did the board actually
+advise and what is still unproven. Every number is a platform actual from
+Sleeper's matchup rows — kickers and defenses included, zero and negative
+included, a commissioner override included — and a value the platform did
+not send is UNKNOWN, never 0. The starters' sum is reconciled against the
+platform total and any difference is disclosed, never edited away.
 
-**Box scores gate too, but on COVERAGE rather than age** (`box_score_blockers`,
-added in the second review pass). Age alone earns nothing: box scores are
-stale by construction for most of every week, and withholding every Wednesday
-would only teach the reader to ignore the gate. What does withhold is a
-source that is MISSING, whose latest refresh FAILED, that has a hole INSIDE
-the weeks it claims to cover, or that has not reached the evidence boundary —
-because every action on the page is scored through a projection built from
-these frames, so a short frame is a wrong number rather than an old one.
+**Game status is observed, never inferred.** A schedule gives an expected
+kickoff and nothing else. Whether a game started, is in overtime, was
+suspended or ended comes only from Sleeper's per-game status feed
+(`livesync.refresh_game_status`, recorded beside the league snapshot), and
+only while that feed is within its cadence: a stale feed keeps finals and
+cancellations, which are monotone, and demotes every other status to
+UNKNOWN. Elapsed hours, a zero and a missing row are never read as final, as
+bye, or as not playing. Game status, injury designation, roster eligibility
+and the kickoff lock are four columns, shown as four. Where the feed and the
+schedule disagree the disagreement is stated and the safer side decides
+legality.
 
-**Kickoff locks are three-valued.** LOCKED, OPEN and UNKNOWN. A game with no
-readable kickoff time yields UNKNOWN for both its teams, never a guessed
-13:00. **A team absent from a week is UNKNOWN, always**, unless that week's
-schedule DECLARES a bye for it (`game_type: BYE`). Absence is not evidence
-under any condition: a deleted row and a week off are the same bytes, so
-neither "every row parsed" nor "the team plays on both sides of the gap"
-separates them — deleting one real game from a complete season frame produces
-both shapes. Only OPEN makes a player movable, so a half-readable schedule
-freezes the players it cannot time by name and still optimises the rest. The
-honest cost, stated again under Limitations: **nflverse declares no byes, so
-real bye weeks now freeze those players as UNKNOWN.**
+**Legal means Sleeper would accept it now.** During games the page re-judges
+the board's archived actions by player ID: both players proven unlocked by
+the schedule, not under way per the feed, still on the roster and still where
+the advice left them; anything the board WITHHELD pregame stays withheld;
+pickups are never game-day moves. When every starter has kicked off the page
+says no legal change remains. Fresh scores display on their own freshness
+while a stale recommendation is withheld.
 
-**A player who scores 0 this week is not worth 0.** Bye, Out, IR and suspended
-players are PROTECTED from the automatic drop list and named with the reason,
-because pricing them needs a rest-of-season model this repo does not have.
-**And not on a roster is not addable:** the snapshot proves only that an id is
-unrostered at its as-of, so add eligibility is reported UNVERIFIED with its
-evidence, and no row ever says "add now".
+**The pregame record is joined, never rebuilt.** The newest archived board
+for the same season, week, league id and roster id is the record; a record
+that predates those tags is matched on season and week and says so; none
+means "no pregame record" in so many words. An action counts as decision-time
+evidence only if the record was written before that action's own deadline. A
+designation that moved after the record is reported with the note that the
+later status cannot show what was knowable before kickoff. A bench player
+outscoring a starter is descriptive until both games are final, and the live
+lineup is an observation, never proof that advice was followed. No live win
+probability is computed; the board's pregame P(win) is shown as pregame
+context and is not updated by the score; no projection is scaled by the clock
+or added to points already earned.
+
+**Delivery is the same private artifact, plus one tap.** The Game Day page is
+a single self-contained file. Opened from the artifact it is a dated
+SNAPSHOT of what the cloud build cached; reloading the file fetches nothing.
+Tapping Refresh sends three read-only GETs to Sleeper from the browser (NFL
+state, the week's matchups, the status feed — CORS is open, verified from a
+`file://` page in a real headless browser, see Verification), after which the
+page is LIVE: it polls only while visible and only while a game can still
+move (two minutes during play, ten minutes ahead of a kickoff), backs off on
+every failure, keeps the last good data under a STALE banner when a refresh
+fails, discards any response dated before the one already applied, stops at a
+week rollover, and lists changes like for like against the last reliable
+snapshot with a lowered total named a correction. The page's Content Security
+Policy lets it connect to Sleeper's host and nothing else, run only its own
+script, and load no other resource. No hosting, no auth, no new dependency.
+The cloud crons are unchanged and are not real-time; the hourly snapshot is a
+starting point, the tap is the refresh.
+
+**A freshness label is not a gate**, box scores gate on COVERAGE rather than
+age, kickoff locks are three-valued (LOCKED / OPEN / UNKNOWN) and only OPEN
+makes a player movable, a team absent from a week is UNKNOWN unless the
+schedule declares a bye (nflverse declares none, so real bye weeks freeze
+those players), a player who scores 0 this week is not worth 0, and not on a
+roster is not addable. Each of these is pinned in the guarantee tables below.
 
 ## Read this first
 
@@ -108,7 +130,19 @@ PYTHONPATH=src python scripts/weekly/dashboard.py --write            # offline; 
 PYTHONPATH=src python scripts/weekly/dashboard.py --write --anonymous --no-archive
 PYTHONPATH=src python scripts/weekly/dashboard_scenarios.py --screenshot   # synthetic pages
 PYTHONPATH=src python scripts/weekly/dashboard_scenarios.py --only partial_schedule
+
+PYTHONPATH=src python scripts/weekly/gameday.py --write             # offline; Game Day HTML+JSON
+PYTHONPATH=src python scripts/weekly/gameday_scenarios.py --screenshot --browser   # A-F, synthetic
 ```
+
+Game Day writes `data/outputs/dashboard/week{NN}_gameday.html` (plus `.json`
+and a `gameday_latest` pair) next to the board, so the board's "Game Day →"
+link and the page's "← pregame board" link work from the same folder. To
+open it on a phone: download the `dashboard` artifact from the newest
+successful *Weekly dashboard artifact* run, unzip, open
+`gameday_latest.html`. It shows the cached snapshot; tap **Refresh** once
+for live scores. The rendered pages are gitignored: they name the owner's
+players.
 
 The dashboard writes `data/outputs/dashboard/week{NN}_dashboard.html` (plus
 `.json` and a `dashboard_latest` pair) and the decision archive under
@@ -116,44 +150,32 @@ The dashboard writes `data/outputs/dashboard/week{NN}_dashboard.html` (plus
 the owner's players. `--now` renders as of a given instant (locks and
 freshness), which is how the scenarios and tests pin a Saturday.
 
-## Getting the board onto a phone: what is built, and the one open choice
+## Getting the pages onto a phone
 
-Built and reviewable now, needing no PC:
 `.github/workflows/dashboard-artifact.yml` runs on GitHub's Linux runners,
-refreshes the Sleeper snapshot, pulls the week's nflverse frames, renders the
-board, and uploads `dashboard` as a **private, repo-scoped artifact** (14-day
-retention). It carries the same two gates as the Sleeper sync: it does nothing
-unless the repository variable `GRIDIRON_CLOUD_SYNC_ENABLED` is exactly `true`,
-and it refuses outright if the repository ever stops being private. The page
-names the owner's players, so a public run would be a roster export. The run
-summary prints freshness and the withheld-action counts only — no player, no
-lineup, no matchup.
+refreshes the Sleeper snapshot and the game-status feed, pulls the week's
+nflverse frames, renders the board and then the Game Day page, and uploads
+both as a **private, repo-scoped artifact** (14-day retention). It carries
+the same two gates as the Sleeper sync: it does nothing unless the repository
+variable `GRIDIRON_CLOUD_SYNC_ENABLED` is exactly `true` (it already is), and
+it refuses if the repository ever stops being private. The Game Day step is
+`continue-on-error`, so a missing Game Day page never costs the board.
 
-Cadence is rule #8 shaped, in UTC: Wednesday 08:41 (after waivers clear),
-Friday 22:41 (after the final practice report) and Sunday 14:41 (before the
-early kickoffs), plus manual dispatch with an optional week. That input is
-passed to Python through `env:` and never interpolated into a shell command,
-and it is refused unless it is a bare ASCII integer in 1-22. Those are
-best-effort GitHub crons: runs get delayed and dropped under load, which is
-stated in the workflow and is why the page gates on input age instead.
+Cadence is rule #8 shaped, in UTC: Wednesday 08:41, Friday 22:41 and Sunday
+14:41, plus manual dispatch with an optional week — passed through `env:`,
+never interpolated into a shell command, and refused unless it is a bare
+ASCII integer in 1-22. These are best-effort GitHub crons: runs get delayed
+and dropped under load, which is why the board gates on input age and why
+the Game Day page carries its own refresh instead of relying on a schedule.
 
-**To read it on a phone today:** open the repository's Actions tab in a mobile
-browser, pick the newest successful *Weekly dashboard artifact* run, download
-`dashboard`, and open the HTML. It is one self-contained file — no network
-calls, no fonts, no scripts — so it renders offline once downloaded.
-
-**The one decision left to the owner**, because every answer costs something
-different and none of them is reversible for free:
-
-| Option | What it costs | What it gives |
-|---|---|---|
-| **A. Artifact download** (built, nothing more to decide) | Four taps on a phone, and the artifact expires after 14 days | No new service, no hosting, no auth, no dependency. Private by the repo's own access control |
-| **B. Commit the rendered page to a private branch** | Puts a roster-bearing artifact into git history, which rule #10 exists to prevent and which cannot be undone without rewriting history | One stable URL, viewable in the GitHub mobile app |
-| **C. Push it to a private file host** | A new third-party service holding roster data, plus credentials to manage | A real link, openable without the Actions UI |
-
-**A is live and is the recommendation.** B and C both widen where roster data
-lives, and neither was authorized. Nothing further should be built here until
-the owner picks; if A is good enough, this question is closed.
+**Option A — the artifact download — is the delivery**, unchanged: four taps
+on a phone, no service, no hosting, no auth, private by the repository's own
+access control. What is new is that the downloaded Game Day file can refresh
+itself from Sleeper's public read API with one tap, because Sleeper's API
+sends `Access-Control-Allow-Origin: *` and a `file://` page is allowed to
+fetch it. Committing the page to a branch or pushing it to a file host were
+both declined: each widens where roster data lives, and neither was
+authorized.
 
 ### Carrying history across runs, and what that retention is really worth
 
@@ -384,61 +406,41 @@ The three honesty invariants from milestone 1 still hold: blank is never zero,
 a missing schedule renders `?` and never BYE, and "not on this week's injury
 report" reads differently from "no injury report loaded".
 
-## Verification — decision board branch (2026-09-20, fifth pass)
+## Verification — Game Day milestone (2026-09-20)
+
+Exact head and changed files are in the PR body. Measured on this head:
 
 | check | result |
 |---|---|
-| `python scripts/ci/smoke.py` | PASS — 26 imports, 30 contract files |
-| `run_summary.py -- python -m pytest` | **531 passed** (526 at `032a0d5`, 518 at `3f9e1db`, 501 at `585cb2a`, 433 at `47708e3`, 413 at `f82623e`) |
-| `pytest tests/test_carryover.py` | 34 passed (29 at `032a0d5`, 21 at `3f9e1db`) |
-| the 5 new collision tests against the code at `032a0d5` | **5 failed** — red before, green after. The reported case: a local `sleeper_state` → `shared.json` holding CURRENT, a carried `weekly_stats` → `shared.json` holding OLD; the carry accepted it, wrote OLD over CURRENT, and left `sleeper_state` with `error=''` still vouching for it |
-| the 8 carried-entry tests against the code at `3f9e1db` | **8 failed** — red before, green after, with the reported `TypeError: expected str, bytes or os.PathLike object, not list` among them |
-| `pytest tests/test_workflow_inputs.py` | 34 passed |
-| `pytest tests/test_lock_and_drop_regressions.py` | 26 passed |
-| `dashboard_scenarios.py --screenshot` | 4 scenarios offline; all fit at a measured 375px, widest element ends at 363px (third pass; unchanged by this one, which touches no rendering) |
-| `dashboard.py --write --anonymous` (real cache) | renders DEGRADED, writes a content-addressed archive, nothing staged (rule #10 holds) |
-| `cloud/carryover.py publish` then `restore` (real ledger + real cache) | 4 records and 7 input files carried into an empty ledger and an empty cache; output names no player; the real cache is untouched |
-| render from those carried real inputs | exit 0, DEGRADED, all three action classes WITHHELD, every source dated to its original pull and marked CARRIED FORWARD — fail-closed withholding intact after the validation change |
-| two isolated runner directories, second with every refresh failed | run 2 renders (exit 0) from carried inputs: 0 of 3 actions endorsed, all three classes withheld, every source dated to run 1's pull, diffed against run 1's frozen page, run 1's record byte-identical afterwards |
+| `python scripts/ci/smoke.py` | PASS — 27 imports, 30 contract files |
+| `run_summary.py -- python -m pytest` | **597 passed** (531 at `4559d81`) |
+| `pytest tests/test_gameday.py tests/test_gameday_feed.py tests/test_gameday_cli.py` | 66 passed, all through `build_gameday` or the production CLIs; the browser drive runs when headless Chromium is present and is SKIPPED with reason otherwise |
+| `gameday_scenarios.py --screenshot --browser` | 9 scenarios, every page fits at a measured 360 px client width in a 375 px frame (widest element ends at 348 px); PNGs for `pregame`, `mixed`, `injury_after` and a keyboard-focus capture are in `docs/review/gameday/` |
+| **real network path, in a real browser** | a page rendered from the real cache, opened as `file://` in headless Chromium: one Refresh → mode LIVE, three read-only GETs answered 200, statuses FINAL / PLAYING / NOT STARTED / SUSPENDED / UNKNOWN as in Sleeper's feed that afternoon (a real suspended game), 38 changes against the 74-hour-old snapshot; a second Refresh → "no change". The proxy CA was added to Chromium's NSS store for the run; TLS verification stayed on. Scores and names from that run are not recorded anywhere |
+| `curl` with `Origin: null` against `/v1/state/nfl`, the league matchups and `/schedule/nfl/regular/2026` | `access-control-allow-origin: *` on GET and on the OPTIONS preflight; the status feed's one real response was inspected before it was relied on (statuses seen: pre_game, in_game, complete, suspended, canceled) |
 | `python -m compileall src/gridiron scripts` | clean |
 
-All seventeen findings across the five passes were **reproduced with executed
-code before anything changed**, and each has a regression pinning the
-corrected behaviour. Six of them corrected earlier work on this same branch,
-and the superseding rows are recorded in `docs/DECISIONS.md` rather than the
-originals being edited away:
+### Acceptance matrix
 
-* "parsed completely ⇒ BYE" (first pass) was replaced by bracketing (second
-  pass), and **bracketing is now removed outright** (third pass). Delete one
-  real game from a full season frame and the teams are still bracketed by the
-  weeks either side, every row still parses, and the deletion is handed back
-  as a confirmed bye. Nothing replaced it: absence is UNKNOWN unless the
-  schedule declares a bye.
-* the unconditional box-score gating exemption was replaced by coverage
-  gating.
-* the withheld waiver card's body still opened `add X, drop Y` — the
-  second pass fixed the headline and left the imperative in the first words
-  of the sentence under it. Found by reading the carried-forward page the
-  third pass produced.
-* the third pass's own input carry validated the carried MANIFEST and then
-  trusted each ENTRY inside it to `ing.Entry(**raw)`, which checks keys and
-  never values. Fourth pass: every field is read totally before construction,
-  and the sharpest case — an absolute `path`, basenamed for the copy but
-  written into the manifest verbatim — is now refused rather than handed to
-  `Manifest.file()`, which would have returned a file outside the cache.
-* the fourth pass's own collision check compared the carried entry's NAME
-  against the local cache and then copied by FILENAME. Fifth pass: the check
-  is the destination, so a carried file can no longer overwrite a local one
-  filed under a different source name — and `_safe_basename` stopped
-  trimming whitespace, which had quietly turned `" x.parquet "` into a
-  different filename while claiming to refuse anything it could not accept
-  as written.
+| brief | behaviour | where it is held |
+|---|---|---|
+| A. pregame, one legal improvement with alternative and deadline | Saturday noon: one AVAILABLE swap with "act before …" and a backup; scores level; every starter NOT STARTED | `test_pregame_offers_one_legal_improvement_with_deadline_and_backup`, `docs/review/gameday/pregame*.png` |
+| A. same inputs stale → withheld, scores still display | injuries refresh FAILED: the board withheld, Game Day offers nothing, `sleeper_league` FRESH and the score shown | `test_a_board_that_withheld_its_actions_offers_none_while_the_score_still_shows` |
+| A. conflicting kickoff → withheld | damaged schedule rows: UNKNOWN locks, no action offered | `test_a_conflicting_kickoff_means_the_move_cannot_be_shown_legal`, `test_a_locked_or_unknown_player_is_never_offered` |
+| B. ahead 15.46, mixed slate, their RB/K/DST unplayed | 62.10 vs 46.64; "they still have … RB, K, DST"; a real zero, a kicker, a negative DST, an unsent value shown UNKNOWN with the reconciliation stating the totals cannot be tied out; no odds anywhere on the score card | `test_mixed_slate_is_ahead_15_46_with_their_rb_k_dst_yet_to_play`, `test_platform_values_are_taken_as_sent_…`, `mixed*.png` |
+| B. empty / zero / negative / K / DST / custom total | empty slot named and scoring nothing; override is the total and named with the scored total beside it | `test_an_empty_slot_…`, `test_a_commissioner_override_…`, `test_a_negative_actual_and_an_override_are_shown_as_sent` |
+| C. fresh → refresh → correction → 429 → recovery → older response → malformed → rollover | correction applied and the lowered total named a correction; 429 keeps last good under STALE with a 60 s backoff; recovery clears it; an older-dated response is discarded; a malformed body keeps last good; week 4 stops polling with week-3 scores standing | `test_refresh_applies_corrections_keeps_last_good_and_discards_older_responses` (headless browser, local fixture server) |
+| D. injury after kickoff, unknown status, postponed, overtime, suspended | designation Questionable → Out reported "cannot show what was knowable"; a game missing from the feed is UNKNOWN "not a bye and not a final"; the word "postponed" passes through as UNKNOWN with the word shown; in_game four hours after kickoff is PLAYING; suspended is SUSPENDED; nothing is called settled | `test_injury_after_kickoff_unknown_status_postponed_and_overtime`, `test_a_game_in_progress_four_hours_after_kickoff_is_still_playing`, `injury_after*.png` |
+| E. week rollover, lineup change, archive untouched, no archive | week 4 finds no week-3 record and diffs nothing across the boundary; a second week-4 render lists the score and lineup change; archive files byte-identical after two more Game Day renders; no ledger → "no pregame record" | `test_week_rollover_joins_no_record_and_diffs_only_its_own_week`, `test_the_archived_pregame_record_is_byte_identical_after_the_page_is_built`, `test_no_archive_is_a_clear_absence` |
+| F. keyboard, 375 px, real refresh vs fixture | Refresh is a native button, focusable, with a solid focus outline (`mixed-keyboard-focus.png`); 375 px fit measured on all nine scenarios; the fixture drive proves what the page does with each response and the real-endpoint run above proves the network path | browser drive + the row above |
+| review: leakage, double counting, false remaining counts, cache corruption, unsupported live claims, XSS, fan-out, privacy | names and points never reach stdout or the run summary; no projection is added to earned points; remaining counts are from observed status only; the page writes nothing to the cache; every unsupported state is UNKNOWN in words; upstream names go through `textContent` and HTML escaping, the embedded JSON is `\u`-escaped, and a nonce CSP allows one host; three GETs per refresh and none until the first tap | `test_upstream_names_cannot_inject_markup_or_script`, `test_the_page_may_only_talk_to_sleeper`, `test_no_live_win_probability_…`, `test_the_stdout_summary_names_no_player`, the browser drive's request log (18 hits for 6 refreshes) |
 
-**Not executed:** no real device was used for the phone check (it is a
-headless-browser measurement); `ruff` is not installed in this container, so
-the lint line of earlier passes is replaced by `compileall` above; and the
-dashboard workflow itself has still never run — including the cache steps and
-the input carry. The two-run evidence above is synthetic and local.
+**Not executed:** no real phone (the fit is a headless-browser measurement
+and the keyboard check is programmatic focus, not a screen reader); the
+hosted workflow has still never run, so the Game Day step, the feed refresh
+in the cloud and the input carry of `game_status.json` are untested on a
+runner; the real-endpoint browser run was done from this container through
+its egress proxy, not from a phone browser; `ruff` is not installed here.
 
 ## Verification (all green, 2026-09-17 — main, before this branch)
 
@@ -518,46 +520,28 @@ One item for the owner: some of those pre-existing tracked files under
 predates this branch and is unchanged by it. Widening was avoided; whether to
 narrow it is the owner's call.
 
-## Next
+## Next — the release checklist
 
-1. **Astra review of the decision-board PR.** Render from the live cache
-   (`dashboard.py --write`), open the HTML, and check the four synthetic
-   scenarios (`dashboard_scenarios.py --screenshot`) against the PNGs in
-   `docs/review/dashboard/`. Worth attacking specifically: feed it a schedule
-   with a real flexed game and confirm the deadline matches Sleeper's own lock
-   time, and confirm the WITHHELD banner appears on a genuinely old cache.
-   Nothing is merged.
-2. **Owner: pick a phone-access option** (see the table above). A is built
-   and needs no further work; B and C need authorization before anything is
-   written.
-3. **Dispatch the dashboard workflow once, after review.**
-   `GRIDIRON_CLOUD_SYNC_ENABLED` is already `true`, so nothing needs setting;
-   what is untested is the workflow itself, which has never run. The first
-   dispatch is also the first test of the carry: run it TWICE and confirm the
-   second run's summary reports "since the last snapshot" against the first
-   rather than "no previous snapshot", and that neither summary names a
-   player. The second run is also the first live check that the INPUT carry
-   restores a cache — its log should show `restore-inputs` laying files down
-   from the first run rather than "no carried inputs in the store".
-4. **First graded week.** After week 3 finals land in the cache, grade the
-   week-3 archive: `gridiron.decisions.grade_archive(read_archive(path),
-   actuals)` with actuals = week-3 `league_points` by gsis id from the
-   scored frame. That is the first rule #7 settlement; no script wraps it
-   yet, deliberately, until the first one has been done by hand. Note what it
-   will and will not tell you: every pair comes back HYPOTHETICAL, and the
-   agreement rate covers only the comparisons the page ENDORSED. To grade an
-   actual decision, pass `observed={"start_sit:<slot>:<held>:<alt>": ACTED}`
-   for the moves the owner really made — that mapping is the only thing that
-   turns a comparison into a decision.
-5. **Week 2 rollover check.** After Sunday's slate, `pull_week.py` then
-   `report.py` should show `weekly_stats covers wk1-2` and the lag return to
-   0. That is the first live exercise of the phase boundary.
-6. **DST scoring**, which needs team-level aggregation from nflverse
-   play-by-play — the one place the report currently renders a hole.
-7. **Then** the rule #5 gate for anything BEYOND the baseline: the dashboard
-   ships the baseline (which is what the gate measures against) and zero
-   features on top of it. `gridiron.models.validated_signals` is the
-   registry; `gridiron.evaluate` produces the evidence.
+1. **Astra review of this head.** Render both pages from the live cache
+   (`dashboard.py --write` then `gameday.py --write`), open
+   `gameday_latest.html`, tap Refresh, and check the mode line reads LIVE
+   with today's statuses. Run `gameday_scenarios.py --screenshot --browser`
+   and compare against `docs/review/gameday/`.
+2. **Dispatch the dashboard workflow twice, after review.** Nothing needs
+   setting. The second run should report "since the last snapshot" against
+   the first, `restore-inputs` should lay files down including
+   `game_status.json`, and the artifact should hold `gameday_latest.html`
+   beside `dashboard_latest.html`. Neither summary may name a player.
+3. **Owner phone check on a Sunday:** download the artifact, open the Game
+   Day file, tap Refresh, leave it open through a kickoff and a final, and
+   confirm the exposure line and the lock counts move with the games.
+4. **First graded week** (unchanged): after week-3 finals land, grade the
+   week-3 archive by hand with `observed=` for the moves actually made.
+5. **DST scoring** and **the rule #5 gate** for anything beyond the
+   baseline, unchanged from before.
+
+Merge, deploy, workflow activation and any league write remain the owner's
+and the release's decisions; nothing in this branch performs them.
 
 ## Live sync: the guarantees, and where each is held
 
@@ -613,6 +597,29 @@ narrow it is the owner's call.
 | A workflow input is data, not script | No `${{ ... }}` expansion appears inside any `run:` block in any workflow — the runner substitutes those before the shell parses the script. The dispatched week arrives through `env:` and is refused unless it is a bare ASCII integer in 1–22 | `test_no_workflow_expands_an_expression_inside_a_shell_script`, `test_everything_else_is_refused_as_data`, `test_the_dispatched_week_reaches_python_through_the_environment` |
 | Rule #5 gate is mechanical | `gridiron.models.validated_signals`: an entry in FEATS without VALIDATED evidence fails the import (smoke.py imports it first) | `test_the_rule_5_gate_fails_the_import_for_an_unvalidated_feature` |
 | Owner data stays local | `data/outputs/dashboard/` and `data/ledger/decisions/` gitignored; hygiene test scans tracked outputs for dashboard/archive markers; stdout names nobody; opponent is "roster #N" | `test_hygiene_no_roster_in_repo.py`, `test_the_stdout_summary_names_no_player`, `test_the_opponent_is_a_roster_number_...` |
+
+## Game Day: the guarantees, and where each is held
+
+| Guarantee | How | Test |
+|---|---|---|
+| Every number is a platform actual, as sent | `starters_points` / `players_points` / `points` / `custom_points` read totally; kickers and defenses included; zero and negative kept; a value not sent is None | `test_platform_values_are_taken_as_sent_including_zero_negative_and_kicker`, `test_a_value_the_platform_did_not_send_is_unknown_not_zero` |
+| Totals are reconciled and never edited | starters' sum vs platform total; an override is the total and is named; a difference is disclosed with its sign; unknown values make the totals "cannot be reconciled" | `test_an_unexplained_difference_is_disclosed_and_the_total_kept`, `test_a_commissioner_override_is_the_total_and_is_named` |
+| Game status only from observed evidence | five feed words map; an unseen word is UNKNOWN with the word shown; a stale feed keeps FINAL/CANCELED and demotes the rest; a missing row is "not a bye and not a final"; in_game after four hours is PLAYING | `test_a_kickoff_that_has_passed_is_never_a_final_by_itself`, `test_observed_statuses_map_and_unknown_words_pass_through`, `test_a_stale_feed_keeps_finals_and_demotes_everything_else`, `test_a_team_missing_from_the_feed_is_unknown_not_a_bye` |
+| Feed and schedule disagreements are stated; the safer side locks | pre_game after the scheduled kickoff stays NOT STARTED with the conflict named; in_game before it locks the player | `test_feed_and_schedule_disagreements_are_stated_and_the_safer_side_locks` |
+| One alias table joins teams | `gameday.team_key` is `ids.nflverse_team` on every side of every join | `test_team_aliases_are_normalised_through_the_one_table` |
+| Owner and opponent by stable ids only | roster by `owner_id`/`co_owners`, opponent by shared `matchup_id`; none, several, or a null id is an explicit unsupported state | `test_opponent_is_found_by_matchup_id_and_never_chosen_arbitrarily` |
+| A lead is never called safe | `ScoreView.settled` names who can still score; any UNKNOWN blocks "settled" | `test_a_lead_is_never_called_safe_while_they_have_players_left`, `test_an_unknown_status_anywhere_…` |
+| Only Sleeper-legal moves are offered | archived action judged by player id: ACTIONABLE pregame, decided before its deadline, deadline ahead, both players OPEN, not under way, on the roster, lineup unchanged; pickups never | `test_a_legal_pregame_swap_…`, `test_a_withheld_pregame_action_never_becomes_advice_during_games`, `test_a_locked_or_unknown_player_is_never_offered`, `test_the_feed_can_lock_a_player_the_schedule_still_calls_open`, `test_an_action_whose_lineup_already_moved_…`, `test_a_passed_deadline_and_a_pickup_are_never_available` |
+| No legal move left is said plainly | `Capacity.sentence` from proven locks; UNKNOWN locks say the page cannot tell | `test_no_legal_move_left_is_said_plainly` |
+| The pregame record is joined by ids, never rebuilt | newest archive matching season, week, league id, roster id; untagged records matched on season/week and said to be; none → "no pregame record" | `test_the_record_must_match_season_week_league_and_roster`, `test_an_untagged_record_is_accepted_and_said_to_be`, `test_no_record_means_a_clear_absence_and_nothing_reconstructed` |
+| No hindsight | a designation that moved after the record is reported with "cannot show what was knowable"; outcomes are UNPROVEN until both final and descriptive after; the lineup is an observation | `test_a_designation_that_moved_after_the_record_is_reported_without_blame`, `test_outcomes_are_descriptive_and_unproven_until_both_final` |
+| No live win odds, no projection arithmetic | the archived P(win) is shown as pregame and UNCALIBRATED; nothing on the score card is a percentage | `test_the_pregame_projection_is_shown_as_pregame_and_never_added_to_points`, `test_no_live_win_probability_and_no_projection_arithmetic_on_the_page` |
+| Changes are like for like | same season/week/league/roster/source kind or nothing is compared; a lowered total is a CORRECTION; a vanished feed is a change | `test_a_lowered_total_is_named_a_correction_…`, `test_another_week_or_roster_is_never_compared`, `test_a_feed_that_vanished_is_a_change` |
+| Last good survives every failure, in the browser | 429, malformed body and an older-dated response each keep the applied state; STALE is shown; backoff doubles to 20 min; polling stops at rollover | `test_refresh_applies_corrections_keeps_last_good_and_discards_older_responses` |
+| Upstream text cannot run | names through `textContent` and `html.escape`; embedded JSON `\u`-escaped; CSP `default-src 'none'`, one connect host, nonce script | `test_upstream_names_cannot_inject_markup_or_script`, `test_the_page_may_only_talk_to_sleeper` |
+| The archive is read, never written | Game Day opens the archive read-only; byte-identical after renders | `test_the_archived_pregame_record_is_byte_identical_after_the_page_is_built` |
+| The feed is recorded beside the snapshot and a failure keeps the last good copy | `refresh_game_status` validates, writes atomically under the writer lock, records failure without touching `as_of` | `test_gameday_feed.py` |
+| Owner data stays local | pages under `data/outputs/dashboard/` (ignored); stdout names nobody; the opponent is a roster number | `test_the_stdout_summary_names_no_player`, `test_the_page_names_the_opponent_by_roster_number_only`, `test_the_page_writer_only_writes_under_data_outputs` |
 
 ### Limitations, stated
 
@@ -685,6 +692,27 @@ narrow it is the owner's call.
   PNGs are captured at 500 px, not 390, because this headless build clamps its
   own window to a 500 px minimum — asking for 390 silently crops the image and
   makes correct text look clipped.
+- **The status feed is undocumented.** `api.sleeper.app/schedule/nfl/regular/<season>`
+  is what Sleeper's own app reads; it is not in Sleeper's published API
+  documentation and can change shape or vanish without notice. The reader
+  maps only the five words it has seen and passes anything else through as
+  UNKNOWN; if the feed goes away, every game is UNKNOWN and the page says so.
+  It carries no clock or quarter, so "PLAYING" never says how much is left.
+- **Live mode is one tap and a visible page.** Nothing is fetched until the
+  owner taps Refresh; a page in the background does not poll; a page opened
+  and left alone is a dated snapshot. That is deliberate, and the mode line
+  says which it is at all times.
+- **The browser's clock is the browser's.** Lock estimates in live mode use
+  Sleeper's `Date` header when it disagrees with the device by more than
+  five minutes, and the page says so; the schedule's kickoffs are still what
+  is compared against.
+- **Server-side "since the last snapshot" only sees the previous Game Day
+  record in the same output folder.** On a clean runner that is nothing; the
+  browser's own like-for-like diff against the embedded snapshot is the one
+  that matters on a phone.
+- **Injury designations on Game Day are the cached player dump's**, dated
+  and marked STALE when old; the live refresh does not re-fetch the 16 MB
+  dump, by design.
 - **A scheduled refresh is not timely injury news.** The cloud workflows keep
   the SNAPSHOT current on a best-effort cron that GitHub may delay or drop.
   A designation can change minutes before kickoff regardless of when the last
@@ -722,3 +750,10 @@ narrow it is the owner's call.
   team into a bye. The schedule declares one or the answer is UNKNOWN.
 - No second guess after removing the first. Bracketing was itself the
   replacement for "the week parsed cleanly"; nothing replaced bracketing.
+- No live win probability, no "remaining projection", no clock-scaled
+  projection. Game Day shows earned points and who can still earn them.
+- No inference of a game's state from the clock, from a zero, or from an
+  absent row. The feed says it or the page says UNKNOWN.
+- No hosting, no auth, no tunnel, no desktop service and no second host in
+  the page's connect policy for delivery; the artifact plus one tap is it.
+- No fetch on load and no background polling.
