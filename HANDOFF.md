@@ -2,7 +2,13 @@
 
 State: **milestones 1, 2 and the cloud sync are all merged to main (`8fbf468`).
 Milestone 3 — the weekly decision board — is on `claude/weekly-dashboard`,
-now reconciled with main and open as a draft PR based on main. Not merged.**
+reconciled with main and open as draft PR #4 based on main. Not merged.**
+The branch carries two review passes: the first repaired five findings at
+`f82623e`, the second seven more found at `47708e3` (schedule completeness,
+immutable archives, archive ordering, grading that claimed no conduct,
+withheld wording, coverage-gated box scores, and the cloud carry). Check out
+`650d8f2` or later; anything at `47708e3` or earlier has the second pass's
+defects.
 
 The desktop five-minute sync is **installed but its scheduled task is
 DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud
@@ -313,7 +319,31 @@ The three honesty invariants from milestone 1 still hold: blank is never zero,
 a missing schedule renders `?` and never BYE, and "not on this week's injury
 report" reads differently from "no injury report loaded".
 
-## Verification (all green, 2026-09-17)
+## Verification — decision board branch (2026-09-20, at `650d8f2`)
+
+| check | result |
+|---|---|
+| `python scripts/ci/smoke.py` | PASS — 26 imports, 30 contract files |
+| `run_summary.py -- python -m pytest` | **501 passed** (was 433 at `47708e3`, 413 at `f82623e`) |
+| `pytest tests/test_lock_and_drop_regressions.py` | 23 passed (13 at `47708e3`) |
+| `pytest tests/test_carryover.py tests/test_workflow_inputs.py` | 42 passed (both new) |
+| `dashboard_scenarios.py --screenshot` | 4 scenarios offline; all fit at a measured 375px with 0px overflow |
+| `dashboard.py --write --anonymous` (real cache) | renders, withholds all three action classes, writes a content-addressed archive, no imperative on any card |
+| `cloud/carryover.py publish` then `restore` (real ledger) | 3 records carried into an empty ledger; output names no player |
+| `ruff check --select F,E9` | clean on every file this branch touches |
+
+Every one of the twelve findings across the two passes was **reproduced with
+executed code before anything changed**, and each has a regression pinning the
+corrected behaviour. Two of them corrected earlier work on this same branch:
+"parsed completely ⇒ BYE" and the unconditional box-score gating exemption
+were both wrong and are both superseded, with the superseding rows recorded in
+`docs/DECISIONS.md` rather than the originals being edited away.
+
+**Not executed:** no real device was used for the phone check (it is a
+headless-browser measurement), and the dashboard workflow itself has never
+run — including its new cache steps.
+
+## Verification (all green, 2026-09-17 — main, before this branch)
 
 | check | result |
 |---|---|
