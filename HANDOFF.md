@@ -3,12 +3,19 @@
 State: **milestones 1, 2 and the cloud sync are all merged to main (`8fbf468`).
 Milestone 3 — the weekly decision board — is on `claude/weekly-dashboard`,
 reconciled with main and open as draft PR #4 based on main. Not merged.**
-The branch carries two review passes: the first repaired five findings at
-`f82623e`, the second seven more found at `47708e3` (schedule completeness,
+The branch carries four review passes: the first repaired five findings at
+`f82623e`; the second seven more at `47708e3` (schedule completeness,
 immutable archives, archive ordering, grading that claimed no conduct,
-withheld wording, coverage-gated box scores, and the cloud carry). Check out
-`650d8f2` or later; anything at `47708e3` or earlier has the second pass's
-defects.
+withheld wording, coverage-gated box scores, and the cloud carry); the third
+at `585cb2a` removed bye inference outright, carried the last-good INPUTS
+beside the records, and made malformed archives reject individually; the
+fourth closed the hole the third left — a carried manifest entry was handed
+to `ing.Entry(**raw)`, which checks keys and never values, so `path: ["bad"]`
+raised `TypeError` out of `Path()` and killed the restore of every sound
+source beside it, while `rows: "many"` and an unparseable `as_of` passed the
+carry and raised mid-render instead. Check out the head below; anything at
+`585cb2a` or earlier carries the unvalidated-entry defect, and anything at
+`47708e3` or earlier still infers byes.
 
 The desktop five-minute sync is **installed but its scheduled task is
 DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud
@@ -41,17 +48,28 @@ it abstains from, per row and per section, with the reason on the page.
 the league snapshot, the player dump, the injury table and the schedule into
 per-action permission. When one of them is stale or unreadable the action is
 WITHHELD: the comparison behind it stays on the page, labelled as the last
-known picture, and the imperative disappears. Box-score sources deliberately
-do not gate anything — they are stale by construction for most of every week,
-and gating on them would withhold everything every Wednesday until the reader
-learned to ignore the gate.
+known picture, and the imperative disappears.
+
+**Box scores gate too, but on COVERAGE rather than age** (`box_score_blockers`,
+added in the second review pass). Age alone earns nothing: box scores are
+stale by construction for most of every week, and withholding every Wednesday
+would only teach the reader to ignore the gate. What does withhold is a
+source that is MISSING, whose latest refresh FAILED, that has a hole INSIDE
+the weeks it claims to cover, or that has not reached the evidence boundary —
+because every action on the page is scored through a projection built from
+these frames, so a short frame is a wrong number rather than an old one.
 
 **Kickoff locks are three-valued.** LOCKED, OPEN and UNKNOWN. A game with no
 readable kickoff time yields UNKNOWN for both its teams, never a guessed
-13:00; a team absent from a week is a BYE only when that week's schedule
-parsed completely and the team plays elsewhere in the season, otherwise it is
-UNKNOWN too. Only OPEN makes a player movable, so a half-readable schedule
-freezes the players it cannot time by name and still optimises the rest.
+13:00. **A team absent from a week is UNKNOWN, always**, unless that week's
+schedule DECLARES a bye for it (`game_type: BYE`). Absence is not evidence
+under any condition: a deleted row and a week off are the same bytes, so
+neither "every row parsed" nor "the team plays on both sides of the gap"
+separates them — deleting one real game from a complete season frame produces
+both shapes. Only OPEN makes a player movable, so a half-readable schedule
+freezes the players it cannot time by name and still optimises the rest. The
+honest cost, stated again under Limitations: **nflverse declares no byes, so
+real bye weeks now freeze those players as UNKNOWN.**
 
 **A player who scores 0 this week is not worth 0.** Bye, Out, IR and suspended
 players are PROTECTED from the automatic drop list and named with the reason,
@@ -165,6 +183,22 @@ CARRIED FORWARD for this run. That mark is `Entry.error`, the existing
 "latest attempt failed" mechanism, so freshness turns the source STALE and the
 gate withholds every action resting on it. The result is the page a bad day
 should produce: last known, dated to when it was known, recommending nothing.
+
+**A carried manifest is untrusted input down to the field.** The third pass
+validated the manifest — season, dating, age, future stamps — and then handed
+each entry straight to `ing.Entry(**raw)`, which is not a validator: a
+dataclass checks which keys it was given and never what they hold. So an
+entry whose `path` was `["bad"]` constructed perfectly and raised `TypeError`
+at `Path(entry.path)`, taking down the restore of every sound source beside
+it; an entry whose `rows` was `"many"` or whose `as_of` was unparseable got
+all the way into the rendered cache and raised inside `Manifest.freshness`,
+half a render later. Worst of the three, an ABSOLUTE `path` was basenamed for
+the copy but written into the manifest verbatim, and because `dir / "/abs"`
+discards the left operand in pathlib, `Manifest.file()` then handed the
+renderer a file that never travelled with the carry. Every field is now read
+through a total reader before the entry is constructed, a failure rejects
+that entry alone with its reason, and `as_of` is passed through byte for byte
+because it is the one field the carry must never restate.
 A refresh that DOES succeed overwrites the file and clears the mark for that
 source, so a run where Sleeper works and nflverse does not carries exactly the
 sources that failed. A carried file never displaces one this run pulled.
@@ -342,24 +376,26 @@ The three honesty invariants from milestone 1 still hold: blank is never zero,
 a missing schedule renders `?` and never BYE, and "not on this week's injury
 report" reads differently from "no injury report loaded".
 
-## Verification — decision board branch (2026-09-20, third pass)
+## Verification — decision board branch (2026-09-20, fourth pass)
 
 | check | result |
 |---|---|
 | `python scripts/ci/smoke.py` | PASS — 26 imports, 30 contract files |
-| `run_summary.py -- python -m pytest` | **518 passed** (501 at `585cb2a`, 433 at `47708e3`, 413 at `f82623e`) |
-| `pytest tests/test_carryover.py` | 26 passed (11 at `585cb2a`) |
-| `pytest tests/test_workflow_inputs.py` | 34 passed (31 at `585cb2a`) |
+| `run_summary.py -- python -m pytest` | **526 passed** (518 at `3f9e1db`, 501 at `585cb2a`, 433 at `47708e3`, 413 at `f82623e`) |
+| `pytest tests/test_carryover.py` | 29 passed (21 at `3f9e1db`, 11 at `585cb2a`) |
+| the 8 new carried-entry tests against the code at `3f9e1db` | **8 failed** — red before, green after, with the reported `TypeError: expected str, bytes or os.PathLike object, not list` among them |
+| `pytest tests/test_workflow_inputs.py` | 34 passed |
 | `pytest tests/test_lock_and_drop_regressions.py` | 26 passed |
-| `dashboard_scenarios.py --screenshot` | 4 scenarios offline; all fit at a measured 375px, widest element ends at 363px |
+| `dashboard_scenarios.py --screenshot` | 4 scenarios offline; all fit at a measured 375px, widest element ends at 363px (third pass; unchanged by this one, which touches no rendering) |
 | `dashboard.py --write --anonymous` (real cache) | renders DEGRADED, writes a content-addressed archive, nothing staged (rule #10 holds) |
 | `cloud/carryover.py publish` then `restore` (real ledger + real cache) | 4 records and 7 input files carried into an empty ledger and an empty cache; output names no player; the real cache is untouched |
+| render from those carried real inputs | exit 0, DEGRADED, all three action classes WITHHELD, every source dated to its original pull and marked CARRIED FORWARD — fail-closed withholding intact after the validation change |
 | two isolated runner directories, second with every refresh failed | run 2 renders (exit 0) from carried inputs: 0 of 3 actions endorsed, all three classes withheld, every source dated to run 1's pull, diffed against run 1's frozen page, run 1's record byte-identical afterwards |
 | `python -m compileall src/gridiron scripts` | clean |
 
-All fifteen findings across the three passes were **reproduced with executed
+All sixteen findings across the four passes were **reproduced with executed
 code before anything changed**, and each has a regression pinning the
-corrected behaviour. Four of them corrected earlier work on this same branch,
+corrected behaviour. Five of them corrected earlier work on this same branch,
 and the superseding rows are recorded in `docs/DECISIONS.md` rather than the
 originals being edited away:
 
@@ -373,8 +409,14 @@ originals being edited away:
   gating.
 * the withheld waiver card's body still opened `add X, drop Y` — the
   second pass fixed the headline and left the imperative in the first words
-  of the sentence under it. Found by reading the carried-forward page this
-  pass produced.
+  of the sentence under it. Found by reading the carried-forward page the
+  third pass produced.
+* the third pass's own input carry validated the carried MANIFEST and then
+  trusted each ENTRY inside it to `ing.Entry(**raw)`, which checks keys and
+  never values. Fourth pass: every field is read totally before construction,
+  and the sharpest case — an absolute `path`, basenamed for the copy but
+  written into the manifest verbatim — is now refused rather than handed to
+  `Manifest.file()`, which would have returned a file outside the cache.
 
 **Not executed:** no real device was used for the phone check (it is a
 headless-browser measurement); `ruff` is not installed in this container, so
@@ -550,6 +592,7 @@ narrow it is the owner's call.
 | Grading never claims the owner did anything | An archive records what the page SHOWED. Nothing in this project watches the owner, so every pair is a hypothetical COMPARISON; a `decision` requires an observation passed in from outside, and `decisions` is empty without one. Comparisons the page WITHHELD are excluded from the agreement rate, and a waiver pair whose add was never proven available is excluded too | `test_no_comparison_is_a_decision_without_an_observation`, `test_an_observation_is_the_only_thing_that_makes_a_decision`, `test_advice_the_page_withheld_is_not_scored_as_advice`, `test_grading_a_withheld_page_scores_no_advice_and_claims_no_decision` |
 | History survives an ephemeral runner | `gridiron.carryover` restores prior frozen records from a private store before the render and publishes this run's back afterwards, so "since the last snapshot" and later grading work in the cloud. A restored file is INPUT: filename-vs-contents, content digest, season, future stamps and age are all checked, and a failure leaves the file alone | `test_two_ephemeral_runs_carry_one_history_between_them`, `test_an_edited_record_is_refused_by_its_own_digest`, `test_a_renamed_record_is_refused_...`, `test_a_record_stamped_in_the_future_is_refused` |
 | A failed refresh cannot become "current" | A run that freezes no page restamps nothing; restored records keep the times they were written with, so last-good data can never present itself as today's | `test_a_failed_refresh_cannot_turn_last_good_into_current` |
+| A carried manifest ENTRY is validated field by field, before construction | `ing.Entry(**raw)` checks which KEYS it was handed and never what they hold, so it is not validation. Every field is read through a total reader first: `path` must be a plain filename that travelled with the carry (not a list, not absolute — `dir / "/etc/passwd"` IS `/etc/passwd` — and not a traversal, which basenaming would silently redirect rather than refuse), `rows` a non-negative count, `as_of` a parseable time, `weeks` a list of weeks, and an unknown field refuses the entry. A bad entry is rejected BY NAME and its sound siblings still carry | `test_a_carried_path_that_is_not_a_string_is_refused_not_raised`, `test_an_absolute_carried_path_cannot_reach_outside_the_cache`, `test_a_traversing_carried_path_is_refused_rather_than_basenamed`, `test_carried_fields_the_renderer_reads_are_checked_before_construction`, `test_a_publish_whose_manifest_points_at_a_bad_path_still_stores_the_rest` |
 | A workflow input is data, not script | No `${{ ... }}` expansion appears inside any `run:` block in any workflow — the runner substitutes those before the shell parses the script. The dispatched week arrives through `env:` and is refused unless it is a bare ASCII integer in 1–22 | `test_no_workflow_expands_an_expression_inside_a_shell_script`, `test_everything_else_is_refused_as_data`, `test_the_dispatched_week_reaches_python_through_the_environment` |
 | Rule #5 gate is mechanical | `gridiron.models.validated_signals`: an entry in FEATS without VALIDATED evidence fails the import (smoke.py imports it first) | `test_the_rule_5_gate_fails_the_import_for_an_unvalidated_feature` |
 | Owner data stays local | `data/outputs/dashboard/` and `data/ledger/decisions/` gitignored; hygiene test scans tracked outputs for dashboard/archive markers; stdout names nobody; opponent is "roster #N" | `test_hygiene_no_roster_in_repo.py`, `test_the_stdout_summary_names_no_player`, `test_the_opponent_is_a_roster_number_...` |

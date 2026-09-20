@@ -57,7 +57,7 @@ from __future__ import annotations
 import json
 import shutil
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -159,6 +159,79 @@ def _as_utc(value: object) -> datetime | None:
     except ValueError:
         return None
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def _as_text(value: object) -> str | None:
+    """A string, or None. Not `str(value)`: coercing a list to its repr would
+    manufacture a plausible-looking field out of a malformed one."""
+    return value if isinstance(value, str) else None
+
+
+def _safe_basename(value: object) -> str | None:
+    """A plain filename inside one directory, or None for anything else.
+
+    A carried manifest is a file somebody else wrote, and `path` is the field
+    that decides which bytes get read as this season's data. Three shapes have
+    to be refused here, and only the first is obvious:
+
+      wrong type   `["bad"]` is not a path. `Path()` raises TypeError on it,
+                   which takes down the restore of every sound entry beside it.
+      absolute     `dir / "/etc/passwd"` is `/etc/passwd` — pathlib DISCARDS
+                   the left operand when the right one is absolute. An entry
+                   carrying an absolute path therefore reads a file that was
+                   never in the store and was never validated by anything.
+      traversal    `../../x` walks out of the cache the same way, and taking
+                   `.name` off it silently turns it into a different file
+                   rather than refusing it.
+
+    Basenaming a bad value is not a fix — it accepts the entry while changing
+    what it means. So this returns the name only when the value ALREADY is
+    one, and None otherwise, for the caller to reject and report.
+    """
+    text = _as_text(value)
+    if text is None:
+        return None
+    text = text.strip()
+    if not text or text in {".", ".."}:
+        return None
+    if "/" in text or "\\" in text:          # POSIX and Windows separators
+        return None
+    if any(ord(c) < 32 for c in text):       # NUL and friends: open() raises
+        return None
+    if text != Path(text).name:              # drive letters, anything left
+        return None
+    return text
+
+
+def _as_week_list(value: object) -> list[int] | None:
+    """A list of week numbers, or None. `freshness.assess` does
+    `int(w) for w in covered_weeks`, so a string here iterates its characters
+    and a non-int member raises in the middle of a render."""
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        return None
+    out: list[int] = []
+    for w in value:
+        n = _as_int(w)
+        if n is None:
+            return None
+        out.append(n)
+    return sorted(set(out))
+
+
+def _as_text_list(value: object) -> list[str] | None:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        return None
+    out: list[str] = []
+    for c in value:
+        text = _as_text(c)
+        if text is None:
+            return None
+        out.append(text)
+    return out
 
 
 def inspect_archive(path: Path, *, season: int, now: datetime,
@@ -433,15 +506,115 @@ INPUT_MAX_AGE_DAYS = 21
 CARRIED_FORWARD = "CARRIED FORWARD from an earlier run; this run did not refresh it"
 
 
+#: The fields `ing.Entry` is built from. Read off the dataclass rather than
+#: retyped, so a field added there cannot silently slip past this validator
+#: as an unknown key — or, worse, be accepted unvalidated.
+_ENTRY_FIELDS: frozenset[str] = frozenset(f.name for f in fields(ing.Entry))
+
+
+def _validated_entry(name: object, raw: object) -> tuple[ing.Entry | None, str]:
+    """Build one `ing.Entry` from a carried manifest, or say why it cannot be.
+
+    `ing.Entry(**raw)` looks like validation and is not. A dataclass checks
+    which KEYS it was handed, never what they hold, so `{"path": ["bad"]}`
+    constructs a perfectly well-formed Entry whose `path` is a list — and the
+    failure surfaces later, either as a `TypeError` out of `Path()` that takes
+    the whole restore down, or (worse) as a crash inside `Manifest.freshness`
+    half way through a render, long after carryover reported success.
+
+    So every field is read through a total reader BEFORE construction, and a
+    field that does not read is a rejection of this entry alone. The entry is
+    never repaired: a value that is not what it claims to be is not quietly
+    replaced with a default, because a default is an assertion about the data
+    that nobody made.
+    """
+    key = _as_text(name)
+    if not key or not key.strip():
+        return None, "the carried manifest names this source with something that "\
+                     "is not a name"
+    if not isinstance(raw, dict):
+        return None, f"the carried entry is {type(raw).__name__}, not an object"
+
+    unknown = sorted(str(k) for k in raw if str(k) not in _ENTRY_FIELDS)
+    if unknown:
+        return None, (f"the carried entry carries field(s) this code's manifest "
+                      f"layout does not have ({', '.join(unknown)}), so it was "
+                      f"written by something that does not agree with this code "
+                      f"about what an entry is")
+
+    # `path` decides which bytes get read as this season's data (see
+    # `_safe_basename`), so it is the strictest field here.
+    path = _safe_basename(raw.get("path"))
+    if path is None:
+        return None, (f"path {raw.get('path')!r} is not a plain filename inside "
+                      f"the carried cache; a carried entry may only ever name a "
+                      f"file that travelled with it")
+
+    rows = _as_int(raw.get("rows"))
+    if rows is None or rows < 0:
+        return None, (f"rows {raw.get('rows')!r} is not a row count, so the "
+                      f"source cannot be judged empty or not")
+
+    # An input that cannot be dated must not be rendered from. The whole
+    # promise of the carry is that the page states when its evidence was
+    # gathered; an entry with no readable `as_of` cannot keep it, and
+    # `Entry.as_of_dt` raises on an unparseable one mid-render.
+    as_of = _as_text(raw.get("as_of"))
+    if as_of is None or _as_utc(as_of) is None:
+        return None, (f"as_of {raw.get('as_of')!r} is not a time, so this input "
+                      f"cannot be dated and must not be rendered from")
+
+    source = _as_text(raw.get("source"))
+    if source is None:
+        return None, f"source {raw.get('source')!r} is not a source name"
+
+    weeks = _as_week_list(raw.get("weeks"))
+    if weeks is None:
+        return None, (f"weeks {raw.get('weeks')!r} is not a list of week "
+                      f"numbers, so the source's coverage cannot be read")
+
+    missing = _as_text_list(raw.get("missing_columns"))
+    if missing is None:
+        return None, (f"missing_columns {raw.get('missing_columns')!r} is not a "
+                      f"list of column names")
+
+    error = _as_text(raw.get("error", ""))
+    last_attempt = _as_text(raw.get("last_attempt", ""))
+    if error is None or last_attempt is None:
+        return None, "error and last_attempt must be text or absent"
+
+    # `as_of` is passed through EXACTLY as written. It is the one field the
+    # carry must not restate, and re-serialising a parsed copy of it would be
+    # restating it.
+    return ing.Entry(name=key, path=path, rows=rows, as_of=as_of, source=source,
+                     weeks=weeks, error=error, last_attempt=last_attempt,
+                     missing_columns=missing), ""
+
+
+def _load_local(cache_dir: Path, season: int) -> ing.Manifest | None:
+    """This machine's own manifest, or None if it cannot be read.
+
+    Nothing here invents an empty manifest to carry on with. The local
+    manifest is how a carry knows what this run already pulled, and guessing
+    that the answer is "nothing" is exactly how a carried file would come to
+    displace a real one.
+    """
+    try:
+        return ing.Manifest.load(Path(cache_dir), season)
+    except Exception:                                  # noqa: BLE001
+        return None
+
+
 def _cache_files(manifest: ing.Manifest) -> dict[str, Path]:
     """The files a manifest actually points at, by entry name. An entry whose
-    file is missing is left out — the manifest is a claim about the disk and
-    the disk is the arbiter."""
+    file is missing — or whose `path` is not a plain filename — is left out:
+    the manifest is a claim about the disk and the disk is the arbiter."""
     out: dict[str, Path] = {}
     for name, entry in manifest.entries.items():
-        if not entry.path:
+        safe = _safe_basename(getattr(entry, "path", None))
+        if safe is None:
             continue
-        candidate = manifest.directory / Path(entry.path).name
+        candidate = manifest.directory / safe
         if candidate.is_file():
             out[name] = candidate
     return out
@@ -458,7 +631,13 @@ def publish_inputs(cache_dir: Path, store: Path, *, season: int,
     it stands, which is what keeps every `as_of` honest on the far side.
     """
     cache_dir = Path(cache_dir)
-    manifest = ing.Manifest.load(cache_dir, season)
+    manifest = _load_local(cache_dir, season)
+    if manifest is None:
+        return CarryoverReport("publish-inputs", season, (),
+                               note="nothing to publish: this run's ingest "
+                                    "manifest could not be read, and a cache "
+                                    "whose index does not parse is not a "
+                                    "last-good anything")
     if not manifest.entries or not manifest.path.is_file():
         return CarryoverReport("publish-inputs", season, (),
                                note="nothing to publish: this run has no ingest "
@@ -498,10 +677,19 @@ def publish_inputs(cache_dir: Path, store: Path, *, season: int,
             continue
         verdicts.append(Verdict(path.name, True, f"stored as the last-good {name}"))
     for name, entry in sorted(manifest.entries.items()):
-        if entry.path and name not in files:
-            verdicts.append(Verdict(Path(entry.path).name, False,
-                                    f"the manifest lists {name} but no such file "
-                                    f"is on disk, so there is nothing to carry"))
+        if name in files:
+            continue
+        safe = _safe_basename(getattr(entry, "path", None))
+        if safe is None:
+            if getattr(entry, "path", None):
+                verdicts.append(Verdict(str(name), False,
+                                        f"the manifest points {name} at "
+                                        f"{entry.path!r}, which is not a plain "
+                                        f"filename in the cache; it is not carried"))
+            continue
+        verdicts.append(Verdict(safe, False,
+                                f"the manifest lists {name} but no such file "
+                                f"is on disk, so there is nothing to carry"))
     # The manifest goes LAST. Until it lands, the stored directory has no
     # index and a concurrent restore reads nothing rather than half a cache.
     shutil.copy2(manifest.path, target / manifest.path.name)
@@ -556,8 +744,10 @@ def inspect_inputs(store: Path, *, season: int, now: datetime,
     newest: datetime | None = None
     for name, raw in entries.items():
         if not isinstance(raw, dict):
-            return Verdict(index.name, False,
-                           f"the entry for {name!r} is not an object"), {}
+            # Not a manifest-wide failure. This entry is malformed and
+            # `restore_inputs` rejects it by name; a sound source beside it
+            # is still a sound source and still deserves to be carried.
+            continue
         stamp = _as_utc(raw.get("as_of"))
         if stamp is None:
             continue
@@ -606,32 +796,35 @@ def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
     source = Path(store) / INPUTS_DIR / f"season{season}"
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    local = ing.Manifest.load(cache_dir, season)
+    local = _load_local(cache_dir, season)
+    if local is None:
+        return CarryoverReport(
+            "restore-inputs", season,
+            (Verdict(ing.MANIFEST_NAME, False,
+                     "this run's own cache manifest could not be read, so there "
+                     "is no way to tell which sources this run already pulled; "
+                     "nothing was laid down rather than risk displacing one"),))
     local_files = _cache_files(local)
 
     verdicts: list[Verdict] = []
     carried: dict[str, ing.Entry] = {}
-    for name, raw in sorted((blob.get("entries") or {}).items()):
-        try:
-            entry = ing.Entry(**raw)
-        except TypeError as exc:
-            verdicts.append(Verdict(str(name), False,
-                                    f"the carried entry does not match this "
-                                    f"code's manifest layout ({exc})"))
+    raw_entries = blob.get("entries")
+    raw_entries = raw_entries if isinstance(raw_entries, dict) else {}
+    for name, raw in sorted(raw_entries.items(), key=lambda kv: str(kv[0])):
+        entry, why = _validated_entry(name, raw)
+        if entry is None:
+            verdicts.append(Verdict(str(name), False, why))
             continue
-        if name in local_files:
-            verdicts.append(Verdict(str(name), False,
+        if entry.name in local_files:
+            verdicts.append(Verdict(entry.name, False,
                                     "this run already has its own copy; the "
                                     "carried one is not used"))
             continue
-        if not entry.path:
-            verdicts.append(Verdict(str(name), False, "the carried entry names no file"))
-            continue
-        src = source / Path(entry.path).name
+        src = source / entry.path
         if not src.is_file():
-            verdicts.append(Verdict(Path(entry.path).name, False,
-                                    f"the carried manifest lists {name} but the "
-                                    f"file is not in the store"))
+            verdicts.append(Verdict(entry.path, False,
+                                    f"the carried manifest lists {entry.name} but "
+                                    f"the file is not in the store"))
             continue
         try:
             shutil.copy2(src, cache_dir / src.name)
@@ -641,13 +834,12 @@ def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
             continue
         # `as_of` is copied through untouched. `error` and `last_attempt`
         # describe THIS run, which did not refresh anything.
-        carried[str(name)] = replace(entry, error=CARRIED_FORWARD,
-                                     last_attempt=now.astimezone(timezone.utc)
-                                     .isoformat(timespec="seconds"))
+        carried[entry.name] = replace(entry, error=CARRIED_FORWARD,
+                                      last_attempt=now.astimezone(timezone.utc)
+                                      .isoformat(timespec="seconds"))
         verdicts.append(Verdict(src.name, True,
-                                f"laid down as last-good {name}, pulled "
-                                f"{entry.as_of or 'at an unrecorded time'}, marked "
-                                f"NOT REFRESHED by this run"))
+                                f"laid down as last-good {entry.name}, pulled "
+                                f"{entry.as_of}, marked NOT REFRESHED by this run"))
     if not carried:
         return CarryoverReport("restore-inputs", season, tuple(verdicts),
                                note="nothing was laid down")

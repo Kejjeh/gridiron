@@ -521,3 +521,185 @@ def test_one_malformed_record_does_not_cost_the_sound_one_beside_it(tmp_path):
     assert carryover.weeks_in(ledger, 2026) == (4,)
     # Every refusal says what was wrong; none of them says "crashed".
     assert all(v.reason for v in report.rejected)
+
+
+# ------------------------------------------- a malformed carried INPUT entry
+# is rejected ON ITS OWN, and never before its type is checked.
+#
+# `ing.Entry(**raw)` looked like validation and was not. A dataclass checks
+# which KEYS it was handed and never what they hold, so a carried entry with
+# `path: ["bad"]` constructed cleanly and then blew up at `Path(entry.path)`,
+# taking down the restore of every sound source beside it. The quieter half
+# was worse: `rows: "many"` and `as_of: "not-a-time"` survived carryover
+# entirely and raised inside `Manifest.freshness` half way through a render,
+# long after the carry had reported success.
+
+GOOD_INPUT = {"name": "sleeper_state", "path": "sleeper_state.json", "rows": 1,
+              "as_of": "2026-09-20T12:00:00+00:00", "source": "sleeper"}
+
+
+def _carried(store: Path, entries: dict, *, files=("sleeper_state.json",),
+             season: int = 2026) -> Path:
+    """A private store holding a carried cache, written by hand so the test
+    controls exactly what a previous run is claimed to have left behind."""
+    d = store / carryover.INPUTS_DIR / f"season{season}"
+    d.mkdir(parents=True, exist_ok=True)
+    for f in files:
+        (d / f).write_text("{}", encoding="utf-8")
+    (d / ing.MANIFEST_NAME).write_text(
+        json.dumps({"season": season, "entries": entries}), encoding="utf-8")
+    return d
+
+
+def _restore_inputs(tmp_path: Path, entries: dict, *, files=("sleeper_state.json",),
+                    now: datetime | None = None):
+    store, cache = tmp_path / "store", tmp_path / "cache"
+    _carried(store, entries, files=files)
+    when = now or datetime(2026, 9, 20, 13, 0, tzinfo=timezone.utc)
+    report = carryover.restore_inputs(store, cache, season=2026, now=when)
+    return report, cache
+
+
+def _malformed(**kw) -> dict:
+    return {"name": "weekly_stats", "path": "weekly_stats.parquet", "rows": 1,
+            "as_of": "2026-09-20T12:00:00+00:00", "source": "synthetic", **kw}
+
+
+BOTH_FILES = ("sleeper_state.json", "weekly_stats.parquet")
+
+
+def test_a_carried_path_that_is_not_a_string_is_refused_not_raised(tmp_path):
+    """The reported defect, exactly: `path: ["bad"]` passed `inspect_inputs`
+    and then raised TypeError out of `Path()`."""
+    report, cache = _restore_inputs(
+        tmp_path, {"weekly_stats": _malformed(path=["bad"]),
+                   "sleeper_state": dict(GOOD_INPUT)})
+    assert [v.name for v in report.rejected] == ["weekly_stats"]
+    assert "not a plain filename" in report.rejected[0].reason
+    # The sound sibling beside it survived, laid down and readable.
+    assert [v.name for v in report.accepted] == ["sleeper_state.json"]
+    assert (cache / "sleeper_state.json").is_file()
+    assert set(ing.Manifest.load(cache, 2026).entries) == {"sleeper_state"}
+
+
+def test_a_carried_path_that_is_a_mapping_is_refused_too(tmp_path):
+    report, _ = _restore_inputs(
+        tmp_path, {"weekly_stats": _malformed(path={"p": "x"}),
+                   "sleeper_state": dict(GOOD_INPUT)})
+    assert [v.name for v in report.rejected] == ["weekly_stats"]
+    assert len(report.accepted) == 1
+
+
+def test_an_absolute_carried_path_cannot_reach_outside_the_cache(tmp_path):
+    """`dir / "/etc/passwd"` is `/etc/passwd` — pathlib DISCARDS the left
+    operand. Before this, an absolute carried path was silently basenamed for
+    the copy but written into the manifest VERBATIM, so `Manifest.file()`
+    handed the renderer a file that never travelled with the carry and that
+    nothing here had validated."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "weekly_stats.parquet").write_text("NOT FROM THE STORE",
+                                                  encoding="utf-8")
+    report, cache = _restore_inputs(
+        tmp_path, {"weekly_stats": _malformed(path=str(outside / "weekly_stats.parquet")),
+                   "sleeper_state": dict(GOOD_INPUT)},
+        files=BOTH_FILES)
+    assert [v.name for v in report.rejected] == ["weekly_stats"]
+    manifest = ing.Manifest.load(cache, 2026)
+    assert "weekly_stats" not in manifest.entries
+    # Nothing the renderer can reach lies outside the cache it was given.
+    for name in manifest.entries:
+        assert manifest.file(name).parent == cache
+
+
+def test_a_traversing_carried_path_is_refused_rather_than_basenamed(tmp_path):
+    """Taking `.name` off `../../x` does not fix it — it accepts the entry
+    while silently changing which file it means."""
+    report, cache = _restore_inputs(
+        tmp_path, {"weekly_stats": _malformed(path="../../weekly_stats.parquet"),
+                   "sleeper_state": dict(GOOD_INPUT)},
+        files=BOTH_FILES)
+    assert [v.name for v in report.rejected] == ["weekly_stats"]
+    assert not (cache / "weekly_stats.parquet").exists()
+
+
+def test_carried_fields_the_renderer_reads_are_checked_before_construction(tmp_path):
+    """Each of these once survived the carry and raised DURING a render.
+
+    `rows` is compared against an int by `freshness.assess`; `as_of` is parsed
+    by `Entry.as_of_dt`; `weeks` is iterated as ints. A validator that lets a
+    bad value through to a place that raises is not a validator.
+    """
+    cases = {
+        "rows is not a number": _malformed(rows="many"),
+        "rows is a flag": _malformed(rows=True),
+        "rows is negative": _malformed(rows=-3),
+        "as_of is unparseable": _malformed(as_of="not-a-time"),
+        "as_of is null": _malformed(as_of=None),
+        "weeks is a string": _malformed(weeks="3"),
+        "weeks holds a non-week": _malformed(weeks=[1, "two"]),
+        "source is null": _malformed(source=None),
+        "missing_columns is not a list": _malformed(missing_columns="wopr"),
+        "the entry is not an object": ["not", "an", "entry"],
+        "the entry carries an unknown field": _malformed(sneaked="in"),
+    }
+    for label, bad in cases.items():
+        report, cache = _restore_inputs(
+            tmp_path / label.replace(" ", "_"),
+            {"weekly_stats": bad, "sleeper_state": dict(GOOD_INPUT)},
+            files=BOTH_FILES)
+        assert [v.name for v in report.rejected] == ["weekly_stats"], label
+        assert report.rejected[0].reason, label
+        # ...and the sound sibling is carried, every time.
+        assert [v.name for v in report.accepted] == ["sleeper_state.json"], label
+        manifest = ing.Manifest.load(cache, 2026)
+        assert set(manifest.entries) == {"sleeper_state"}, label
+        # Whatever was rejected, what IS here still renders without raising.
+        for name in manifest.entries:
+            assert manifest.freshness(name, now=SCN.NOW).refresh_failed, label
+
+
+def test_a_surviving_carried_entry_keeps_its_original_as_of_and_still_withholds(tmp_path):
+    """The two properties a rejection must not be allowed to erode."""
+    report, cache = _restore_inputs(
+        tmp_path, {"weekly_stats": _malformed(path=["bad"]),
+                   "sleeper_state": dict(GOOD_INPUT)})
+    assert len(report.accepted) == 1
+    entry = ing.Manifest.load(cache, 2026).entries["sleeper_state"]
+    assert entry.as_of == GOOD_INPUT["as_of"]          # verbatim, not restated
+    assert entry.error == carryover.CARRIED_FORWARD
+    fresh = ing.Manifest.load(cache, 2026).freshness("sleeper_state", now=SCN.NOW)
+    assert fresh.refresh_failed and fresh.status is not ing.Status.FRESH
+
+
+def test_a_publish_whose_manifest_points_at_a_bad_path_still_stores_the_rest(tmp_path):
+    """The same hole on the publish side: `_cache_files` called `Path()` on
+    every entry's `path`, so one bad value stopped the whole publish."""
+    cache, store = tmp_path / "cache", tmp_path / "store"
+    cache.mkdir()
+    (cache / "sleeper_state.json").write_text("{}", encoding="utf-8")
+    (cache / ing.MANIFEST_NAME).write_text(json.dumps(
+        {"season": 2026, "entries": {"weekly_stats": _malformed(path=["bad"]),
+                                     "sleeper_state": dict(GOOD_INPUT)}}),
+        encoding="utf-8")
+    report = carryover.publish_inputs(cache, store, season=2026, now=SCN.NOW)
+    stored = store / carryover.INPUTS_DIR / "season2026"
+    assert (stored / "sleeper_state.json").is_file()
+    assert (stored / ing.MANIFEST_NAME).is_file()
+    assert any("not a plain filename" in v.reason for v in report.rejected)
+
+
+def test_a_cache_manifest_this_run_cannot_read_stops_the_carry_rather_than_guessing(tmp_path):
+    """The local manifest is how a carry knows what this run already pulled.
+    Reading it as "nothing" is exactly how a carried file comes to displace a
+    real one, so an unreadable one fails closed."""
+    store, cache = tmp_path / "store", tmp_path / "cache"
+    _carried(store, {"sleeper_state": dict(GOOD_INPUT)})
+    cache.mkdir()
+    (cache / ing.MANIFEST_NAME).write_text("{not json", encoding="utf-8")
+    report = carryover.restore_inputs(store, cache, season=2026, now=SCN.NOW)
+    assert not report.accepted
+    assert "already pulled" in report.rejected[0].reason
+    publish = carryover.publish_inputs(cache, tmp_path / "s2", season=2026,
+                                       now=SCN.NOW)
+    assert not publish.accepted and "could not be read" in publish.note
