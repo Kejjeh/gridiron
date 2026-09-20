@@ -14,8 +14,8 @@ import pandas as pd
 import pytest
 
 from gridiron.lineup import (
-    Player, current_lineup, eligible, kickoff_index, lock_state, plan_lineup,
-    slot_order,
+    LOCKED, OPEN, UNKNOWN, Player, current_lineup, eligible, kickoff_index,
+    lock_state, plan_lineup, slot_order,
 )
 from gridiron.projection import Projection, abstain
 
@@ -158,13 +158,29 @@ def test_kickoff_locks_follow_the_schedule_in_eastern_time():
         {"week": 2, "gameday": "2026-09-21", "gametime": "20:15", "home_team": "C", "away_team": "D"},
     ])
     idx = kickoff_index(sched, 2)
-    assert idx["A"] == idx["B"] == datetime(2026, 9, 20, 17, 0, tzinfo=UTC)
+    assert idx.complete and idx.games == 2
+    assert idx.kickoffs["A"] == idx.kickoffs["B"] == datetime(2026, 9, 20, 17, 0, tzinfo=UTC)
     before = datetime(2026, 9, 20, 16, 59, tzinfo=UTC)
     after = datetime(2026, 9, 20, 17, 0, tzinfo=UTC)
-    assert lock_state("A", idx, before) == (False, "kicks off Sun 17:00 UTC")
-    assert lock_state("A", idx, after)[0] is True
-    assert lock_state("C", idx, after)[0] is False       # Monday night not yet
-    assert lock_state("ZZ", idx, after) == (False, "no game this week (bye or unknown team)")
+    assert lock_state("A", idx, before).state == OPEN
+    assert lock_state("A", idx, before).note == "kicks off Sun 17:00 UTC"
+    assert lock_state("A", idx, before).kickoff == datetime(2026, 9, 20, 17, 0, tzinfo=UTC)
+    assert lock_state("A", idx, after).state == LOCKED
+    assert lock_state("C", idx, after).state == OPEN     # Monday night not yet
+
+
+def test_a_team_absent_from_a_complete_week_is_a_bye_and_one_it_never_heard_of_is_not():
+    """The two absences are different facts and must not share a branch."""
+    sched = pd.DataFrame([
+        {"week": 1, "gameday": "2026-09-13", "gametime": "13:00", "home_team": "A", "away_team": "Z"},
+        {"week": 2, "gameday": "2026-09-20", "gametime": "13:00", "home_team": "A", "away_team": "B"},
+    ])
+    idx = kickoff_index(sched, 2)
+    now = datetime(2026, 9, 20, 18, 0, tzinfo=UTC)
+    bye = lock_state("Z", idx, now)                      # plays in week 1, not week 2
+    assert bye.state == OPEN and "BYE" in bye.note
+    stranger = lock_state("ZZ", idx, now)                # never appears at all
+    assert stranger.state == UNKNOWN and "not a bye" in stranger.note
 
 
 def test_no_schedule_means_lock_state_unknown_not_unlocked():
@@ -172,5 +188,5 @@ def test_no_schedule_means_lock_state_unknown_not_unlocked():
     assert kickoff_index(pd.DataFrame(), 2) is None
     assert kickoff_index(pd.DataFrame([{"week": 1, "gameday": "2026-09-13", "gametime": "13:00",
                                         "home_team": "A", "away_team": "B"}]), 2) is None
-    locked, note = lock_state("A", None, datetime.now(UTC))
-    assert not locked and "UNKNOWN" in note
+    lock = lock_state("A", None, datetime.now(UTC))
+    assert lock.state == UNKNOWN and not lock.movable and "UNKNOWN" in lock.note

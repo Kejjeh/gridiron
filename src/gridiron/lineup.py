@@ -15,6 +15,11 @@ evaluate:
   * When the schedule is missing, the lock state is UNKNOWN and the whole
     start/sit section abstains, because a lineup change that Sleeper would
     reject is not an alternative.
+  * When the schedule is only PARTLY readable, the abstention is per player:
+    anyone whose kickoff could not be established is frozen and named, while
+    the players whose games the schedule does time are still optimised. A
+    kickoff time is never invented to fill the gap, and a team missing from
+    an incomplete week is never read as a bye.
 
 The objective is projected points, and every alternative is reported with
 its Δpoints and a z-score against the two players' projection SDs, so that
@@ -92,6 +97,14 @@ class Player:
     availability: str = ""
     flags: tuple[str, ...] = field(default=())
     gsis_id: str = ""
+    #: False when the schedule could not prove whether this player's game has
+    #: started. `locked` alone cannot carry that: "not locked" would then mean
+    #: both "kickoff is in the future" and "we have no idea", and only the
+    #: first of those makes a lineup move legal.
+    lock_known: bool = True
+    #: This player's kickoff in UTC when the schedule gave one, so the action
+    #: layer can state a real deadline instead of re-reading the schedule.
+    kickoff: datetime | None = None
 
     @property
     def value(self) -> float | None:
@@ -105,48 +118,198 @@ class Player:
     def projected(self) -> bool:
         return self.projection.usable
 
+    @property
+    def movable(self) -> bool:
+        """Whether a lineup move involving this player can be shown LEGAL.
+        Requires a proven-open kickoff, never merely the absence of a lock."""
+        return self.lock_known and not self.locked
+
+    @property
+    def lock_reason(self) -> str:
+        if self.locked:
+            return self.lock_note or "LOCKED"
+        if not self.lock_known:
+            return self.lock_note or "lock state UNKNOWN"
+        return ""
+
 
 # --------------------------------------------------------------------------
 # Kickoff locks
 # --------------------------------------------------------------------------
-def kickoff_index(schedule: pd.DataFrame | None, week: int) -> dict[str, datetime] | None:
-    """team -> kickoff (UTC) for one week. None when there is NO schedule to
-    read, which is a different fact from 'every team is on bye'."""
+#: The three things we can know about a player's kickoff lock. UNKNOWN is a
+#: first-class state, not a flavour of OPEN: "we could not read the schedule"
+#: is not evidence that a move is legal, and Sleeper will reject a move made
+#: after kickoff no matter what this page believed.
+LOCKED, OPEN, UNKNOWN = "LOCKED", "OPEN", "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class Lock:
+    """One player's lock state, with the sentence that explains it."""
+
+    state: str
+    note: str
+    kickoff: datetime | None = None
+
+    @property
+    def locked(self) -> bool:
+        return self.state == LOCKED
+
+    @property
+    def movable(self) -> bool:
+        """True ONLY when the schedule proves the game has not started.
+        UNKNOWN is not movable — that is the whole point of this type."""
+        return self.state == OPEN
+
+    @property
+    def known(self) -> bool:
+        return self.state != UNKNOWN
+
+
+@dataclass(frozen=True)
+class KickoffIndex:
+    """What one week's schedule actually supports, including its holes.
+
+    A plain `team -> kickoff` dict cannot express the two states that matter
+    most here: a team whose game we found but could not time, and a week
+    whose rows we could not fully read. Both used to collapse into "absent
+    from the dict", which `lock_state` then reported as a bye — so an
+    unreadable schedule authorised every swap on the board. The holes are
+    fields now, and absence only means "bye" when `complete` is True.
+    """
+
+    week: int
+    kickoffs: Mapping[str, datetime]
+    #: Teams with a row for this week whose kickoff time could not be read.
+    #: We know they play; we do not know when, so they are never movable.
+    time_unknown: frozenset[str]
+    #: Every team appearing anywhere in the schedule frame. A team in here
+    #: with no row this week is on a BYE; a team not in here at all is a name
+    #: this schedule has never heard of, which is not a bye.
+    season_teams: frozenset[str]
+    #: Week rows that carried no usable team names at all.
+    dropped_rows: int
+    problems: tuple[str, ...] = field(default=())
+
+    @property
+    def complete(self) -> bool:
+        """True when every row of this week parsed into a timed game. Only
+        then does 'not in the index' mean 'bye'."""
+        return not self.time_unknown and self.dropped_rows == 0
+
+    @property
+    def games(self) -> int:
+        return len(set(self.kickoffs)) // 2 if self.kickoffs else 0
+
+    def summary(self) -> str:
+        bits = [f"{len(self.kickoffs)} team(s) timed"]
+        if self.time_unknown:
+            bits.append(f"{len(self.time_unknown)} with NO kickoff time")
+        if self.dropped_rows:
+            bits.append(f"{self.dropped_rows} unreadable row(s)")
+        return f"week {self.week} schedule: " + ", ".join(bits)
+
+
+def _team(value: object) -> str:
+    t = str(value or "").strip().upper()
+    return "" if t in ("", "NAN", "NONE") else t
+
+
+def kickoff_index(schedule: pd.DataFrame | None, week: int) -> KickoffIndex | None:
+    """Read one week's kickoffs. None when there is NO schedule to read.
+
+    Two things this deliberately does NOT do, because both were bugs:
+
+      * It never invents a kickoff time. A row with no `gametime` used to be
+        stamped 13:00 ET, which is a guess that reads as fact — and a wrong
+        guess in the unsafe direction for every 9:30 am London game and
+        every flexed night game, reporting a locked player as movable.
+      * It never returns an empty index for a week it could not read. An
+        empty dict is indistinguishable from "all 32 teams are on bye", and
+        the caller treated `{} is not None` as full lock certainty.
+    """
     if schedule is None or len(schedule) == 0 or "week" not in schedule.columns:
         return None
+    season_teams = set()
+    for col in ("home_team", "away_team"):
+        if col in schedule.columns:
+            season_teams |= {t for t in (_team(v) for v in schedule[col]) if t}
     wk = schedule.loc[schedule["week"] == int(week)]
     if len(wk) == 0:
         return None
     out: dict[str, datetime] = {}
+    time_unknown: set[str] = set()
+    problems: list[str] = []
+    dropped = 0
     for row in wk.itertuples():
-        day = str(getattr(row, "gameday", "") or "")
-        time_ = str(getattr(row, "gametime", "") or "")
-        if not day or day == "nan":
+        teams = [t for t in (_team(getattr(row, "home_team", "")),
+                             _team(getattr(row, "away_team", ""))) if t]
+        day = str(getattr(row, "gameday", "") or "").strip()
+        time_ = str(getattr(row, "gametime", "") or "").strip()
+        if not teams:
+            dropped += 1
+            problems.append("a week row carried no team names")
+            continue
+        if not day or day.lower() == "nan" or not time_ or time_.lower() == "nan":
+            time_unknown.update(teams)
+            problems.append(f"{'/'.join(teams)}: no kickoff "
+                            f"{'date' if not day or day.lower() == 'nan' else 'time'} "
+                            f"in the schedule")
             continue
         try:
-            stamp = pd.Timestamp(f"{day} {time_ if time_ and time_ != 'nan' else '13:00'}",
-                                 tz="America/New_York")
-        except (ValueError, TypeError):
+            stamp = pd.Timestamp(f"{day} {time_}", tz="America/New_York")
+        except (ValueError, TypeError) as exc:
+            time_unknown.update(teams)
+            problems.append(f"{'/'.join(teams)}: unreadable kickoff "
+                            f"'{day} {time_}' ({type(exc).__name__})")
+            continue
+        if pd.isna(stamp):
+            time_unknown.update(teams)
+            problems.append(f"{'/'.join(teams)}: unreadable kickoff '{day} {time_}'")
             continue
         when = stamp.tz_convert("UTC").to_pydatetime()
-        out[str(row.home_team)] = when
-        out[str(row.away_team)] = when
-    return out
+        for t in teams:
+            out[t] = when
+    # A team we timed is not also "unknown".
+    time_unknown -= set(out)
+    return KickoffIndex(int(week), out, frozenset(time_unknown),
+                        frozenset(season_teams), dropped, tuple(problems))
 
 
-def lock_state(team: str, kickoffs: Mapping[str, datetime] | None,
-               now: datetime) -> tuple[bool, str]:
-    """(locked, note). Sleeper locks a player at his game's kickoff."""
+def lock_state(team: str, kickoffs: KickoffIndex | Mapping[str, datetime] | None,
+               now: datetime) -> Lock:
+    """The lock state of one player's team. Sleeper locks a player at his
+    game's kickoff, so every branch that cannot prove the kickoff is in the
+    future returns UNKNOWN rather than a permissive default."""
     if kickoffs is None:
-        return False, "lock state UNKNOWN: no schedule loaded"
-    when = kickoffs.get(str(team or ""))
+        return Lock(UNKNOWN, "lock state UNKNOWN: no schedule loaded for this week")
+    if not isinstance(kickoffs, KickoffIndex):     # a bare mapping: legacy callers
+        kickoffs = KickoffIndex(0, dict(kickoffs), frozenset(),
+                                frozenset(kickoffs), 0, ())
+    t = _team(team)
+    if not t:
+        return Lock(UNKNOWN, "lock state UNKNOWN: no NFL team on this player's record")
+    if t in kickoffs.time_unknown:
+        return Lock(UNKNOWN, f"lock state UNKNOWN: {t} has a week-{kickoffs.week} game "
+                             f"but the schedule carries no usable kickoff time for it")
+    when = kickoffs.kickoffs.get(t)
     if when is None:
-        return False, "no game this week (bye or unknown team)"
+        if not kickoffs.complete:
+            return Lock(UNKNOWN, f"lock state UNKNOWN: {t} has no readable week-"
+                                 f"{kickoffs.week} game and the week's schedule is "
+                                 f"incomplete ({kickoffs.summary()}), so a bye cannot "
+                                 f"be told apart from a row that failed to parse")
+        if t not in kickoffs.season_teams:
+            return Lock(UNKNOWN, f"lock state UNKNOWN: {t} does not appear anywhere in "
+                                 f"this schedule — an unrecognised team is not a bye")
+        return Lock(OPEN, f"no week-{kickoffs.week} game: BYE (the week's schedule "
+                          f"parsed completely and {t} plays in other weeks)")
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
+    stamp = when.astimezone(timezone.utc)
     if now >= when:
-        return True, f"LOCKED — kicked off {when.astimezone(timezone.utc):%a %H:%M} UTC"
-    return False, f"kicks off {when.astimezone(timezone.utc):%a %H:%M} UTC"
+        return Lock(LOCKED, f"LOCKED — kicked off {stamp:%a %H:%M} UTC", when)
+    return Lock(OPEN, f"kicks off {stamp:%a %H:%M} UTC", when)
 
 
 # --------------------------------------------------------------------------
@@ -184,6 +347,10 @@ class LineupPlan:
     alternatives: tuple[Alternative, ...]
     frozen: tuple[tuple[Player, str], ...]      # players the optimizer left alone
     abstained: str = ""                          # non-empty = no recommendation at all
+    #: Bench players who could legally enter a lineup this week: projected,
+    #: provably movable, not on IR. The action layer reads this to name a
+    #: BACKUP when the first choice cannot be made.
+    bench_pool: tuple[Player, ...] = field(default=())
 
     @property
     def current_points(self) -> float:
@@ -289,9 +456,12 @@ def plan_lineup(players: Sequence[Player], starters: Sequence[str],
     for i, p in enumerate(current):
         if p is None:
             continue
-        if p.locked:
+        if not p.movable:
+            # LOCKED and UNKNOWN both land here. A starter we cannot prove is
+            # still movable stays where he is: proposing a swap Sleeper would
+            # reject is worse than proposing nothing.
             fixed[i] = p
-            frozen.append((p, p.lock_note))
+            frozen.append((p, p.lock_reason))
         elif not p.projected:
             fixed[i] = p
             frozen.append((p, "no projection: " + "; ".join(p.projection.reasons)))
@@ -300,9 +470,9 @@ def plan_lineup(players: Sequence[Player], starters: Sequence[str],
     for p in players:
         if p.sleeper_id in fixed_ids or p.lineup == "IR":
             continue
-        if p.locked:
+        if not p.movable:
             if p.lineup == "BENCH":
-                frozen.append((p, p.lock_note))
+                frozen.append((p, p.lock_reason))
             continue
         if not p.projected:
             if p.lineup == "BENCH":
@@ -317,14 +487,15 @@ def plan_lineup(players: Sequence[Player], starters: Sequence[str],
     alts: list[Alternative] = []
     starter_ids = {p.sleeper_id for p in current if p is not None}
     for b in players:
-        if b.sleeper_id in starter_ids or b.lineup == "IR" or b.locked or not b.projected:
+        if b.sleeper_id in starter_ids or b.lineup == "IR" or not b.movable \
+                or not b.projected:
             continue
         options: list[Alternative] = []
         for i, slot in enumerate(slots):
             if not eligible(slot, b.position):
                 continue
             s = current[i]
-            if s is not None and (s.locked or not s.projected):
+            if s is not None and (not s.movable or not s.projected):
                 continue
             s_val = s.value if s is not None else 0.0
             delta = float(b.value or 0.0) - float(s_val or 0.0)
@@ -334,4 +505,6 @@ def plan_lineup(players: Sequence[Player], starters: Sequence[str],
         if options:
             alts.append(max(options, key=lambda a: a.delta_points))
     alts.sort(key=lambda a: a.delta_points, reverse=True)
-    return LineupPlan(slots, current, best, tuple(alts), tuple(frozen))
+    bench_pool = tuple(p for p in pool if p.sleeper_id not in starter_ids)
+    return LineupPlan(slots, current, best, tuple(alts), tuple(frozen),
+                      bench_pool=bench_pool)

@@ -30,3 +30,11 @@ data/ledger/decisions/
 
 # research-agent scratch drafts (synthesized into docs/research/*.md)
 docs/research/drafts/
+
+# The scenario runner writes its synthetic caches and rendered pages next to
+# the committed review screenshots. Only the PNGs belong in the repo: the
+# caches are regenerable fixtures, and a rendered page is a roster artifact
+# by shape even when the roster inside it is invented — keeping the rule
+# mechanical is what stops a real cache being published by an out-dir typo.
+docs/review/dashboard/caches/
+docs/review/dashboard/*/

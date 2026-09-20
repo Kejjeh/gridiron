@@ -291,6 +291,22 @@ class Projection:
     def usable(self) -> bool:
         return self.mean is not None
 
+    @property
+    def is_withheld(self) -> bool:
+        """True when this 0.0 is 'he will not play', not 'he is worthless'.
+
+        `withheld()` parks the model's own mean in `inputs['model_mean']`, so
+        the distinction survives into every consumer and the archive. Callers
+        that rank players by value MUST check this: a bye-week 0 and a
+        replacement-level 4 are not comparable quantities.
+        """
+        return "model_mean" in self.inputs
+
+    @property
+    def model_mean(self) -> float | None:
+        """What the model said before the withholding, if anything."""
+        return self.inputs.get("model_mean")
+
     def withheld(self, reason: str) -> "Projection":
         """A zero-point projection for a player who will not play (bye, Out).
         The model mean survives in `inputs['model_mean']` so the page can

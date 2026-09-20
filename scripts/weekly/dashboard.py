@@ -46,7 +46,7 @@ def kickoffs_for(schedule: pd.DataFrame | None, week: int) -> list[datetime]:
     from gridiron.lineup import kickoff_index
 
     idx = kickoff_index(schedule, week)
-    return sorted(set(idx.values())) if idx else []
+    return sorted(set(idx.kickoffs.values())) if idx else []
 
 
 def find_owner_id(snapshot: dict, owner: str) -> str | None:

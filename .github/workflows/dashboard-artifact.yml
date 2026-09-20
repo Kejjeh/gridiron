@@ -1,0 +1,117 @@
+name: Weekly dashboard artifact
+
+# Builds the decision dashboard on GitHub-hosted Linux and uploads it as a
+# PRIVATE, repo-scoped artifact. This is the PC-independent path: the desktop
+# scheduled task is disabled and stays disabled, and nothing here depends on it.
+#
+# What this is NOT, deliberately:
+#   * not a website. No Pages, no hosting, no auth service, no public URL. The
+#     page is a build artifact behind the repository's own access control.
+#   * not a live feed. It renders whatever the Sleeper cloud sync last managed
+#     to cache. The page states the as-of time of every input and withholds the
+#     actions its inputs cannot support, which is the only honest thing a
+#     scheduled build can do about news that breaks between runs.
+#   * not a refresh guarantee. A cron schedule says when a job is QUEUED.
+#     GitHub delays and drops scheduled runs under load, and an injury
+#     designation can change minutes before kickoff regardless. Read the
+#     freshness section on the page, never the schedule in this file.
+
+on:
+  workflow_dispatch:
+    inputs:
+      week:
+        description: 'NFL week to render (blank = the week the snapshot says)'
+        required: false
+        type: string
+  schedule:
+    # Cadence-aware (rule #8), in UTC: Wednesday after waivers clear, Friday
+    # after the final practice report, and Sunday morning before the early
+    # kickoffs. Offset off the hour so it does not queue behind the top-of-hour
+    # rush. These are best-effort, like every GitHub cron.
+    - cron: '41 8 * * 3'
+    - cron: '41 22 * * 5'
+    - cron: '41 14 * * 0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gridiron-dashboard
+  cancel-in-progress: false
+
+jobs:
+  render:
+    # The same two gates the Sleeper sync uses: opt-in by repository variable,
+    # and refuse outright if the repository ever becomes public. The page names
+    # the owner's players, so a public run would be a roster export.
+    if: vars.GRIDIRON_CLOUD_SYNC_ENABLED == 'true' && github.event.repository.private == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: src
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the approved dependencies
+        run: python -m pip install --disable-pip-version-check nflreadpy pandas pyarrow
+
+      - name: Refresh the Sleeper snapshot (GET-only, read-only)
+        run: python scripts/sync/sleeper_sync.py run --quiet --interval 3600
+
+      - name: Pull the week's nflverse frames and the player dump
+        run: python scripts/ingest/pull_week.py
+
+      - name: Render the dashboard
+        # Never --fail-on-degraded here: a degraded page is exactly the page
+        # worth reading on a bad day, and it now withholds its own actions.
+        run: |
+          python scripts/weekly/dashboard.py --write \
+            ${{ inputs.week && format('--week {0}', inputs.week) || '' }}
+
+      - name: Report freshness without exposing the roster
+        run: |
+          echo '### Weekly dashboard' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Built. Download **dashboard** from this run; open the HTML file' >> "$GITHUB_STEP_SUMMARY"
+          echo 'on any device. It is one self-contained page with no network calls.' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo 'A scheduled build keeps the SNAPSHOT current. It does not make injury' >> "$GITHUB_STEP_SUMMARY"
+          echo 'news timely: check the page freshness section and the withheld actions.' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          p = pathlib.Path("data/outputs/dashboard/dashboard_latest.json")
+          if not p.exists():
+              print("No dashboard was written."); raise SystemExit(0)
+          d = json.loads(p.read_text("utf-8"))
+          # Freshness and gating only. No player name, no lineup, no matchup.
+          print(f"- week {d['week']} ({d['phase']}), evidence boundary week "
+                f"{d['evidence_boundary']}")
+          print(f"- degraded: **{d['degraded']}**")
+          print(f"- actions endorsed: **{d['actionable']}** of {len(d['actions'])}")
+          print(f"- withheld action classes: {', '.join(d['withheld_actions']) or 'none'}")
+          for line in d["sources"]:
+              print(f"  - `{line.split('  ')[0]}`")
+          PY
+
+      - name: Upload the private dashboard artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dashboard
+          # The rendered page and its decision-time record. Both name the
+          # owner's players, which is why they are artifacts rather than
+          # commits: data/outputs/dashboard/ and data/ledger/decisions/ are
+          # gitignored (rule #10) and must stay that way.
+          path: |
+            data/outputs/dashboard/*.html
+            data/outputs/dashboard/*.json
+            data/ledger/decisions/season*/*.json
+          if-no-files-found: error
+          retention-days: 14

@@ -168,3 +168,130 @@ def grade_archive(archive: Mapping[str, object],
     mae = round(sum(errs) / len(errs), 3) if errs else None
     return Grade(week, tuple(graded), mae, len(errs), ungradeable,
                  notes=("graded from archived numbers only; nothing re-projected",))
+
+
+# --------------------------------------------------------------------------
+# What changed since the last time this page was built
+# --------------------------------------------------------------------------
+#: A projection move smaller than this is noise from one more box score, not
+#: news. Rule #8: alerts fire on TRANSITIONS, and a transition has to be big
+#: enough that a human would act differently.
+MOVE_POINTS = 1.5
+
+
+def previous_archive(root: Path | None, season: int, before: datetime) -> Path | None:
+    """The newest archive for this season written strictly BEFORE `before`.
+
+    Used only to diff two decision-time records against each other. It never
+    feeds a projection: archives are frozen pages, and reading one to build a
+    newer one would put yesterday's numbers inside today's evidence.
+    """
+    folder = (root or ARCHIVE_DIR) / f"season{season}"
+    if not folder.is_dir():
+        return None
+    stamp = before.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    older = [p for p in sorted(folder.glob("week*_*.json"))
+             if p.stem.split("_")[-1] < stamp]
+    return older[-1] if older else None
+
+
+@dataclass(frozen=True)
+class Change:
+    kind: str            # roster | projection | availability | lock | lineup | freshness
+    subject: str         # display name, or the source name
+    detail: str
+
+    def line(self) -> str:
+        return f"[{self.kind}] {self.subject}: {self.detail}"
+
+
+@dataclass(frozen=True)
+class Changes:
+    previous: str                  # the previous archive's generated stamp
+    previous_week: int | None
+    items: tuple[Change, ...] = field(default=())
+    note: str = ""
+
+    @property
+    def any(self) -> bool:
+        return bool(self.items)
+
+    def of(self, kind: str) -> tuple[Change, ...]:
+        return tuple(c for c in self.items if c.kind == kind)
+
+
+def _roster_index(blob: Mapping[str, object]) -> dict[str, dict]:
+    return {str(p.get("sleeper_id")): p
+            for p in (blob.get("roster") or []) if isinstance(p, dict) and p}
+
+
+def diff_archives(previous: Mapping[str, object],
+                  current: Mapping[str, object]) -> Changes:
+    """Transitions between two frozen pages — rule #8, alerts on CHANGES.
+
+    Reads both archives as data and computes nothing else. Anything that
+    needed a projection was projected when its page was built.
+    """
+    was, now = _roster_index(previous), _roster_index(current)
+    items: list[Change] = []
+
+    for sid in sorted(now.keys() - was.keys()):
+        items.append(Change("roster", str(now[sid].get("name") or sid),
+                            "ADDED to the roster since the last snapshot"))
+    for sid in sorted(was.keys() - now.keys()):
+        items.append(Change("roster", str(was[sid].get("name") or sid),
+                            "GONE from the roster since the last snapshot"))
+
+    for sid in sorted(now.keys() & was.keys()):
+        a, b = was[sid], now[sid]
+        name = str(b.get("name") or sid)
+        pa, pb = a.get("projected"), b.get("projected")
+        if pa is None and pb is not None:
+            items.append(Change("projection", name,
+                                f"now projectable ({pb:.2f}); previously abstained"))
+        elif pa is not None and pb is None:
+            items.append(Change("projection", name,
+                                f"no longer projectable (was {pa:.2f})"))
+        elif isinstance(pa, (int, float)) and isinstance(pb, (int, float)):
+            if abs(pb - pa) >= MOVE_POINTS:
+                items.append(Change("projection", name,
+                                    f"{pa:.2f} -> {pb:.2f} ({pb - pa:+.2f})"))
+        if str(a.get("availability") or "") != str(b.get("availability") or ""):
+            items.append(Change("availability", name,
+                                f"{a.get('availability') or '—'} -> "
+                                f"{b.get('availability') or '—'}"))
+        if bool(a.get("withheld")) != bool(b.get("withheld")):
+            items.append(Change("availability", name,
+                                "now WITHHELD (projected 0, will not play)"
+                                if b.get("withheld") else
+                                "no longer withheld — back in the projection"))
+        if bool(a.get("locked")) != bool(b.get("locked")):
+            items.append(Change("lock", name,
+                                "LOCKED (his game has kicked off)"
+                                if b.get("locked") else "no longer locked"))
+
+    def lineup_names(blob: Mapping[str, object], key: str) -> list[str]:
+        idx = _roster_index(blob)
+        return [str((idx.get(str(s)) or {}).get("name") or s) if s else "—"
+                for s in (blob.get(key) or [])]
+
+    if lineup_names(previous, "current_lineup") != lineup_names(current, "current_lineup"):
+        items.append(Change("lineup", "starting lineup",
+                            "changed in Sleeper since the last snapshot"))
+
+    was_src = {line.split()[0]: line for line in (previous.get("sources") or [])
+               if isinstance(line, str) and line.split()}
+    now_src = {line.split()[0]: line for line in (current.get("sources") or [])
+               if isinstance(line, str) and line.split()}
+    for name in sorted(now_src):
+        old_status = was_src.get(name, "").split()[1:2]
+        new_status = now_src[name].split()[1:2]
+        if old_status and new_status and old_status != new_status:
+            items.append(Change("freshness", name,
+                                f"{old_status[0]} -> {new_status[0]}"))
+
+    return Changes(str(previous.get("generated") or "unknown"),
+                   previous.get("week") if isinstance(previous.get("week"), int) else None,
+                   tuple(items),
+                   note=("" if items else
+                         "nothing material changed since the previous snapshot"))

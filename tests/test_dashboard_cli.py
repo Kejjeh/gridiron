@@ -79,7 +79,10 @@ def test_the_dashboard_renders_from_the_cache_with_no_network(tmp_path, no_netwo
     rc, html, rec = render(tmp_path, "complete")
     assert rc == 0
     assert "<title>Week 3 decision dashboard" in html
-    assert "1. Input freshness" in html and "7. Decision-time archive" in html
+    # action-first: what to do comes before the evidence behind it
+    assert "1. This week — what to do" in html
+    assert "9. Decision-time archive" in html
+    assert html.index("1. This week") < html.index("2. Inputs,") < html.index("6. Roster")
 
 
 def test_every_source_the_dashboard_reads_declares_its_freshness(tmp_path):
@@ -96,7 +99,8 @@ def test_every_source_the_dashboard_reads_declares_its_freshness(tmp_path):
     assert set(CLI.SOURCES) == {"sleeper_league", "sleeper_players", "injuries", "schedules",
                                 "weekly_stats", "snap_counts", "crosswalk"}
     _, html, _ = render(tmp_path, "complete")
-    block = html.split("1. Input freshness")[1].split("2. How the baseline")[0]
+    block = html.split("2. Inputs, and what they are good enough for")[1] \
+        .split("3. Since the last snapshot")[0]
     for s in CLI.SOURCES:
         assert f"<td>{s}</td>" in block, f"{s} has no freshness line"
 
@@ -133,7 +137,7 @@ def test_complete_projects_matches_and_recommends_with_labels(tmp_path):
     for u in rec["upgrades"]:
         assert u["drop_id"] in roster_ids and u["kind"] in ("lineup", "depth")
     assert any(u["kind"] == "lineup" and u["lineup_gain"] > 0 for u in rec["upgrades"])
-    assert "with the drop" in html
+    assert "Acquisitions — shortlist, with what each one costs" in html
     # evaluation ran, and does not claim calibration
     assert "evaluated chronologically" in rec["evaluation"]["verdict"]
     assert rec["evaluation"]["pwin_calibrated"] is False
@@ -171,6 +175,157 @@ def test_stale_inputs_are_shown_labelled_and_the_banner_is_up(tmp_path):
     assert rec["matchup"]["pwin"] is not None
     rc2, *_ = render(tmp_path / "again", "stale", "--fail-on-degraded")
     assert rc2 == 1
+
+
+def test_stale_inputs_withhold_every_action_but_keep_the_comparison(tmp_path):
+    """Regression, source review at f82623e: that commit rendered this exact
+    scenario — 120h-old league, player dump, injuries and box scores, with
+    `degraded=True` — and still emitted TWO lineup alternatives and THREE
+    waiver upgrades, with `lineup_abstained` empty and nothing marking any of
+    it as unsupported. A DEGRADED banner over live-looking advice is not a
+    gate; it is a disclaimer the reader learns to scroll past.
+
+    The fix withholds the ACTIONS and keeps the EVIDENCE: old information is
+    still information as long as it is labelled as old, and deleting it would
+    leave the owner with nothing at all on a bad cache.
+    """
+    rc, html, rec = render(tmp_path, "stale")
+    assert rc == 0 and rec["degraded"]
+
+    # the actions are all withheld: not one of them is endorsed
+    assert rec["actionable"] == 0, "a stale cache endorsed an action"
+    assert rec["actions"], "withholding must not mean silence"
+    assert all(a["status"] == "WITHHELD" for a in rec["actions"])
+    assert set(rec["withheld_actions"]) >= {"lineup", "waiver"}
+
+    # ...and each one says which input is stale and what to check
+    for a in rec["actions"]:
+        assert a["withheld_reasons"] and a["verify"]
+        assert "STALE" in " ".join(a["withheld_reasons"])
+
+    # the gate record is explicit enough for a later grader to tell an action
+    # this page ENDORSED from one it merely displayed
+    assert rec["gate"]["lineup"]["allowed"] is False
+    assert rec["gate"]["waiver"]["allowed"] is False
+    assert any(b["source"] == "sleeper_league" for b in rec["gate"]["lineup"]["blockers"])
+
+    # the comparisons behind them survive, exactly as before the fix
+    assert len(rec["alternatives"]) == 2
+    assert len(rec["upgrades"]) == 3
+    assert rec["current_points"] > 0 and rec["best_points"] >= rec["current_points"]
+
+    # and the page says which of the two it is showing
+    assert "Not advice right now." in html
+    assert "last known picture" in html
+    assert "No action is endorsed on this data." in html
+
+
+def test_a_fresh_cache_still_endorses_its_actions(tmp_path):
+    """The gate has to be able to open, or it is just a broken page."""
+    _, html, rec = render(tmp_path, "complete")
+    assert rec["withheld_actions"] == []
+    assert rec["actionable"] == len(rec["actions"]) > 0
+    assert all(a["status"] == "ACTIONABLE" for a in rec["actions"])
+    assert "No action is endorsed" not in html
+
+
+def test_the_page_leads_with_actions_and_demotes_uncalibrated_win_probability(tmp_path):
+    _, html, rec = render(tmp_path, "complete")
+    assert html.index("1. This week — what to do") < html.index("7. Matchup")
+    # P(win) is present, labelled, and behind a disclosure rather than in the
+    # headline: rule #7 denominates decisions in DP(win), and this baseline has
+    # never been calibrated, so it ranks nothing.
+    assert "UNCALIBRATED" in html
+    assert "not used to rank any action above" in html
+    for a in rec["actions"]:
+        assert "P(win)" not in a["headline"]
+    # the deadline on a lineup action is a real kickoff, not a placeholder
+    lineup_actions = [a for a in rec["actions"] if a["kind"] in ("swap", "inactive_starter",
+                                                                "empty_slot")]
+    assert lineup_actions
+    assert all(a["deadline_note"] for a in lineup_actions)
+    assert any(a["backup"] for a in lineup_actions)
+
+
+def test_protected_players_are_named_on_the_page_not_silently_dropped(tmp_path):
+    _, html, rec = render(tmp_path, "complete")
+    assert rec["protected_from_drop"], "the fixture roster holds an IR player and a DST"
+    assert "Protected from the drop list" in html
+    for row in rec["protected_from_drop"]:
+        assert row["reason"]
+    # eligibility is never asserted from the cache
+    assert "UNVERIFIED" in html and "transactions feed" in html
+    assert "Add now" not in html
+
+
+def test_a_second_render_reports_what_changed_since_the_first(tmp_path):
+    """The archive diff reads two frozen pages and recomputes nothing."""
+    from datetime import timedelta
+    root = tmp_path / "complete"
+    SCN.build_scenario(root, "complete", now=NOW)
+    arch = tmp_path / "arch"
+    common = ["--cache-root", str(root), "--owner", "fixture_owner", "--write",
+              "--archive-root", str(arch)]
+    CLI.main([*common, "--out-dir", str(tmp_path / "o1"), "--now", NOW.isoformat()])
+    later = NOW + timedelta(hours=2)
+    CLI.main([*common, "--out-dir", str(tmp_path / "o2"), "--now", later.isoformat()])
+    rec = json.loads((tmp_path / "o2" / "dashboard_latest.json").read_text("utf-8"))
+    assert rec["changes"] is not None
+    assert rec["changes"]["previous"].startswith("2026-09-26")
+    # nothing about the cache changed between the two renders, so the diff is
+    # empty and says so rather than inventing news
+    assert rec["changes"]["items"] == []
+    assert "nothing material changed" in rec["changes"]["note"]
+
+
+# -------------------------------------------------------- partial schedule
+
+def test_a_half_readable_schedule_freezes_by_name_and_invents_nothing(tmp_path):
+    """End-to-end for the first three source-review findings at once.
+
+    The fixture damages two week-3 rows: one loses its `gametime`, one its
+    `gameday`. At f82623e the first became a 13:00 ET kickoff out of thin air
+    and the second vanished, so all four teams read as unlocked or on a bye and
+    every swap involving them was offered as legal.
+    """
+    rc, html, rec = render(tmp_path, "partial_schedule")
+    assert rc == 0 and rec["degraded"]
+    locks = rec["locks"]
+    assert locks["complete"] is False
+    assert len(locks["time_unknown"]) == 4, "both damaged games' teams are named"
+    assert locks["timed_teams"], "the games that DID parse are still usable"
+    assert not set(locks["time_unknown"]) & set(locks["timed_teams"])
+
+    # no invented kickoff, and no missing team silently read as a bye
+    assert any("no kickoff time" in p for p in locks["problems"])
+    # the unreadable value is echoed VERBATIM rather than substituted, which is
+    # how a reader can tell the parser refused it instead of repairing it
+    assert any("'not-a-date 13:00'" in p for p in locks["problems"])
+    # and neither damaged game contributed a kickoff to the timed set
+    assert len(locks["timed_teams"]) == 28
+
+    # the schedule is FRESH on disk and still gates the actions, because a
+    # file's timestamp says nothing about whether its contents parse
+    sched = next(s for s in rec["sources"] if s.startswith("schedules"))
+    assert "FRESH" in sched
+    assert rec["gate"]["lineup"]["allowed"] is False
+    assert "not fully readable" in rec["gate"]["lineup"]["blockers"][0]["reason"]
+    assert rec["actionable"] == 0
+
+    # per-player: an unknown-lock player is frozen by name, never moved
+    unknown = [p for p in rec["roster"] if not p["lock_known"]]
+    assert unknown, "the damaged games must reach at least one roster player"
+    frozen = {f["sleeper_id"] for f in rec["frozen"]}
+    for p in unknown:
+        assert p["sleeper_id"] in frozen or p["lineup"] == "IR"
+        assert "UNKNOWN" in p["lock_note"]
+    # ...and none of them is proposed in a swap
+    unknown_ids = {p["sleeper_id"] for p in unknown}
+    for a in rec["alternatives"]:
+        assert a["bench_id"] not in unknown_ids
+        assert a["starter_id"] not in unknown_ids
+
+    assert "INCOMPLETE" in html and "no time was invented" in html
 
 
 # ------------------------------------------------------------------ missing
