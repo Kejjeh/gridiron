@@ -267,7 +267,7 @@ def _game(week, home, away, day, time_="13:00"):
 
 
 def test_a_week_that_simply_stops_early_is_not_a_league_of_byes():
-    """The reviewer's exact frame. Every row parses; nothing is damaged; and
+    """The first reviewer frame. Every row parses; nothing is damaged; and
     the week is still missing half the teams the frame knows about."""
     sched = _sched([_game(2, "BUF", "MIA", "2026-09-13"),
                     _game(3, "NYJ", "NE", "2026-09-20")])
@@ -275,27 +275,104 @@ def test_a_week_that_simply_stops_early_is_not_a_league_of_byes():
 
     assert idx.rows_intact, "nothing about the rows that arrived is wrong"
     assert not idx.complete, "and that is not the same as the week being whole"
-    assert idx.proven_bye == frozenset()
-    assert not idx.extends_past
+    assert idx.declared_bye == frozenset()
 
     lock = lock_state("BUF", idx, NOW)
     assert lock.state == UNKNOWN and not lock.movable
-    assert "not evidence that every row arrived" in lock.note
+    assert "does not declare a bye" in lock.note
     # the teams that DID arrive are unaffected
     assert lock_state("NYJ", idx, NOW).state in (OPEN, "LOCKED")
 
 
-def test_a_bye_is_proven_by_games_on_both_sides_of_the_gap():
-    """The honest case must still work, or every bye week freezes the board."""
+def test_a_bracketed_gap_is_not_a_bye_either():
+    """The second reviewer frame, and the reason bracketing was removed.
+
+    BUF plays in week 2 AND week 4, so the week-3 gap is bracketed on both
+    sides by the frame's own rows — the shape the previous rule accepted as
+    proof of a bye. It proves nothing: this is exactly what deleting one
+    week-3 row looks like, and the surviving rows cannot tell the two apart.
+    """
     sched = _sched([_game(2, "BUF", "MIA", "2026-09-13"),
+                    _game(2, "NYJ", "NE", "2026-09-13"),
                     _game(3, "NYJ", "NE", "2026-09-20"),
-                    _game(4, "BUF", "NYJ", "2026-09-27")])
+                    _game(4, "BUF", "MIA", "2026-09-27"),
+                    _game(4, "NYJ", "NE", "2026-09-27")])
     idx = kickoff_index(sched, 3)
-    assert idx.extends_past and idx.proven_bye == frozenset({"BUF"})
-    lock = lock_state("BUF", idx, NOW)
+
+    assert idx.rows_intact and idx.extends_past
+    assert idx.declared_bye == frozenset()
+    for team in ("BUF", "MIA"):
+        lock = lock_state(team, idx, NOW)
+        assert lock.state == UNKNOWN and not lock.movable, team
+        assert "look identical from here" in lock.note
+
+
+def _full_season(weeks=6, teams=("AAA", "BBB", "CCC", "DDD", "EEE", "FFF")):
+    """Every team playing every week: a frame with no gaps at all."""
+    rows = []
+    for week in range(1, weeks + 1):
+        day = f"2026-09-{5 + week * 2:02d}"
+        for i in range(0, len(teams), 2):
+            rows.append(_game(week, teams[i], teams[i + 1], day))
+    return rows
+
+
+def test_deleting_one_real_game_from_a_full_season_frame_is_not_a_bye():
+    """The case the goal names: a complete frame, minus one genuine row.
+
+    Nothing else about the frame changes. Every remaining row parses, the
+    frame still runs to week 6, and the two teams whose game was removed are
+    bracketed by games before and after. The deletion is invisible to every
+    property of the surviving rows — which is why no property of the
+    surviving rows is allowed to decide it.
+    """
+    full = _full_season()
+    idx_full = kickoff_index(_sched(full), 3)
+    assert lock_state("AAA", idx_full, NOW).state in (OPEN, "LOCKED")
+
+    cut = [r for r in full
+           if not (r["week"] == 3 and r["home_team"] == "AAA")]
+    assert len(cut) == len(full) - 1, "exactly one real game removed"
+    idx = kickoff_index(_sched(cut), 3)
+
+    # Indistinguishable from the complete frame by every damage signal.
+    assert idx.rows_intact and idx.extends_past and idx.problems == ()
+    assert idx.declared_bye == frozenset()
+    for team in ("AAA", "BBB"):
+        lock = lock_state(team, idx, NOW)
+        assert lock.state == UNKNOWN and not lock.movable, team
+    # and the teams whose rows survived are untouched
+    assert lock_state("CCC", idx, NOW).state in (OPEN, "LOCKED")
+
+
+def test_a_schedule_that_declares_a_bye_is_believed():
+    """Removing the inference must not make a real bye unrenderable forever:
+    a source that STATES the bye is taken at its word."""
+    rows = _full_season()
+    rows = [r for r in rows if not (r["week"] == 3 and r["home_team"] == "AAA")]
+    rows.append({"week": 3, "home_team": "AAA", "away_team": "",
+                 "gameday": "", "gametime": "", "game_type": "BYE"})
+    rows.append({"week": 3, "home_team": "BBB", "away_team": "",
+                 "gameday": "", "gametime": "", "game_type": "BYE"})
+    idx = kickoff_index(_sched(rows), 3)
+
+    assert idx.declared_bye == frozenset({"AAA", "BBB"})
+    assert idx.rows_intact and idx.partial_rows == 0
+    lock = lock_state("AAA", idx, NOW)
     assert lock.state == OPEN and lock.movable and "BYE" in lock.note
-    # MIA plays only in week 2: nothing brackets its absence.
-    assert lock_state("MIA", idx, NOW).state == UNKNOWN
+
+
+def test_a_declared_bye_that_contradicts_a_real_game_loses():
+    """A schedule saying both things about one team has not established the
+    bye. The timed game is evidence; the declaration beside it is dropped."""
+    rows = _full_season()
+    rows.append({"week": 3, "home_team": "AAA", "away_team": "",
+                 "gameday": "", "gametime": "", "game_type": "BYE"})
+    idx = kickoff_index(_sched(rows), 3)
+
+    assert idx.declared_bye == frozenset()
+    assert any("declares a week-3 bye and also carries" in p for p in idx.problems)
+    assert lock_state("AAA", idx, NOW).state in (OPEN, "LOCKED")
 
 
 def test_two_rows_giving_one_team_two_kickoffs_establish_neither():

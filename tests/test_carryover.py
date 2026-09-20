@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from gridiron import carryover
+from gridiron import ingest as ing
 from gridiron.decisions import archive_path, list_archives, read_archive, write_archive
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -231,7 +232,8 @@ def test_the_cli_reports_without_naming_a_player(tmp_path, capsys):
     store, ledger = tmp_path / "store", tmp_path / "ledger"
     _store_one(store, 3, NOW, roster=[{"name": "Some Player", "sleeper_id": "x"}])
     rc = CARRY_CLI.main(["restore", "--store", str(store), "--ledger", str(ledger),
-                         "--season", "2026", "--now", (NOW + timedelta(hours=1)).isoformat()])
+                         "--cache-root", str(tmp_path / "cache"), "--season", "2026",
+                         "--now", (NOW + timedelta(hours=1)).isoformat()])
     out = capsys.readouterr().out
     assert rc == 0
     assert "Some Player" not in out
@@ -241,6 +243,281 @@ def test_the_cli_reports_without_naming_a_player(tmp_path, capsys):
 def test_the_cli_can_be_told_to_fail_when_nothing_was_carried(tmp_path, capsys):
     rc = CARRY_CLI.main(["restore", "--store", str(tmp_path / "nope"),
                          "--ledger", str(tmp_path / "ledger"), "--season", "2026",
-                         "--require"])
+                         "--cache-root", str(tmp_path / "cache"), "--require"])
     assert rc == 1
-    assert "carried nothing" in capsys.readouterr().err
+    # `--require` is about the decision RECORDS. An empty input carry is the
+    # normal state of a run whose refresh worked, so it must never fail one.
+    assert "carried no decision record" in capsys.readouterr().err
+
+
+# ------------------------------------------- carrying the INPUTS, not just the
+# conclusions. The records alone left a hole: a clean runner whose refresh fails
+# has no cache, so it cannot rebuild ANY page — the render exited 2, the run
+# produced nothing, and the summary said "Built." These run the real drivers
+# (the carryover CLI and the dashboard CLI) over two isolated runner
+# directories, because the hole was in the drivers, not in the copy helper.
+
+def _runner(tmp_path: Path, tag: str) -> tuple[Path, Path, Path]:
+    """One ephemeral runner: its own cache root, ledger and output dir."""
+    base = tmp_path / tag
+    cache, ledger, out = base / "cache", base / "ledger", base / "out"
+    for d in (cache, ledger, out):
+        d.mkdir(parents=True, exist_ok=True)
+    return cache, ledger, out
+
+
+def _carry(action: str, store: Path, cache: Path, ledger: Path, now: datetime) -> int:
+    return CARRY_CLI.main([action, "--store", str(store), "--ledger", str(ledger),
+                           "--cache-root", str(cache), "--season", "2026",
+                           "--now", now.isoformat()])
+
+
+def _render_cli(cache: Path, ledger: Path, out: Path, now: datetime) -> int:
+    return CLI.main(["--cache-root", str(cache), "--owner", "fixture_owner",
+                     "--write", "--out-dir", str(out), "--archive-root", str(ledger),
+                     "--now", now.isoformat()])
+
+
+def test_a_second_runner_with_every_refresh_failed_still_renders_last_known(tmp_path):
+    """The acceptance case, end to end, through the actual command lines.
+
+    Run one: refreshes succeed, a page is built, records AND inputs are
+    published. Run two: a different directory with an empty cache, standing in
+    for a clean hosted runner on which every refresh failed. It must still
+    produce a usable page that dates its evidence to run one's pull, withholds
+    every action, and leaves run one's frozen record untouched.
+    """
+    store = tmp_path / "store"
+    t1 = SCN.NOW
+    t2 = t1 + timedelta(hours=6)
+
+    # ---- run one -----------------------------------------------------------
+    cache1, ledger1, out1 = _runner(tmp_path, "run1")
+    SCN.build_scenario(cache1, "complete", now=t1)
+    assert _carry("restore", store, cache1, ledger1, t1) == 0
+    assert _render_cli(cache1, ledger1, out1, t1) == 0
+    assert _carry("publish", store, cache1, ledger1, t1) == 0
+
+    rec1 = json.loads((out1 / "dashboard_latest.json").read_text("utf-8"))
+    frozen = sorted((store / "season2026").glob("*.json"))
+    assert len(frozen) == 1
+    before = frozen[0].read_bytes()
+    assert (store / carryover.INPUTS_DIR / "season2026" / "manifest.json").is_file()
+
+    # ---- run two: nothing on disk, and no refresh will fill it --------------
+    cache2, ledger2, out2 = _runner(tmp_path, "run2")
+    assert not list(cache2.rglob("*.json")), "the second runner starts empty"
+    # Before the input carry existed, this render returned 2 and wrote nothing.
+    assert _render_cli(cache2, ledger2, out2, t2) == 2
+
+    assert _carry("restore", store, cache2, ledger2, t2) == 0
+    assert _render_cli(cache2, ledger2, out2, t2) == 0, \
+        "a failed refresh must still produce a page from last-good inputs"
+
+    rec2 = json.loads((out2 / "dashboard_latest.json").read_text("utf-8"))
+    # Honest: the page is degraded, dated to run one, and recommends nothing.
+    assert rec2["degraded"] is True
+    assert rec2["actionable"] == 0
+    assert set(rec2["withheld_actions"]) == {"lineup", "waiver", "matchup"}
+    assert all("CARRIED FORWARD" in line for line in rec2["sources"])
+    for line in rec2["sources"]:
+        assert t1.strftime("%Y-%m-%d") in line, \
+            "every source is dated to the pull that actually fetched it"
+    # Usable: it can still compare itself against the page run one froze.
+    assert rec2["changes"] is not None
+    assert rec2["changes"]["previous"] == rec1["generated"]
+    # No card gives an instruction.
+    for action in rec2["actions"]:
+        text = f"{action['title']} {action['body']}".lower()
+        for imperative in ("consider claiming", "add ", "start ", "drop ", "fill "):
+            assert not text.startswith(imperative), action["title"]
+
+    # ---- and run one's record is byte-for-byte what it was -----------------
+    assert frozen[0].read_bytes() == before
+
+
+def test_a_carried_input_never_displaces_one_this_run_pulled(tmp_path):
+    """A refresh that WORKED outranks anything in the store, always. The
+    carry is a floor under a failed run, never a source of truth."""
+    store = tmp_path / "store"
+    t1, t2 = SCN.NOW, SCN.NOW + timedelta(hours=6)
+    cache1, ledger1, _out1 = _runner(tmp_path, "src")
+    SCN.build_scenario(cache1, "stale", now=t1)
+    carryover.publish_inputs(ing.season_cache(2026, cache1), store,
+                             season=2026, now=t1)
+
+    cache2, _l2, _o2 = _runner(tmp_path, "fresh")
+    SCN.build_scenario(cache2, "complete", now=t2)
+    live = ing.Manifest.load(ing.season_cache(2026, cache2), 2026)
+    before = {n: e.as_of for n, e in live.entries.items()}
+
+    report = carryover.restore_inputs(store, ing.season_cache(2026, cache2),
+                                      season=2026, now=t2)
+    after = ing.Manifest.load(ing.season_cache(2026, cache2), 2026)
+    assert before == {n: e.as_of for n, e in after.entries.items()}
+    assert not any(e.error == carryover.CARRIED_FORWARD for e in after.entries.values())
+    assert report.accepted == ()
+    assert all("already has its own copy" in v.reason for v in report.rejected)
+
+
+def test_inputs_too_old_to_render_from_are_refused(tmp_path):
+    """Records stay useful for weeks; a roster does not. Past the input limit
+    the carry declines rather than rendering a board from last month."""
+    store = tmp_path / "store"
+    cache1, _l, _o = _runner(tmp_path, "old")
+    SCN.build_scenario(cache1, "complete", now=SCN.NOW)
+    carryover.publish_inputs(ing.season_cache(2026, cache1), store,
+                             season=2026, now=SCN.NOW)
+
+    much_later = SCN.NOW + timedelta(days=carryover.INPUT_MAX_AGE_DAYS + 2)
+    cache2, _l2, _o2 = _runner(tmp_path, "empty")
+    report = carryover.restore_inputs(store, ing.season_cache(2026, cache2),
+                                      season=2026, now=much_later)
+    assert report.accepted == ()
+    assert "past the" in report.rejected[0].reason
+    assert not list((ing.season_cache(2026, cache2)).glob("*"))
+
+
+def test_inputs_stamped_in_the_future_are_refused(tmp_path):
+    """The same rule the records live under: a carried file may never present
+    itself as newer than the run reading it."""
+    store = tmp_path / "store"
+    cache1, _l, _o = _runner(tmp_path, "ahead")
+    SCN.build_scenario(cache1, "complete", now=SCN.NOW)
+    carryover.publish_inputs(ing.season_cache(2026, cache1), store,
+                             season=2026, now=SCN.NOW)
+
+    verdict, blob = carryover.inspect_inputs(store, season=2026,
+                                             now=SCN.NOW - timedelta(days=2))
+    assert not verdict.accepted and "future" in verdict.reason
+    assert blob == {}
+
+
+def test_another_seasons_inputs_are_not_this_seasons_history(tmp_path):
+    store = tmp_path / "store"
+    cache1, _l, _o = _runner(tmp_path, "s2026")
+    SCN.build_scenario(cache1, "complete", now=SCN.NOW)
+    carryover.publish_inputs(ing.season_cache(2026, cache1), store,
+                             season=2026, now=SCN.NOW)
+    # The store now holds season 2026 under its own folder; asking for 2025
+    # must find nothing rather than reading 2026's files as 2025's.
+    verdict, _blob = carryover.inspect_inputs(store, season=2025, now=SCN.NOW)
+    assert not verdict.accepted
+
+    # And a manifest whose contents disagree with the folder it sits in.
+    index = store / carryover.INPUTS_DIR / "season2026" / "manifest.json"
+    blob = json.loads(index.read_text("utf-8"))
+    blob["season"] = "not a year"
+    index.write_text(json.dumps(blob), encoding="utf-8")
+    verdict, _blob = carryover.inspect_inputs(store, season=2026, now=SCN.NOW)
+    assert not verdict.accepted and "not season" in verdict.reason
+
+
+# --------------------------------------------- a malformed record is REJECTED,
+# not a crash. `int(blob.get("season") or 0)` raised ValueError on a record
+# whose season was the string "invalid": the validator handed the malformed
+# file the power to stop the whole restore, which is precisely the outcome
+# validation exists to prevent. Every field read out of a restored record is
+# now read totally, and one bad file costs only itself.
+
+def _write_raw(store: Path, name: str, blob: object) -> Path:
+    folder = store / "season2026"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / name
+    path.write_text(json.dumps(blob, default=str), encoding="utf-8")
+    return path
+
+
+def test_a_record_whose_season_is_not_a_year_is_refused_not_raised(tmp_path):
+    bad = _write_raw(tmp_path / "store", "week03_20260926T120000Z.json",
+                     {"archive_version": 1, "season": "invalid", "week": 3,
+                      "generated": NOW.isoformat(timespec="seconds")})
+    verdict = carryover.inspect_archive(bad, season=2026, now=NOW)
+    assert not verdict.accepted
+    assert "is not a year" in verdict.reason
+
+
+def test_a_season_argument_that_is_not_a_year_is_refused_not_raised(tmp_path):
+    """The caller can be wrong too, and a bad argument must not be answered
+    with a confident accept."""
+    good = _store_one(tmp_path / "store", 3, NOW)
+    verdict = carryover.inspect_archive(good, season="invalid", now=NOW)
+    assert not verdict.accepted
+    assert "not a year" in verdict.reason
+
+
+def test_wrong_types_and_nulls_are_each_refused_on_their_own_terms(tmp_path):
+    """Every shape a hand-edited or half-written record can take. None of
+    these may raise, and each must name what is actually wrong with it."""
+    store = tmp_path / "store"
+    stamp = NOW.isoformat(timespec="seconds")
+    cases = {
+        "week03_20260926T120000Z.json": (
+            {"archive_version": 1, "season": None, "week": 3, "generated": stamp},
+            "season"),
+        "week04_20260926T120000Z.json": (
+            {"archive_version": 1, "season": [2026], "week": 4, "generated": stamp},
+            "season"),
+        "week05_20260926T120000Z.json": (
+            {"archive_version": 1, "season": 2026, "week": None, "generated": stamp},
+            "week"),
+        "week06_20260926T120000Z.json": (
+            {"archive_version": 1, "season": 2026, "week": {"n": 6},
+             "generated": stamp}, "week"),
+        "week07_20260926T120000Z.json": (
+            {"archive_version": 1, "season": 2026, "week": 7, "generated": None},
+            "generated"),
+        "week08_20260926T120000Z.json": (
+            {"archive_version": "one", "season": 2026, "week": 8, "generated": stamp},
+            "archive_version"),
+        "week09_20260926T120000Z.json": ([1, 2, 3], "not an object"),
+        "week10_20260926T120000Z.json": ("a string", "not an object"),
+    }
+    for name, (blob, expected) in cases.items():
+        path = _write_raw(store, name, blob)
+        verdict = carryover.inspect_archive(path, season=2026, now=NOW)
+        assert not verdict.accepted, name
+        assert expected in verdict.reason, (name, verdict.reason)
+    # `True` is an int in Python. A flag is not a season.
+    flag = _write_raw(store, "week11_20260926T120000Z.json",
+                      {"archive_version": 1, "season": True, "week": 11,
+                       "generated": stamp})
+    assert not carryover.inspect_archive(flag, season=2026, now=NOW).accepted
+
+
+def test_a_record_filed_under_the_wrong_week_is_refused(tmp_path):
+    """The digest covers the CONTENTS, so it cannot catch a name that
+    disagrees with them. A record filed under week 3 that holds week 9 would
+    be picked as week 3's previous snapshot and diffed against the wrong page.
+    """
+    store = tmp_path / "store"
+    rec = _record(9, NOW)
+    honest = write_archive(rec, archive_path(2026, 9, NOW, store, rec))
+    assert carryover.inspect_archive(honest, season=2026, now=NOW).accepted
+
+    misfiled = honest.parent / honest.name.replace("week09", "week03")
+    misfiled.write_bytes(honest.read_bytes())
+    verdict = carryover.inspect_archive(misfiled, season=2026, now=NOW)
+    assert not verdict.accepted
+    assert "week 3" in verdict.reason and "week 9" in verdict.reason
+
+
+def test_one_malformed_record_does_not_cost_the_sound_one_beside_it(tmp_path):
+    """The defect that mattered: a single unreadable field aborted `restore`,
+    so a run that had a perfectly good previous page carried nothing at all.
+    """
+    store, ledger = tmp_path / "store", tmp_path / "ledger"
+    good = _store_one(store, 4, NOW, current_points=101.0)
+    _write_raw(store, "week03_20260926T120000Z.json",
+               {"archive_version": 1, "season": "invalid", "week": 3,
+                "generated": NOW.isoformat(timespec="seconds")})
+    _write_raw(store, "week02_20260926T120000Z.json", {"nothing": "useful"})
+
+    report = carryover.restore(store, ledger, season=2026,
+                               now=NOW + timedelta(hours=1))
+    assert len(report.accepted) == 1
+    assert len(report.rejected) == 2
+    assert (ledger / "season2026" / good.name).is_file()
+    assert carryover.weeks_in(ledger, 2026) == (4,)
+    # Every refusal says what was wrong; none of them says "crashed".
+    assert all(v.reason for v in report.rejected)

@@ -91,9 +91,21 @@ jobs:
             gridiron-decisions-
 
       # Validated, not trusted: a restored file is input. Provenance (filename
-      # against contents, season, age, and a content digest) is checked in
-      # gridiron.carryover, and anything that fails is left alone and reported.
-      - name: Restore prior decision records into the ledger
+      # against contents, the week the name files it under against the week
+      # inside it, season, age, and a content digest) is checked in
+      # gridiron.carryover, and anything that fails is left alone and reported
+      # WITHOUT stopping the rest — one malformed file may not cost the run
+      # every sound record beside it.
+      #
+      # This also lays down the last-good INPUTS, because `continue-on-error`
+      # on the two refresh steps below was an empty promise on a clean runner:
+      # with no cache there is nothing to render, so a bad upstream day
+      # produced no page at all rather than a degraded one. Carried inputs
+      # keep the `as_of` of the pull that fetched them and are marked as not
+      # refreshed by this run, so the page dates its evidence honestly and
+      # withholds every action resting on them. A refresh that DOES succeed
+      # overwrites them and clears the mark for that source.
+      - name: Restore prior decision records and last-good inputs
         run: python scripts/cloud/carryover.py restore --store "$CARRY_DIR"
 
       - name: Install the approved dependencies
@@ -116,6 +128,7 @@ jobs:
         run: python scripts/ingest/pull_week.py
 
       - name: Render the dashboard
+        id: render
         # The dispatch input is passed as an ENVIRONMENT VALUE, never
         # interpolated into this script. `${{ inputs.week }}` written into a
         # run block is expanded by the runner before the shell parses it, so
@@ -128,7 +141,10 @@ jobs:
         # worth reading on a bad day, and it now withholds its own actions.
         run: python scripts/weekly/dashboard.py --write
 
-      - name: Publish this run's decision record to the store
+      # Publishes the record this run froze AND the cache it rendered from,
+      # so the next clean runner has both. A run that rendered nothing has
+      # nothing to publish and says so; it does not empty the store.
+      - name: Publish this run's decision record and inputs to the store
         if: always()
         run: python scripts/cloud/carryover.py publish --store "$CARRY_DIR"
 
@@ -142,21 +158,34 @@ jobs:
         env:
           SLEEPER_OUTCOME: ${{ steps.sleeper.outcome }}
           NFLVERSE_OUTCOME: ${{ steps.nflverse.outcome }}
+          RENDER_OUTCOME: ${{ steps.render.outcome }}
         run: |
           {
             echo '### Weekly dashboard'
-            echo 'Built. Download **dashboard** from this run; open the HTML file'
-            echo 'on any device. It is one self-contained page with no network calls.'
+            # "Built" used to be printed unconditionally, directly above the
+            # line "No dashboard was written." The header is now the render
+            # step's actual outcome; a summary that contradicts the job it
+            # summarises is worse than no summary.
+            if [ "${RENDER_OUTCOME}" = "success" ]; then
+              echo 'Built. Download **dashboard** from this run; open the HTML file'
+              echo 'on any device. It is one self-contained page with no network calls.'
+            else
+              echo "**NOT BUILT — the render step reported \`${RENDER_OUTCOME}\`.**"
+              echo 'There is no page from this run. Nothing below describes a page you'
+              echo 'can open; the last usable one is the artifact of an earlier run.'
+            fi
             echo ''
             echo 'A scheduled build keeps the SNAPSHOT current. It does not make injury'
             echo 'news timely: check the page freshness section and the withheld actions.'
             echo ''
             echo "- Sleeper refresh: **${SLEEPER_OUTCOME}**"
             echo "- nflverse pull: **${NFLVERSE_OUTCOME}**"
+            echo "- render: **${RENDER_OUTCOME}**"
             echo ''
-            echo 'History is carried in an Actions cache: evicted after 7 days unused,'
-            echo 'or sooner under the 10 GB repository limit. A broken chain shows up'
-            echo 'as "no previous snapshot" on the page, never as "nothing changed".'
+            echo 'History and last-good inputs are carried in an Actions cache: evicted'
+            echo 'after 7 days unused, or sooner under the 10 GB repository limit. A'
+            echo 'broken chain shows up as "no previous snapshot" on the page and, if'
+            echo 'the refresh also failed, as no page at all — never as "nothing changed".'
             echo ''
           } >> "$GITHUB_STEP_SUMMARY"
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"

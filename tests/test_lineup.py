@@ -169,14 +169,15 @@ def test_kickoff_locks_follow_the_schedule_in_eastern_time():
     assert lock_state("C", idx, after).state == OPEN     # Monday night not yet
 
 
-def test_a_bye_needs_a_game_on_both_sides_of_the_gap():
-    """Three absences, three different facts, and only one of them is a bye.
+def test_a_bye_is_only_ever_one_the_schedule_declares():
+    """Absence is never promoted to a bye, however the frame is shaped.
 
-    Z is missing from week 2 but plays in weeks 1 and 3, so the gap is
-    bracketed by the frame's own rows and is a scheduled bye. Y is missing
-    from week 2 and plays only in week 1, so the frame stops before it could
-    show a week-3 game: that is the shape of a truncated pull, not evidence
-    of a bye. ZZ is a name this schedule has never carried at all.
+    Z is missing from week 2 and plays in weeks 1 AND 3, so its gap is
+    bracketed on both sides — the shape that used to be accepted as proof.
+    It is not proof: deleting a real week-2 row produces exactly this. Y is
+    missing from week 2 and plays only in week 1. ZZ is a name this schedule
+    has never carried. All three are UNKNOWN, and only a team the schedule
+    explicitly DECLARES off (below) is OPEN on a bye.
     """
     sched = pd.DataFrame([
         {"week": 1, "gameday": "2026-09-13", "gametime": "13:00", "home_team": "A", "away_team": "Z"},
@@ -187,16 +188,38 @@ def test_a_bye_needs_a_game_on_both_sides_of_the_gap():
     idx = kickoff_index(sched, 2)
     now = datetime(2026, 9, 20, 18, 0, tzinfo=UTC)
 
-    bye = lock_state("Z", idx, now)
-    assert bye.state == OPEN and "BYE" in bye.note
-    assert idx.proven_bye == frozenset({"Z"})
+    assert idx.declared_bye == frozenset()
+    bracketed = lock_state("Z", idx, now)
+    assert bracketed.state == UNKNOWN and not bracketed.movable
+    assert "does not declare a bye" in bracketed.note
 
-    unbracketed = lock_state("Y", idx, now)
-    assert unbracketed.state == UNKNOWN and not unbracketed.movable
-    assert "before and after" in unbracketed.note
+    one_sided = lock_state("Y", idx, now)
+    assert one_sided.state == UNKNOWN and not one_sided.movable
 
     stranger = lock_state("ZZ", idx, now)
     assert stranger.state == UNKNOWN and "not a bye" in stranger.note
+
+
+def test_a_declared_bye_is_the_one_absence_that_opens_a_player():
+    """The schedule saying so is different in kind from the schedule being
+    silent, and it is the only difference this code acts on."""
+    sched = pd.DataFrame([
+        {"week": 1, "gameday": "2026-09-13", "gametime": "13:00",
+         "home_team": "A", "away_team": "Z", "game_type": "REG"},
+        {"week": 2, "gameday": "2026-09-20", "gametime": "13:00",
+         "home_team": "A", "away_team": "B", "game_type": "REG"},
+        {"week": 2, "gameday": "", "gametime": "",
+         "home_team": "Z", "away_team": "", "game_type": "BYE"},
+    ])
+    idx = kickoff_index(sched, 2)
+    now = datetime(2026, 9, 20, 18, 0, tzinfo=UTC)
+
+    assert idx.declared_bye == frozenset({"Z"})
+    # A declaration is not a damaged half-game row.
+    assert idx.rows_intact and idx.partial_rows == 0
+    lock = lock_state("Z", idx, now)
+    assert lock.state == OPEN and lock.movable and "BYE" in lock.note
+    assert "schedule declares" in lock.note
 
 
 def test_no_schedule_means_lock_state_unknown_not_unlocked():

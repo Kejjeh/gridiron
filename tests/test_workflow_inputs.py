@@ -97,6 +97,47 @@ def test_the_dispatched_week_reaches_python_through_the_environment():
     assert render.strip() == "python scripts/weekly/dashboard.py --write"
 
 
+def test_the_run_summary_never_claims_a_page_that_was_not_built():
+    """It used to print "Built." unconditionally — on a run where the render
+    step had failed, directly above its own line "No dashboard was written."
+    A summary that contradicts the job it summarises is worse than none.
+    """
+    text = (ROOT / ".github" / "workflows" / "dashboard-artifact.yml").read_text("utf-8")
+    summary = next(b for _n, b in _run_blocks(text) if "GITHUB_STEP_SUMMARY" in b)
+    assert "RENDER_OUTCOME" in summary, \
+        "the summary must read the render step's actual outcome"
+    assert "RENDER_OUTCOME: ${{ steps.render.outcome }}" in text
+    assert "id: render" in text, "the render step needs an id to be quotable"
+    # "Built" may only be reachable under the success branch.
+    built = summary.index("Built.")
+    guard = summary.index('if [ "${RENDER_OUTCOME}" = "success" ]')
+    assert guard < built, "the claim must sit inside the success branch"
+    assert "NOT BUILT" in summary, "and the failure branch must say so plainly"
+
+
+def test_the_summary_reports_the_outcome_of_every_step_that_can_fail_quietly():
+    """Both refresh steps are continue-on-error, so their failure is silent
+    unless the summary names it. So is the render step now that a failed
+    refresh no longer stops the page being built from carried inputs."""
+    text = (ROOT / ".github" / "workflows" / "dashboard-artifact.yml").read_text("utf-8")
+    for step in ("sleeper", "nflverse", "render"):
+        assert f"${{{{ steps.{step}.outcome }}}}" in text, step
+
+
+def test_the_carryover_steps_move_inputs_as_well_as_records():
+    """`continue-on-error` on the refresh steps is an empty promise if the
+    runner has no cache to fall back on: there is nothing to render FROM."""
+    text = (ROOT / ".github" / "workflows" / "dashboard-artifact.yml").read_text("utf-8")
+    carry = [b for _n, b in _run_blocks(text) if "cloud/carryover.py" in b]
+    assert len(carry) == 2, "one restore and one publish"
+    # Neither may opt out of the input carry.
+    assert not any("--no-inputs" in b for b in carry)
+    assert any(b.strip().startswith("python scripts/cloud/carryover.py restore")
+               for b in carry)
+    assert any(b.strip().startswith("python scripts/cloud/carryover.py publish")
+               for b in carry)
+
+
 # ----------------------------------------------------------- the validator
 
 @pytest.mark.parametrize("raw", ["", "   ", None])

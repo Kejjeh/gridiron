@@ -146,12 +146,28 @@ now every scheduled cloud run was a FIRST run: "since the last snapshot" had
 nothing to compare against and reported no change, and the frozen page died
 with the container that made it, which makes grading it next week impossible.
 
-Two steps now bracket the render. Before it, `carryover.py restore` pulls
-prior records out of a private store; after it, `carryover.py publish` puts
-this run's back. The store is a **GitHub Actions cache** keyed
+Two steps now sit either side of the render. Before it, `carryover.py restore`
+pulls prior records out of a private store; after it, `carryover.py publish`
+puts this run's back. The store is a **GitHub Actions cache** keyed
 `gridiron-decisions-<run id>` with a `gridiron-decisions-` restore prefix —
 the repository's own private storage, needing no token, no service and no new
 dependency.
+
+**The same two steps carry the last-good INPUTS**, and they have to. Carrying
+records alone left the degraded path broken: both refresh steps are
+`continue-on-error`, but on a clean runner the cache they would fall back to
+does not exist, so a run whose refresh failed had nothing to render FROM. It
+exited 2, wrote no page, failed the artifact upload — and the step summary
+said "Built." The carry now moves `manifest.json` and the frames beside it,
+bounded to 24 files / 64 MB and refused past 21 days, and every restored entry
+keeps the `as_of` of the pull that actually fetched it while being marked
+CARRIED FORWARD for this run. That mark is `Entry.error`, the existing
+"latest attempt failed" mechanism, so freshness turns the source STALE and the
+gate withholds every action resting on it. The result is the page a bad day
+should produce: last known, dated to when it was known, recommending nothing.
+A refresh that DOES succeed overwrites the file and clears the mark for that
+source, so a run where Sleeper works and nflverse does not carries exactly the
+sources that failed. A carried file never displaces one this run pulled.
 
 **Stated honestly, because it is easy to mistake for a backup: it is not
 durable storage.** An Actions cache entry is evicted after 7 days without a
@@ -164,12 +180,19 @@ is a backup, and the carry is bounded on purpose: 40 records per season, none
 older than 45 days.
 
 A restored file is **input, not history**. `gridiron.carryover` validates each
-candidate before it may count: the filename must agree with the contents (both
-the write time and an 8-hex digest of the record), the season must match, a
-record stamped in the future is refused outright — it is the one thing that
-could outrank the page being built — and anything past the age limit is left
-behind. A file that fails is reported and left exactly where it is; nothing is
-repaired, and nothing is deleted.
+candidate before it may count: the filename must agree with the contents (the
+write time, an 8-hex digest of the record, and the week the name files it
+under against the week inside it), the season must match, a record stamped in
+the future is refused outright — it is the one thing that could outrank the
+page being built — and anything past the age limit is left behind. A file that
+fails is reported and left exactly where it is; nothing is repaired, and
+nothing is deleted.
+
+Every field is read **totally**: a record whose `season` is the string
+`"invalid"` is rejected with a reason, not raised on. That was a real defect —
+`int(blob.get("season") or 0)` threw `ValueError`, so one hand-edited or
+half-written file aborted the whole restore and a run with a perfectly good
+previous page carried nothing. One bad file now costs only itself.
 
 Refresh failures in the cloud are **not fatal and never promote last-good data
 to current**. The Sleeper and nflverse steps are `continue-on-error`, so a
@@ -319,29 +342,45 @@ The three honesty invariants from milestone 1 still hold: blank is never zero,
 a missing schedule renders `?` and never BYE, and "not on this week's injury
 report" reads differently from "no injury report loaded".
 
-## Verification — decision board branch (2026-09-20, at `650d8f2`)
+## Verification — decision board branch (2026-09-20, third pass)
 
 | check | result |
 |---|---|
 | `python scripts/ci/smoke.py` | PASS — 26 imports, 30 contract files |
-| `run_summary.py -- python -m pytest` | **501 passed** (was 433 at `47708e3`, 413 at `f82623e`) |
-| `pytest tests/test_lock_and_drop_regressions.py` | 23 passed (13 at `47708e3`) |
-| `pytest tests/test_carryover.py tests/test_workflow_inputs.py` | 42 passed (both new) |
-| `dashboard_scenarios.py --screenshot` | 4 scenarios offline; all fit at a measured 375px with 0px overflow |
-| `dashboard.py --write --anonymous` (real cache) | renders, withholds all three action classes, writes a content-addressed archive, no imperative on any card |
-| `cloud/carryover.py publish` then `restore` (real ledger) | 3 records carried into an empty ledger; output names no player |
-| `ruff check --select F,E9` | clean on every file this branch touches |
+| `run_summary.py -- python -m pytest` | **518 passed** (501 at `585cb2a`, 433 at `47708e3`, 413 at `f82623e`) |
+| `pytest tests/test_carryover.py` | 26 passed (11 at `585cb2a`) |
+| `pytest tests/test_workflow_inputs.py` | 34 passed (31 at `585cb2a`) |
+| `pytest tests/test_lock_and_drop_regressions.py` | 26 passed |
+| `dashboard_scenarios.py --screenshot` | 4 scenarios offline; all fit at a measured 375px, widest element ends at 363px |
+| `dashboard.py --write --anonymous` (real cache) | renders DEGRADED, writes a content-addressed archive, nothing staged (rule #10 holds) |
+| `cloud/carryover.py publish` then `restore` (real ledger + real cache) | 4 records and 7 input files carried into an empty ledger and an empty cache; output names no player; the real cache is untouched |
+| two isolated runner directories, second with every refresh failed | run 2 renders (exit 0) from carried inputs: 0 of 3 actions endorsed, all three classes withheld, every source dated to run 1's pull, diffed against run 1's frozen page, run 1's record byte-identical afterwards |
+| `python -m compileall src/gridiron scripts` | clean |
 
-Every one of the twelve findings across the two passes was **reproduced with
-executed code before anything changed**, and each has a regression pinning the
-corrected behaviour. Two of them corrected earlier work on this same branch:
-"parsed completely ⇒ BYE" and the unconditional box-score gating exemption
-were both wrong and are both superseded, with the superseding rows recorded in
-`docs/DECISIONS.md` rather than the originals being edited away.
+All fifteen findings across the three passes were **reproduced with executed
+code before anything changed**, and each has a regression pinning the
+corrected behaviour. Four of them corrected earlier work on this same branch,
+and the superseding rows are recorded in `docs/DECISIONS.md` rather than the
+originals being edited away:
+
+* "parsed completely ⇒ BYE" (first pass) was replaced by bracketing (second
+  pass), and **bracketing is now removed outright** (third pass). Delete one
+  real game from a full season frame and the teams are still bracketed by the
+  weeks either side, every row still parses, and the deletion is handed back
+  as a confirmed bye. Nothing replaced it: absence is UNKNOWN unless the
+  schedule declares a bye.
+* the unconditional box-score gating exemption was replaced by coverage
+  gating.
+* the withheld waiver card's body still opened `add X, drop Y` — the
+  second pass fixed the headline and left the imperative in the first words
+  of the sentence under it. Found by reading the carried-forward page this
+  pass produced.
 
 **Not executed:** no real device was used for the phone check (it is a
-headless-browser measurement), and the dashboard workflow itself has never
-run — including its new cache steps.
+headless-browser measurement); `ruff` is not installed in this container, so
+the lint line of earlier passes is replaced by `compileall` above; and the
+dashboard workflow itself has still never run — including the cache steps and
+the input carry. The two-run evidence above is synthetic and local.
 
 ## Verification (all green, 2026-09-17 — main, before this branch)
 
@@ -439,7 +478,9 @@ narrow it is the owner's call.
    dispatch is also the first test of the carry: run it TWICE and confirm the
    second run's summary reports "since the last snapshot" against the first
    rather than "no previous snapshot", and that neither summary names a
-   player.
+   player. The second run is also the first live check that the INPUT carry
+   restores a cache — its log should show `restore-inputs` laying files down
+   from the first run rather than "no carried inputs in the store".
 4. **First graded week.** After week 3 finals land in the cache, grade the
    week-3 archive: `gridiron.decisions.grade_archive(read_archive(path),
    actuals)` with actuals = week-3 `league_points` by gsis id from the
@@ -487,8 +528,8 @@ narrow it is the owner's call.
 | Abstain, never guess | mean=None with a reason for: no admissible box score, DST, no pooled QB/K prior, unresolved id, incomplete scoring columns; withheld (0, model mean kept visible) for bye / Out / IR | `test_it_abstains_*`, `test_withheld_keeps_the_model_mean_visible`, `test_missing_inputs_abstain_everywhere_and_fill_nothing_in` |
 | Rule #11 | Questionable / Doubtful are flagged on the row and NEVER adjusted; a designation from a stale player pull is labelled STALE, and an Out from a stale pull says so | `test_complete_projects_matches_and_recommends_with_labels`, `test_stale_inputs_are_shown_labelled_...` |
 | Lineups are legal | Position/FLEX eligibility, nobody twice, nobody off IR, nobody moved after kickoff; an unprojected starter is frozen (not swapped out), an unprojected bench player is never proposed | `test_lineup.py`, `test_the_best_lineup_is_legal_under_the_locks` |
-| Lock state unknown ⇒ never movable | Locks are three-valued. No schedule at all ⇒ `kickoff_index` is None ⇒ start/sit and upgrades both refuse. A game with no readable kickoff time ⇒ UNKNOWN for both teams, never a guessed 13:00. A team absent from an INCOMPLETE week ⇒ UNKNOWN, not a bye. Only OPEN is movable | `test_unknown_lock_state_abstains_from_everything`, `test_a_game_with_no_kickoff_time_is_unknown_not_one_oclock`, `test_a_week_that_could_not_be_read_is_never_a_league_wide_bye`, `test_a_partially_readable_week_freezes_only_the_players_it_cannot_time` |
-| A proven bye is distinguished from ignorance | "No game this week" is OPEN only when the frame shows the team playing BOTH BEFORE AND AFTER this week — a gap bracketed by real rows — and the week's rows are intact. Parsing every row that arrived is not evidence that every row arrived, so a frame that simply stops early yields UNKNOWN, not a league of byes | `test_a_bye_needs_a_game_on_both_sides_of_the_gap`, `test_a_week_that_simply_stops_early_is_not_a_league_of_byes`, `test_a_bye_is_proven_by_games_on_both_sides_of_the_gap` |
+| Lock state unknown ⇒ never movable | Locks are three-valued. No schedule at all ⇒ `kickoff_index` is None ⇒ start/sit and upgrades both refuse. A game with no readable kickoff time ⇒ UNKNOWN for both teams, never a guessed 13:00. A team absent from ANY week ⇒ UNKNOWN unless a bye is declared. Only OPEN is movable | `test_unknown_lock_state_abstains_from_everything`, `test_a_game_with_no_kickoff_time_is_unknown_not_one_oclock`, `test_a_week_that_could_not_be_read_is_never_a_league_wide_bye`, `test_a_partially_readable_week_freezes_only_the_players_it_cannot_time` |
+| A bye is DECLARED, never inferred | "No game this week" is OPEN only when the schedule itself declares a bye for that team (`game_type: BYE`). Absence alone is UNKNOWN, with no exceptions: neither "every row parsed" nor "the team plays before and after the gap" is evidence, because deleting one real row from a full season frame produces both of those shapes. nflverse declares no byes, so absences are UNKNOWN in practice | `test_deleting_one_real_game_from_a_full_season_frame_is_not_a_bye`, `test_a_bracketed_gap_is_not_a_bye_either`, `test_a_schedule_that_declares_a_bye_is_believed` |
 | A schedule that contradicts itself establishes nothing | Two week rows giving one team two different kickoffs discard BOTH times and mark the team UNKNOWN; a row naming only one team is half a game, so its kickoff is not trusted either; a row listing one team on both sides is dropped | `test_two_rows_giving_one_team_two_kickoffs_establish_neither`, `test_a_row_naming_one_team_is_half_a_game_and_times_nobody`, `test_a_row_listing_one_team_on_both_sides_is_not_a_game` |
 | Stale inputs withhold the ACTIONS, not the evidence | `gridiron.gating` gates lineup / waiver / matchup on the league snapshot, player dump, injuries and schedule. A withheld action keeps its comparison, loses its imperative, and names what to verify. The archive records which actions were endorsed | `test_stale_inputs_withhold_every_action_but_keep_the_comparison`, `test_a_fresh_cache_still_endorses_its_actions` |
 | A withheld card loses the instruction, not just the badge | A WITHHELD action renders neutral last-known wording ("the last snapshot ranked X above your cheapest legal drop"), anchored to the snapshot's as-of time, above the explanation. "Consider claiming", "Fill it with" and "start X over Y" appear only on endorsed cards | `test_a_withheld_card_states_the_last_known_picture_not_an_instruction`, `test_a_fresh_page_still_gives_the_instruction` |
@@ -521,12 +562,15 @@ narrow it is the owner's call.
   there is one week of box scores, so nothing can be evaluated yet. The
   page carries the verdict either way; the verdict changes only when the
   cache does.
-- **A bye needs a frame that extends past the week.** Bracketing is what
-  proves a bye, so on the LAST week a schedule frame carries, no absence can
-  be confirmed and every absent team's players are frozen as UNKNOWN. That is
-  the safe direction and it is visible on the page, but it means a board
-  rendered against a truncated or end-of-season frame will freeze more than a
-  complete one would. Nothing invents the missing rows.
+- **Real byes freeze players, because nothing available here declares one.**
+  Absence is no longer read as a bye under any condition, and the nflverse
+  schedule carries no bye declaration (`game_type` is REG/WC/DIV/CON/SB). So
+  on a genuine bye week, that team's players come back UNKNOWN and are frozen
+  — the page says exactly why, per player, and freezes nothing else. This is
+  the deliberate cost of the repair: the previous rules were cheaper and both
+  were wrong, and the safe direction is to decline rather than to guess. It
+  ends the day a source states its byes; `lineup.BYE_GAME_TYPES` is where that
+  would be read, and it needs no other change.
 - **Provenance is integrity, not authenticity.** The digest check proves a
   restored record has not been edited or renamed since it was written. It is
   not a signature: anyone who could write to the store could also write a
@@ -614,5 +658,7 @@ narrow it is the owner's call.
 - No inference of what the owner did from what the roster looks like. The
   roster still holding a player proves nobody removed him, not that anyone
   chose to keep him, and grading now says so instead of assuming.
-- No league-size constant or bye table hardcoded to decide schedule
-  completeness. A bye is proven from the frame's own rows or it is UNKNOWN.
+- No league-size constant, bye table, or any other rule that turns an absent
+  team into a bye. The schedule declares one or the answer is UNKNOWN.
+- No second guess after removing the first. Bracketing was itself the
+  replacement for "the week parsed cleanly"; nothing replaced bracketing.

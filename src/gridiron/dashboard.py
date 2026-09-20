@@ -192,7 +192,7 @@ class Dashboard:
                 "timed_teams": sorted(self.locks.kickoffs),
                 "time_unknown": sorted(self.locks.time_unknown),
                 "conflicting": sorted(self.locks.conflicting),
-                "proven_bye": sorted(self.locks.proven_bye),
+                "declared_bye": sorted(self.locks.declared_bye),
                 "partial_rows": self.locks.partial_rows,
                 "slate_short": self.locks.slate_short,
                 "dropped_rows": self.locks.dropped_rows,
@@ -406,15 +406,16 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             f"kickoff could not be established are frozen and named; no time was "
             f"invented for them and no missing team was read as a bye. "
             + "; ".join(kickoffs.problems[:4]))
-    elif kickoffs.slate_short and not kickoffs.extends_past:
+    elif kickoffs.slate_short > len(kickoffs.declared_bye):
         # Not damage, and not a reason to withhold every action: the rows that
         # arrived are all sound. It only means absence cannot be read as a bye,
         # which `lock_state` already handles one player at a time.
+        unexplained = kickoffs.slate_short - len(kickoffs.declared_bye)
         notes.append(
-            f"kickoff schedule ends at week {kickoffs.week}, and "
-            f"{kickoffs.slate_short} team(s) the schedule knows about have no "
-            f"game row this week. With no later week to compare against, those "
-            f"absences are UNKNOWN rather than byes, and any player on those "
+            f"{unexplained} team(s) this schedule knows about have no week-"
+            f"{kickoffs.week} game row and no declared bye. A week off and a "
+            f"row that never arrived look the same from here, so those "
+            f"absences are UNKNOWN rather than byes and any player on those "
             f"teams is frozen.")
 
     extra: dict[str, list[tuple[str, str]]] = {}
@@ -816,11 +817,21 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
             f"shortlist below applies with the same drop",
             neutral_headline=(f"The last snapshot ranked {u.add.name} "
                               f"({u.add.position}) above your cheapest legal drop"),
-            neutral_detail=(f"{u.describe()}, {seen}. The drop it costs is "
-                            f"{u.drop.name} ({u.drop.position}, "
-                            f"{_num(u.drop.value, 2)} projected that week). "
-                            f"Eligibility {elig.state} in that snapshot too: this "
-                            f"page cannot tell a free agent from a player on "
+            # Deliberately NOT `u.describe()`. That sentence opens "add X,
+            # drop Y", which is an instruction, and an instruction inside a
+            # withheld card is the exact failure the neutral wording exists
+            # to prevent — the badge says no advice is being given while the
+            # first words of the body give some.
+            neutral_detail=(f"{seen}, {u.add.name} ({u.add.position}) projected "
+                            f"{_num(u.add.value, 2)} and the cheapest legal drop "
+                            f"beside him, {u.drop.name} ({u.drop.position}), "
+                            f"projected {_num(u.drop.value, 2)}; the pair was worth "
+                            f"{_num(u.lineup_gain or u.depth_gain, 2)} pts "
+                            + (f"to the best lineup via {u.slot}"
+                               if u.kind == "lineup" else "to depth, with that "
+                               "week's lineup unchanged")
+                            + f". Eligibility {elig.state} in that snapshot too: "
+                            f"this page cannot tell a free agent from a player on "
                             f"waivers, and it does not know whether "
                             f"{u.add.name} is still unrostered."),
             evidence=elig.basis, withheld_reasons=w_why,

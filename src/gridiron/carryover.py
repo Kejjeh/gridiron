@@ -57,12 +57,13 @@ from __future__ import annotations
 import json
 import shutil
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from gridiron.decisions import (ARCHIVE_VERSION, archive_stamp, list_archives,
-                                record_digest)
+from gridiron import ingest as ing
+from gridiron.decisions import (ARCHIVE_RE, ARCHIVE_VERSION, archive_stamp,
+                                list_archives, record_digest)
 
 #: The oldest record worth carrying between runs. A season of weekly pages is
 #: a few dozen files; this bounds a chain that would otherwise only grow.
@@ -114,13 +115,40 @@ class CarryoverReport:
         treating the absence as an error."""
         return True
 
+    @property
+    def noun(self) -> str:
+        return "file(s)" if self.action.endswith("-inputs") else "record(s)"
+
     def summary(self) -> str:
-        bits = [f"{self.action}: {len(self.accepted)} record(s) accepted"]
+        bits = [f"{self.action}: {len(self.accepted)} {self.noun} accepted"]
         if self.rejected:
             bits.append(f"{len(self.rejected)} refused")
         if self.note:
             bits.append(self.note)
         return f"season {self.season} " + ", ".join(bits)
+
+
+def _as_int(value: object) -> int | None:
+    """An int, or None for anything that is not plainly one.
+
+    Total by construction. `int(x)` is not: it raises on `"invalid"`, on
+    `None` via the `or 0` idiom's blind spot, on a list, and on a float that
+    is not finite. A validator that raises on malformed input is not a
+    validator — it hands the malformed file the power to stop the run, which
+    is precisely the outcome validation exists to prevent. Every field read
+    out of a restored record goes through this.
+    """
+    if isinstance(value, bool):        # bool is an int; a flag is not a season
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    return None
 
 
 def _as_utc(value: object) -> datetime | None:
@@ -141,8 +169,9 @@ def inspect_archive(path: Path, *, season: int, now: datetime,
     does not describe itself correctly is not made to, it is left alone.
     """
     name = path.name
+    named_name = ARCHIVE_RE.match(path.stem)
     named = archive_stamp(path)
-    if named is None:
+    if named_name is None or named is None:
         return Verdict(name, False, "the filename is not an archive name, so "
                                     "the record cannot be placed in time")
     try:
@@ -161,9 +190,37 @@ def inspect_archive(path: Path, *, season: int, now: datetime,
                                     f"code understands ({ARCHIVE_VERSION}); reading "
                                     f"it would mean guessing at its keys")
 
-    if int(blob.get("season") or 0) != int(season):
-        return Verdict(name, False, f"season {blob.get('season')!r} is not "
-                                    f"season {season}")
+    want = _as_int(season)
+    if want is None:
+        # The caller asked for a season that is not one. Refusing here keeps a
+        # bad argument from being answered with a confident accept.
+        return Verdict(name, False, f"the season asked for ({season!r}) is not a "
+                                    f"year, so nothing can be matched against it")
+    got = _as_int(blob.get("season"))
+    if got is None:
+        return Verdict(name, False, f"season {blob.get('season')!r} inside the "
+                                    f"record is not a year, so the record does not "
+                                    f"say which season it belongs to")
+    if got != want:
+        return Verdict(name, False, f"season {got} is not season {want}")
+
+    # The filename says which week this record is for, and the page's week is
+    # inside it. They are written together and must agree: a record filed under
+    # week 3 that holds week 9 would be picked as week 3's previous snapshot
+    # and compared against the wrong page. The digest does not cover this —
+    # it is computed over the contents alone, so a name can disagree with a
+    # body that is itself perfectly intact.
+    named_week = _as_int(named_name.group("week"))
+    inner_week = _as_int(blob.get("week"))
+    if inner_week is None:
+        return Verdict(name, False, f"week {blob.get('week')!r} inside the record "
+                                    f"is not a week, so the record does not say "
+                                    f"which page it froze")
+    if named_week != inner_week:
+        return Verdict(name, False, f"the filename files this under week "
+                                    f"{named_week} but the record inside is week "
+                                    f"{inner_week}; a record filed under the wrong "
+                                    f"week would be compared against the wrong page")
 
     generated = _as_utc(blob.get("generated"))
     if generated is None:
@@ -220,8 +277,20 @@ def restore(store: Path, ledger: Path, *, season: int, now: datetime,
             verdicts.append(Verdict(path.name, False,
                                     f"beyond the {keep}-record carry limit"))
             continue
-        verdict = inspect_archive(path, season=season, now=now,
-                                  max_age_days=max_age_days)
+        try:
+            verdict = inspect_archive(path, season=season, now=now,
+                                      max_age_days=max_age_days)
+        except Exception as exc:                       # noqa: BLE001
+            # A belt to go with the braces above. `inspect_archive` is written
+            # to be total, but it reads a file some other process wrote, and
+            # one unhandled shape in it must never take down the restore of
+            # every other record beside it. The file is rejected, named, and
+            # left exactly where it is.
+            verdicts.append(Verdict(path.name, False,
+                                    f"rejected: validating it raised "
+                                    f"{type(exc).__name__}, so the record could "
+                                    f"not be established as sound"))
+            continue
         if verdict.accepted:
             target.mkdir(parents=True, exist_ok=True)
             dest = target / path.name
@@ -229,7 +298,13 @@ def restore(store: Path, ledger: Path, *, season: int, now: datetime,
                 verdicts.append(Verdict(path.name, True,
                                         "already in the ledger; left untouched"))
             else:
-                shutil.copy2(path, dest)
+                try:
+                    shutil.copy2(path, dest)
+                except OSError as exc:
+                    verdicts.append(Verdict(path.name, False,
+                                            f"validated but could not be copied "
+                                            f"into the ledger ({type(exc).__name__})"))
+                    continue
                 verdicts.append(verdict)
             taken += 1
         else:
@@ -300,3 +375,287 @@ def weeks_in(ledger: Path, season: int) -> tuple[int, ...]:
         except ValueError:
             continue
     return tuple(sorted(set(weeks)))
+
+
+# --------------------------------------------------------------------------
+# Carrying the INPUTS, not just the conclusions
+# --------------------------------------------------------------------------
+# Records alone were not enough, and the gap was structural rather than a
+# missing feature. The workflow marks both refresh steps `continue-on-error`
+# so that a bad upstream day still produces a page. On a hosted runner that
+# promise was empty: the cache the page renders FROM is gitignored and dies
+# with the container, so "keep going without a refresh" meant keeping going
+# with nothing at all. The render exited 2, no page was written, the artifact
+# step failed, and the run summary said "Built." A restored decision record
+# is a picture of a page that can no longer be rebuilt.
+#
+# So the last-good INPUTS travel too, under the same rule as the records: a
+# restored file is untrusted input, validated before it is allowed to count,
+# never repaired, never restamped. Three things make this safe to render from
+# rather than dangerous:
+#
+#   as_of is never touched. Every entry keeps the time its pull SUCCEEDED, so
+#   the page dates its evidence to when the evidence was actually gathered.
+#   Nothing here can make old data look new, because nothing here writes a
+#   time into `as_of` at all.
+#
+#   Every restored entry is marked as not refreshed. `Entry.error` is the
+#   existing mechanism for "the latest attempt did not succeed" and it already
+#   forces the source to STALE with `refresh_failed` set, which withholds
+#   every action resting on it (`gridiron.gating`). A carried-forward page
+#   therefore shows the last known comparison and recommends nothing.
+#
+#   A successful refresh overrides it. `pull_week.py` loads the manifest from
+#   disk and `Manifest.record` clears the error for whatever it pulled, so a
+#   run where Sleeper works and nflverse does not carries exactly the entries
+#   that failed and no more.
+
+#: Where carried inputs live inside the private store.
+INPUTS_DIR = "inputs"
+
+#: Inputs are bounded harder than records. The season cache is dominated by
+#: one ~16 MB player dump, and the store it lives in is a cache with a repo
+#: wide size limit; a carry that grows without a ceiling evicts the records
+#: it travels with. A cache larger than this is not carried and says so.
+INPUT_MAX_BYTES = 64 * 1024 * 1024
+INPUT_MAX_FILES = 24
+
+#: Inputs go stale faster than records do. A frozen page from five weeks ago
+#: is still a valid record of what was shown; a five-week-old roster is not
+#: something to render a decision board from, even a withheld one.
+INPUT_MAX_AGE_DAYS = 21
+
+#: What `Entry.error` is set to on a restored entry. It is a sentence rather
+#: than a flag because it is printed to the owner on the page, under the
+#: source's own as-of line — and it is kept SHORT on purpose: freshness
+#: truncates an error to 100 characters when it builds that line, so a longer
+#: sentence would reach the owner cut off in the middle of a word.
+CARRIED_FORWARD = "CARRIED FORWARD from an earlier run; this run did not refresh it"
+
+
+def _cache_files(manifest: ing.Manifest) -> dict[str, Path]:
+    """The files a manifest actually points at, by entry name. An entry whose
+    file is missing is left out — the manifest is a claim about the disk and
+    the disk is the arbiter."""
+    out: dict[str, Path] = {}
+    for name, entry in manifest.entries.items():
+        if not entry.path:
+            continue
+        candidate = manifest.directory / Path(entry.path).name
+        if candidate.is_file():
+            out[name] = candidate
+    return out
+
+
+def publish_inputs(cache_dir: Path, store: Path, *, season: int,
+                   now: datetime) -> CarryoverReport:
+    """Copy this run's season cache into the private store.
+
+    Only a cache that a refresh actually filled is worth storing, so an entry
+    whose latest attempt FAILED is published with its file (the data is still
+    the last good copy) while an entry with no file at all is skipped and
+    named. Nothing is rewritten or restamped: `manifest.json` goes across as
+    it stands, which is what keeps every `as_of` honest on the far side.
+    """
+    cache_dir = Path(cache_dir)
+    manifest = ing.Manifest.load(cache_dir, season)
+    if not manifest.entries or not manifest.path.is_file():
+        return CarryoverReport("publish-inputs", season, (),
+                               note="nothing to publish: this run has no ingest "
+                                    "manifest, so there are no last-good inputs "
+                                    "to carry")
+    if _as_int(manifest.season) != _as_int(season):
+        return CarryoverReport(
+            "publish-inputs", season,
+            (Verdict(ing.MANIFEST_NAME, False,
+                     f"the cache is season {manifest.season!r}, not {season}; "
+                     f"another season's inputs are not this season's history"),))
+
+    files = _cache_files(manifest)
+    total = manifest.path.stat().st_size + sum(p.stat().st_size for p in files.values())
+    if len(files) > INPUT_MAX_FILES:
+        return CarryoverReport("publish-inputs", season, (),
+                               note=f"not carried: the cache holds {len(files)} "
+                                    f"files, past the {INPUT_MAX_FILES}-file limit")
+    if total > INPUT_MAX_BYTES:
+        return CarryoverReport("publish-inputs", season, (),
+                               note=f"not carried: the cache is "
+                                    f"{total // (1024 * 1024)} MB, past the "
+                                    f"{INPUT_MAX_BYTES // (1024 * 1024)} MB carry "
+                                    f"limit; the store it travels in is a size-"
+                                    f"capped cache and an oversized carry would "
+                                    f"evict the decision records beside it")
+
+    target = Path(store) / INPUTS_DIR / f"season{season}"
+    target.mkdir(parents=True, exist_ok=True)
+    verdicts: list[Verdict] = []
+    for name, path in sorted(files.items()):
+        try:
+            shutil.copy2(path, target / path.name)
+        except OSError as exc:
+            verdicts.append(Verdict(path.name, False,
+                                    f"could not be stored ({type(exc).__name__})"))
+            continue
+        verdicts.append(Verdict(path.name, True, f"stored as the last-good {name}"))
+    for name, entry in sorted(manifest.entries.items()):
+        if entry.path and name not in files:
+            verdicts.append(Verdict(Path(entry.path).name, False,
+                                    f"the manifest lists {name} but no such file "
+                                    f"is on disk, so there is nothing to carry"))
+    # The manifest goes LAST. Until it lands, the stored directory has no
+    # index and a concurrent restore reads nothing rather than half a cache.
+    shutil.copy2(manifest.path, target / manifest.path.name)
+    verdicts.append(Verdict(manifest.path.name, True,
+                            "stored; every as_of inside it is unchanged"))
+    # Anything in the store the manifest no longer points at is a leftover
+    # from a previous shape of the cache. Dropping it keeps the carry bounded.
+    keepers = {p.name for p in files.values()} | {manifest.path.name}
+    dropped = 0
+    for stale in target.iterdir():
+        if stale.is_file() and stale.name not in keepers:
+            stale.unlink(missing_ok=True)
+            dropped += 1
+    note = f"dropped {dropped} file(s) the manifest no longer lists" if dropped else ""
+    return CarryoverReport("publish-inputs", season, tuple(verdicts), note)
+
+
+def inspect_inputs(store: Path, *, season: int, now: datetime,
+                   max_age_days: int = INPUT_MAX_AGE_DAYS) -> tuple[Verdict, dict]:
+    """Validate a carried cache without copying anything.
+
+    Returns the verdict and, when accepted, the manifest blob that passed. The
+    checks mirror `inspect_archive` in posture: totality first (nothing here
+    may raise on a malformed field), then season, then time, then the claim
+    the index makes about the disk beside it.
+    """
+    source = Path(store) / INPUTS_DIR / f"season{season}"
+    index = source / ing.MANIFEST_NAME
+    if not index.is_file():
+        return Verdict(f"{INPUTS_DIR}/season{season}", False,
+                       "no carried inputs in the store"), {}
+    try:
+        blob = json.loads(index.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return Verdict(index.name, False,
+                       f"the carried manifest is unreadable ({type(exc).__name__})"), {}
+    if not isinstance(blob, dict):
+        return Verdict(index.name, False,
+                       "the carried manifest is not an object"), {}
+    want = _as_int(season)
+    got = _as_int(blob.get("season"))
+    if want is None or got is None or got != want:
+        return Verdict(index.name, False,
+                       f"the carried inputs are season {blob.get('season')!r}, "
+                       f"not season {season!r}"), {}
+    entries = blob.get("entries")
+    if not isinstance(entries, dict) or not entries:
+        return Verdict(index.name, False,
+                       "the carried manifest lists no sources"), {}
+
+    cutoff = now.astimezone(timezone.utc)
+    newest: datetime | None = None
+    for name, raw in entries.items():
+        if not isinstance(raw, dict):
+            return Verdict(index.name, False,
+                           f"the entry for {name!r} is not an object"), {}
+        stamp = _as_utc(raw.get("as_of"))
+        if stamp is None:
+            continue
+        if stamp > cutoff + STAMP_TOLERANCE:
+            return Verdict(index.name, False,
+                           f"{name} is stamped {stamp:%Y-%m-%d %H:%M}Z, which is in "
+                           f"the future; carried inputs may never present "
+                           f"themselves as newer than the run reading them"), {}
+        newest = stamp if newest is None else max(newest, stamp)
+    if newest is None:
+        return Verdict(index.name, False,
+                       "no entry in the carried manifest carries a readable "
+                       "as_of, so the inputs cannot be dated"), {}
+    if newest < cutoff - timedelta(days=max_age_days):
+        return Verdict(index.name, False,
+                       f"the freshest carried input was pulled "
+                       f"{(cutoff - newest).days} days ago, past the "
+                       f"{max_age_days}-day limit for rendering from last-good "
+                       f"inputs"), {}
+    return Verdict(index.name, True,
+                   f"carried inputs verified, freshest pulled "
+                   f"{newest:%Y-%m-%d %H:%M}Z"), blob
+
+
+def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
+                   max_age_days: int = INPUT_MAX_AGE_DAYS) -> CarryoverReport:
+    """Lay last-good inputs into an empty cache so a failed refresh can render.
+
+    Two rules decide what this may touch:
+
+      * It never overwrites a file the local cache already has. The refresh
+        steps run AFTER this one, but a re-run, a warm runner or a desktop
+        invocation can all put a real cache here first, and a carried file
+        must never displace one this machine pulled itself.
+      * Every entry it does lay down is marked as not refreshed by this run,
+        with its original `as_of` intact. That combination is the whole point:
+        the page can say what was true and when, and cannot say what to do.
+    """
+    verdict, blob = inspect_inputs(store, season=season, now=now,
+                                   max_age_days=max_age_days)
+    if not verdict.accepted:
+        return CarryoverReport("restore-inputs", season, (verdict,),
+                               note="no last-good inputs were laid down; if this "
+                                    "run's refresh also fails there is nothing to "
+                                    "render and the run will say so")
+    source = Path(store) / INPUTS_DIR / f"season{season}"
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    local = ing.Manifest.load(cache_dir, season)
+    local_files = _cache_files(local)
+
+    verdicts: list[Verdict] = []
+    carried: dict[str, ing.Entry] = {}
+    for name, raw in sorted((blob.get("entries") or {}).items()):
+        try:
+            entry = ing.Entry(**raw)
+        except TypeError as exc:
+            verdicts.append(Verdict(str(name), False,
+                                    f"the carried entry does not match this "
+                                    f"code's manifest layout ({exc})"))
+            continue
+        if name in local_files:
+            verdicts.append(Verdict(str(name), False,
+                                    "this run already has its own copy; the "
+                                    "carried one is not used"))
+            continue
+        if not entry.path:
+            verdicts.append(Verdict(str(name), False, "the carried entry names no file"))
+            continue
+        src = source / Path(entry.path).name
+        if not src.is_file():
+            verdicts.append(Verdict(Path(entry.path).name, False,
+                                    f"the carried manifest lists {name} but the "
+                                    f"file is not in the store"))
+            continue
+        try:
+            shutil.copy2(src, cache_dir / src.name)
+        except OSError as exc:
+            verdicts.append(Verdict(src.name, False,
+                                    f"could not be laid down ({type(exc).__name__})"))
+            continue
+        # `as_of` is copied through untouched. `error` and `last_attempt`
+        # describe THIS run, which did not refresh anything.
+        carried[str(name)] = replace(entry, error=CARRIED_FORWARD,
+                                     last_attempt=now.astimezone(timezone.utc)
+                                     .isoformat(timespec="seconds"))
+        verdicts.append(Verdict(src.name, True,
+                                f"laid down as last-good {name}, pulled "
+                                f"{entry.as_of or 'at an unrecorded time'}, marked "
+                                f"NOT REFRESHED by this run"))
+    if not carried:
+        return CarryoverReport("restore-inputs", season, tuple(verdicts),
+                               note="nothing was laid down")
+    merged = dict(local.entries)
+    merged.update(carried)
+    ing.Manifest(cache_dir, merged, season).save()
+    return CarryoverReport(
+        "restore-inputs", season, tuple(verdicts),
+        note=f"{len(carried)} source(s) laid down from the last good run and "
+             f"marked NOT REFRESHED; the page will date them to when they were "
+             f"pulled and withhold every action resting on them")
