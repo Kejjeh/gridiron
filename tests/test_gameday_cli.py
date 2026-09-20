@@ -13,10 +13,16 @@ matrix in HANDOFF.md points at these by name.
   D. injury_after — a designation moved after the record; a game missing
      from the feed, a status word the page does not know, a suspended game,
      a game still in progress four hours after kickoff.
-  E. rollover / no_archive — week boundary respected; archive untouched;
-     absence stated.
-  F. the browser drive (when a headless Chromium is present): a correction,
-     a 429, a recovery, an older response, a malformed body, a rollover.
+  E. rollover / no_archive / stale — week boundary respected; archive
+     untouched; absence stated; a stale league snapshot shows its score and
+     withholds its advice.
+  F. the browser drives (when a headless Chromium is present), in real time:
+     mixed — a correction, a 429, a recovery, an older response, a malformed
+     body, an unreadable NFL state, a failed feed, a hung request past the
+     timeout, a partial payload, a duplicate roster, a rollover;
+     pregame — a legal move goes live, then Out, then ineligible, then the
+     sources age, a refresh renews the roster but not the designations, and
+     the deadline passes idle: withheld every time, the score visible.
 """
 from __future__ import annotations
 
@@ -220,6 +226,17 @@ def test_no_archive_is_a_clear_absence(tmp_path):
     assert "no pregame record for week 3" in html and "no advice to re-check" in html
 
 
+def test_a_stale_league_snapshot_shows_its_score_and_withholds_its_advice(tmp_path):
+    rec, html, _ = run(tmp_path, "stale")
+    assert rec["degraded"] and any("STALE" in n and "last one seen" in n for n in rec["notes"])
+    assert rec["score"]["mine"]["platform_points"] == 0.0 and rec["score"]["lead"] == "level"
+    assert rec["available_actions"] == 0
+    swaps = [a for a in rec["actions"] if a["kind"] == "swap"]
+    assert swaps and all("sleeper_league is STALE" in a["why"] for a in swaps)
+    assert all("score above stands on its own" in a["why"] for a in swaps)
+    assert "Read first" in html and "NOT NOW" in html
+
+
 # ---------------------------------------------------------------- privacy
 
 def test_the_stdout_summary_names_no_player(tmp_path, capsys):
@@ -247,21 +264,25 @@ def test_the_page_writer_only_writes_under_data_outputs():
 # ------------------------------------------------------------ F: the browser
 
 @pytest.mark.skipif(SCN.chrome_binary() is None, reason="no headless Chromium on this machine")
-def test_refresh_applies_corrections_keeps_last_good_and_discards_older_responses(tmp_path):
-    """The page's own script against a local fixture server. Not fixture-only
-    evidence of the network path (see HANDOFF for the real-endpoint run); it
-    is the evidence for what the page DOES with each kind of response."""
+def test_refresh_applies_corrections_keeps_last_good_and_rejects_bad_payloads(tmp_path):
+    """The page's own script against a local fixture server, in real time.
+    Not fixture-only evidence of the network path (see HANDOFF for the
+    real-endpoint run); it is the evidence for what the page DOES with each
+    kind of response."""
     s = SCN.render("mixed", tmp_path / "out", drive=True)
     b = s["browser"]
-    assert b["executed"], b
+    assert b["executed"] and b["real_time"], b
     steps = {x["label"]: x for x in b["steps"]}
     assert "ERROR" not in steps, steps.get("ERROR")
-    init, corr, limited, rec, older, bad, roll = (steps[k] for k in (
-        "initial", "correction", "429", "recovery", "older", "malformed", "rollover"))
+    (init, corr, limited, rec, older, bad, nostate, nofeed, hung, partial, dup, roll) = (
+        steps[k] for k in ("initial", "correction", "429", "recovery", "older", "malformed",
+                           "state_fail", "feed_fail", "timeout", "partial", "duplicate",
+                           "rollover"))
     assert init["mode"] == "SNAPSHOT" and init["mine"] == "62.10" and init["opp"] == "46.64"
     # a correction: the opponent total went DOWN and is named a correction
     assert corr["mode"] == "LIVE" and corr["opp"] == "44.10"
     assert any("CORRECTION" in t and "Roster #2" in t for t in corr["changeText"])
+    assert "not refreshed by this page" in corr["status"]       # designations are not
     # rate limited: last good kept, page says STALE, backoff scheduled
     assert limited["result"] == "failed" and limited["mode"] == "STALE"
     assert (limited["mine"], limited["opp"]) == (corr["mine"], corr["opp"])
@@ -273,12 +294,66 @@ def test_refresh_applies_corrections_keeps_last_good_and_discards_older_response
     assert "older" in older["status"]
     # malformed body: last good kept
     assert bad["result"] == "failed" and (bad["mine"], bad["opp"]) == (rec["mine"], rec["opp"])
+    # NFL state unreadable: the scores still apply, the week is said not re-confirmed
+    assert nostate["result"] == "ok" and "not re-confirmed" in nostate["status"]
+    # the feed fails: scores apply, the last good feed is kept and dated
+    assert nofeed["result"] == "ok" and "feed not refreshed" in nofeed["status"]
+    assert "HTTP 503" in nofeed["status"] and set(nofeed["states"]) == set(rec["states"])
+    # a request that hangs: the page's own timeout fires, last good kept, the button recovers
+    assert hung["result"] == "failed" and "timeout after 1500 ms" in hung["status"]
+    assert (hung["mine"], hung["opp"]) == (rec["mine"], rec["opp"])
+    assert hung["buttonDisabled"] is False and hung["inflight"] is False
+    # [{roster_id: 1}] is not a matchup row: rejected, nothing replaced
+    assert partial["result"] == "failed" and "matchup_id" in partial["status"]
+    assert (partial["mine"], partial["opp"]) == (rec["mine"], rec["opp"])
+    assert partial["states"] == rec["states"]
+    # a duplicate roster in the payload: rejected
+    assert dup["result"] == "failed" and "appears twice" in dup["status"]
+    assert (dup["mine"], dup["opp"]) == (rec["mine"], rec["opp"])
     # the platform moved to week 4: scores stand, polling stops
     assert roll["rollover"] is True and roll["nextPoll"] is None and "week 4" in roll["status"]
     # never any live odds on the score or action cards
     assert not any(x.get("oddsOnScore") for x in b["steps"] if "oddsOnScore" in x)
-    # three read-only requests per refresh, nothing else
-    assert len(b["hits"]) == 6 * 3
+    # three read-only requests per refresh, nothing else, no bulk player pull
+    assert len(b["hits"]) == 11 * 3
     assert all(re.search(r"/state/nfl$|/matchups/3$|/nfl/regular/2026$", h) for h in b["hits"])
     kb = steps["keyboard"]
     assert kb["activeIsRefresh"] and kb["tag"] == "BUTTON" and kb["outline"] == "solid"
+
+
+@pytest.mark.skipif(SCN.chrome_binary() is None, reason="no headless Chromium on this machine")
+def test_the_legality_journey_withholds_at_every_gate_while_the_score_stays_visible(tmp_path):
+    """Fresh legal action -> Out -> ineligible -> restored -> sources aged
+    past their gameday cadence with NO fetch -> a refresh that renews the
+    roster but not the designations -> the deadline passes while the page
+    sits idle. The score line never disappears; no lineup is submitted."""
+    s = SCN.render("pregame", tmp_path / "out", drive=True)
+    b = s["browser"]
+    assert b["executed"], b
+    steps = {x["label"]: x for x in b["steps"]}
+    assert "ERROR" not in steps, steps.get("ERROR")
+    init, live, out, inel, back, aged, sunday, idle = (steps[k] for k in (
+        "initial", "live", "out", "ineligible", "restored", "aged", "refresh_sunday",
+        "cross_kickoff_idle"))
+    assert init["available"] == 1 and live["available"] == 1 and live["mode"] == "LIVE"
+    assert out["available"] == 0 and any("designation is Out" in t for t in out["actionText"])
+    assert inel["available"] == 0 and any("not eligible for the TE slot" in t for t in inel["actionText"])
+    assert back["available"] == 1
+    # the sources aged past the gameday cadence: no fetch happened, the flags moved anyway
+    assert aged["available"] == 0 and aged["blockers"]
+    assert any("sleeper_players is STALE" in x for x in aged["blockers"])
+    assert any("sleeper_league is STALE" in x for x in aged["blockers"])
+    assert set(aged["states"]) == {"UNKNOWN"}                 # the feed aged too
+    # a refresh renews the roster and scores; the designations stay from the build
+    assert sunday["result"] == "ok" and sunday["available"] == 0
+    assert any("sleeper_players is STALE" in t and "not renewed by a browser refresh" in t
+               for t in sunday["actionText"])
+    assert not any("sleeper_league is STALE" in t for t in sunday["actionText"])
+    assert "not refreshed by this page" in sunday["status"]
+    # the deadline passed while idle: no successful refresh, no actionable old move
+    assert idle["available"] == 0 and any("deadline passed" in t for t in idle["actionText"])
+    # the score stayed on the page at every step
+    for step in (init, live, out, inel, back, aged, sunday, idle):
+        assert step["mine"] == "0.00" and step["opp"] == "0.00" and step["lead"] == "level"
+    # exactly two refreshes hit the fixture, three read-only requests each
+    assert len(b["hits"]) == 2 * 3

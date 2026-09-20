@@ -30,11 +30,27 @@ decision-time archive exists, and then renders the Game Day page with
   rollover       the platform has moved to week 4; the week-3 record is not
                  joined, the week-3 snapshot is not diffed.
   no_archive     no decision archive at all: a clear absence, no invention.
+  stale          `pregame` rendered on Sunday morning from a league snapshot
+                 taken Saturday noon, 22 hours earlier — past the 6-hour
+                 gameday cadence: the score shows, dated and flagged; the
+                 advice is withheld because the roster it rests on is not
+                 current.
 
 `--screenshot` captures PNGs with the pre-installed headless Chromium and
-measures the true phone-width fit; `--browser` starts a local fixture server
-and drives the page's own Refresh through a correction, a 429, a recovery,
-an older response and a week rollover, reading the DOM back after each.
+measures the true phone-width fit. `--browser` starts a local fixture server
+and drives the page's own script in REAL time (no virtual clock), reading
+the DOM back after every step:
+  mixed    Refresh through a correction, a 429, a recovery, an older
+           response, a malformed body, an unreadable NFL state, a failed
+           status feed, a request that hangs past the page's timeout, a
+           payload missing this roster's lineup, a payload with a duplicate
+           roster, and a week rollover.
+  pregame  the legality journey without a single lineup submission: a
+           legal move goes LIVE; the incoming player is marked Out, then
+           listed at an ineligible position; the sources age past their
+           gameday cadence; a refresh renews the roster but not the
+           designations; and the deadline passes while the page sits idle
+           with no successful refresh — the score stays visible throughout.
 Both are skipped, and said so, when the binary is absent. An unexecuted check
 is never reported as a pass.
 """
@@ -59,11 +75,14 @@ from gridiron.paths import REPO_ROOT
 
 UTC = timezone.utc
 SCENARIOS = ("pregame", "pregame_stale", "conflict", "mixed", "custom", "empty",
-             "injury_after", "rollover", "no_archive")
+             "injury_after", "rollover", "no_archive", "stale")
+#: Scenarios the browser drive covers, each with its own step plan.
+DRIVEN = ("mixed", "pregame")
 
 #: Frozen clocks. Week 3 of the fixture calendar: Thursday 2026-09-24, the
 #: Sunday slate 2026-09-27 (13:00 / 16:05 / 16:25 / 20:20 ET), Monday 09-28.
 SATURDAY = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+SUNDAY_MORNING = datetime(2026, 9, 27, 10, 0, tzinfo=UTC)       # gameday, nothing kicked off
 SUNDAY_LATE = datetime(2026, 9, 27, 21, 0, tzinfo=UTC)        # 17:00 ET
 SUNDAY_NIGHT = datetime(2026, 9, 28, 0, 30, tzinfo=UTC)       # 20:30 ET
 
@@ -182,8 +201,8 @@ def build(root: Path, kind: str) -> tuple[Path, datetime, dict]:
         raise ValueError(f"unknown scenario {kind!r}; choose from {SCENARIOS}")
     scn, _, _ = _mods()
     base = "partial_schedule" if kind == "conflict" else "complete"
-    now = {"pregame": SATURDAY, "pregame_stale": SATURDAY, "conflict": SATURDAY,
-           "no_archive": SUNDAY_LATE, "injury_after": SUNDAY_NIGHT}.get(kind, SUNDAY_LATE)
+    now = _now_for(kind)
+    snapshot_at = SATURDAY if kind == "stale" else now
     manifest = scn.build_scenario(root, base, now=SATURDAY)
     directory = manifest.directory
     snap = json.loads((directory / "sleeper_league.json").read_text("utf-8"))
@@ -196,12 +215,12 @@ def build(root: Path, kind: str) -> tuple[Path, datetime, dict]:
     opp["players"] = list(_OPP_STARTERS)
     info: dict = {}
 
-    pregame_like = kind in ("pregame", "pregame_stale", "conflict")
+    pregame_like = kind in ("pregame", "pregame_stale", "conflict", "stale")
     if pregame_like:
         my_pts = {s: 0.0 for s in _MY_STARTERS}
         opp_pts = {s: 0.0 for s in _OPP_STARTERS}
         status = slate("pre_game", "pre_game", "pre_game", thursday="pre_game")
-        feed_as_of = SATURDAY - timedelta(minutes=5)
+        feed_as_of = now - timedelta(minutes=5)
     else:
         my_pts, opp_pts = dict(MY_POINTS_MIXED), dict(OPP_POINTS_MIXED)
         status = slate("complete", "in_game", "pre_game")
@@ -236,7 +255,7 @@ def build(root: Path, kind: str) -> tuple[Path, datetime, dict]:
     week = 4 if kind == "rollover" else 3
     snap["state"] = {**snap["state"], "week": week, "display_week": week}
     snap["week"] = week
-    snap["as_of"] = (now - timedelta(minutes=3)).isoformat(timespec="seconds")
+    snap["as_of"] = (snapshot_at - timedelta(minutes=3)).isoformat(timespec="seconds")
     snap["rosters"][0]["starters"] = my_starters
     bench_pts = {"5022": 11.20, "4892": 0.00, "4984": 22.30} if not pregame_like else {}
     snap["matchups"] = [
@@ -247,7 +266,7 @@ def build(root: Path, kind: str) -> tuple[Path, datetime, dict]:
     (directory / "sleeper_players.json").write_text(json.dumps(players, indent=1), "utf-8")
     m = ing.Manifest.load(directory, 2026)
     m.record("sleeper_league", path=directory / "sleeper_league.json",
-             rows=len(snap["rosters"]), as_of=now - timedelta(minutes=3),
+             rows=len(snap["rosters"]), as_of=snapshot_at - timedelta(minutes=3),
              source="api.sleeper.app (read-only)", weeks=[week])
     m.record("sleeper_players", path=directory / "sleeper_players.json", rows=len(players),
              as_of=now - timedelta(minutes=50), source="api.sleeper.app (read-only)")
@@ -294,8 +313,8 @@ def render(kind: str, out: Path, *, take_screenshot: bool = False, drive: bool =
     args = ["--cache-root", str(root), "--owner", "fixture_owner", "--write", "--anonymous",
             "--out-dir", str(page_dir), "--archive-root", str(archive),
             "--now", now.isoformat()]
-    if drive:
-        summary["browser"] = drive_browser(root, page_dir, archive, now, gd_cli)
+    if drive and kind in DRIVEN:
+        summary["browser"] = drive_browser(root, page_dir, archive, now, gd_cli, kind=kind)
     rc = gd_cli.main(args)
     summary["gameday_rc"] = rc
     html_path = page_dir / "gameday_latest.html"
@@ -315,7 +334,7 @@ def render(kind: str, out: Path, *, take_screenshot: bool = False, drive: bool =
     if take_screenshot:
         for label, width in (("desktop", 1280), ("narrow500", 500)):
             png = out / (f"{kind}.png" if label == "desktop" else f"{kind}-{label}.png")
-            ok = scn.screenshot(html_path, png, width=width)
+            ok = screenshot_at(html_path, png, width=width, at=now)
             print(f"[gameday] {kind}: {label} screenshot "
                   f"{png if ok else 'SKIPPED (no headless Chromium)'}", file=sys.stderr)
         fit = scn.horizontal_overflow(html_path, 375)
@@ -327,7 +346,39 @@ def render(kind: str, out: Path, *, take_screenshot: bool = False, drive: bool =
 
 def _now_for(kind: str) -> datetime:
     return {"pregame": SATURDAY, "pregame_stale": SATURDAY, "conflict": SATURDAY,
-            "injury_after": SUNDAY_NIGHT}.get(kind, SUNDAY_LATE)
+            "stale": SUNDAY_MORNING, "injury_after": SUNDAY_NIGHT}.get(kind, SUNDAY_LATE)
+
+
+_SHOT = """<!doctype html><html><body style="margin:0;background:#fff">
+<iframe id="f" src="{url}" style="width:{width}px;height:{height}px;border:0"
+        onload="var a=this.contentWindow.gridironGameDay; if(a) a.tune({{skewMs:{skew_ms}}});"></iframe>
+</body></html>"""
+
+
+def screenshot_at(html_path: Path, png_path: Path, *, width: int, at: datetime) -> bool:
+    """A screenshot of the page AS OF the scenario's frozen instant.
+
+    The page re-judges locks, ages and legality on the viewer's clock the
+    moment it opens, which is right on a Sunday and wrong for a fixture whose
+    calendar the machine is not in: opened on the real date, a synthetic
+    week-3 record reads "from the future" and every kickoff "not yet". The
+    harness skews the page's clock to the scenario instant through the same
+    public hook the browser drive uses; the page itself is unchanged."""
+    scn, _, _ = _mods()
+    binary = chrome_binary()
+    if binary is None:
+        return False
+    height = min(int(scn.content_height(html_path, width) or 4000) + 24, scn.MAX_CAPTURE_HEIGHT)
+    skew_ms = int((at - datetime.now(UTC)).total_seconds() * 1000)
+    harness = html_path.with_name(f"shot-{width}.html")
+    harness.write_text(_SHOT.format(url=html_path.resolve().as_uri(), width=width,
+                                    height=height, skew_ms=skew_ms), "utf-8")
+    subprocess.run([binary, "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
+                    "--allow-file-access-from-files",
+                    f"--force-device-scale-factor={scn.CAPTURE_SCALE}",
+                    f"--window-size={width},{height}", f"--screenshot={png_path}",
+                    harness.resolve().as_uri()], capture_output=True, timeout=180)
+    return png_path.exists()
 
 
 # --------------------------------------------------------------------------
@@ -341,20 +392,40 @@ def chrome_binary() -> str | None:
 
 
 class _Fixture(http.server.BaseHTTPRequestHandler):
-    """Serves the three endpoints the page fetches. The matchups endpoint
-    walks a SEQUENCE: each request gets the next scripted response, so one
-    page drive covers a correction, a rate limit, a recovery, an older
-    response and a malformed body in order."""
+    """Serves the three endpoints the page fetches, plus three control paths
+    the HARNESS page (never the Game Day page: its CSP names only the API
+    origin, and the page never learns these paths) uses to script the run:
 
-    sequence: list = []
+      /__step/N      make step N of `steps` the current one
+      /__clock/ISO   move the fixture's own clock (see below)
+      /__wait        held open until /__done — the harness's <img> points at
+                     it, so the harness page's load event (and therefore
+                     Chromium's DOM dump) waits for the whole run
+      /__done        release /__wait
+
+    Each step says what every endpoint returns. `clock` is the fixture's
+    own wall clock: the Date header is `clock` plus the real seconds elapsed
+    since the drive began, so the page's out-of-order guard compares server
+    dates with server dates, in the scenario's own calendar.
+    """
+
+    steps: list = []
     state: dict = {}
     feed: list = []
     hits: list = []
+    clock: datetime = SUNDAY_LATE
+    started: float = 0.0
+    release: threading.Event = threading.Event()
 
-    def _send(self, status: int, body: bytes | None, *, date: str | None = None,
+    def _date(self, override: datetime | None = None) -> str:
+        import time
+        when = override or (type(self).clock + timedelta(seconds=time.monotonic() - type(self).started))
+        return when.strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+    def _send(self, status: int, body: bytes | None, *, date: datetime | None = None,
               ctype: str = "application/json") -> None:
         self.send_response_only(status)
-        self.send_header("Date", date or self.date_time_string())
+        self.send_header("Date", self._date(date))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Expose-Headers", "etag,date")
         self.send_header("Cache-Control", "no-store")
@@ -363,64 +434,104 @@ class _Fixture(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if body is not None:
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass                     # the page gave up on us: that was the test
 
     def do_GET(self):  # noqa: N802 (http.server API)
         path = self.path.split("?")[0]
-        type(self).hits.append(path)
+        cls = type(self)
+        if path.startswith("/__step/"):
+            cls.state["step"] = int(path.rsplit("/", 1)[1])
+            return self._send(200, b"{}")
+        if path.startswith("/__clock/"):
+            import time
+            from urllib.parse import unquote
+            cls.clock = datetime.fromisoformat(unquote(path.rsplit("/", 1)[1]))
+            cls.started = time.monotonic()
+            return self._send(200, b"{}")
+        if path == "/__wait":
+            cls.release.wait(120)
+            return self._send(200, b"")
+        if path == "/__done":
+            cls.release.set()
+            return self._send(200, b"{}")
+        cls.hits.append(path)
+        step = cls.steps[min(cls.state.get("step", 0), len(cls.steps) - 1)] if cls.steps else {}
         if path.endswith("/state/nfl"):
-            step = type(self).state.get("step", 0)
-            body = {"season": "2026", "week": 4 if step >= 5 else 3, "season_type": "regular"}
+            if step.get("state_status", 200) != 200:
+                return self._send(step["state_status"], b"")
+            body = {"season": "2026", "week": step.get("state_week", 3),
+                    "season_type": step.get("season_type", "regular")}
             return self._send(200, json.dumps(body).encode())
         if "/matchups/" in path:
-            seq = type(self).sequence
-            step = type(self).state.get("step", 0)
-            type(self).state["step"] = step + 1
-            item = seq[min(step, len(seq) - 1)]
-            if item["kind"] == "rows":
-                return self._send(200, json.dumps(item["rows"]).encode(), date=item.get("date"))
-            if item["kind"] == "status":
-                return self._send(item["status"], b"")
-            if item["kind"] == "malformed":
-                return self._send(200, b"{not json", date=None)
+            kind = step.get("matchups", "rows")
+            if kind == "rows":
+                return self._send(200, json.dumps(step["rows"]).encode(), date=step.get("date"))
+            if kind == "status":
+                return self._send(step["status"], b"")
+            if kind == "malformed":
+                return self._send(200, b"{not json")
+            if kind == "hang":
+                cls.release.wait(step.get("hang_s", 4))      # longer than the page waits
+                return self._send(200, json.dumps(step.get("rows") or []).encode())
         if "/nfl/regular/" in path:
-            return self._send(200, json.dumps(type(self).feed).encode())
+            if step.get("feed_status", 200) != 200:
+                return self._send(step["feed_status"], b"")
+            return self._send(200, json.dumps(cls.feed).encode())
         return self._send(404, b"null")
 
     def log_message(self, *a):
         pass
 
 
+#: The harness page: loads the Game Day page in an iframe, walks the step
+#: plan against the page's own public hooks, and reads the DOM back after
+#: each step. Runs in REAL time: the <img> keeps the harness's load event
+#: (and so Chromium's DOM dump) pending until the plan is done, which is what
+#: lets a request that hangs meet the page's timeout for real.
 _HARNESS = """<!doctype html><html><body style="margin:0">
 <iframe id="f" src="{url}" style="width:400px;height:1200px;border:0" onload="run()"></iframe>
+<img src="{base}/__wait" alt="" width="1" height="1">
 <script>
 async function run(){{
-  var out = [];
+  var out = [], base = {base_json}, steps = {steps};
   try {{
     var f = document.getElementById('f'), w = f.contentWindow, d = f.contentDocument;
     var api = w.gridironGameDay;
     function txt(sel){{ var e = d.querySelector(sel); return e ? e.textContent : null; }}
-    function snap(label, r){{
-      var pts = d.querySelectorAll('#gd-score .pts');
-      out.push({{label: label, result: r || null,
-        mode: txt('#gd-modepill'), status: txt('#gd-status'),
+    function snap(label, r, extra){{
+      var pts = d.querySelectorAll('#gd-score .pts'), st = api ? api.state() : null;
+      var rec = {{label: label, result: r || null,
+        mode: txt('#gd-modepill'), status: txt('#gd-status'), asof: txt('#gd-asof'),
         mine: pts[0] ? pts[0].textContent : null, opp: pts[1] ? pts[1].textContent : null,
         lead: txt('#gd-score .lead'), settled: txt('#gd-score .settle'),
         changes: d.querySelectorAll('#gd-changes .chg li').length,
         changeText: Array.prototype.map.call(d.querySelectorAll('#gd-changes .chg li'), function(e){{ return e.textContent; }}),
         available: d.querySelectorAll('#gd-actions .act:not(.off)').length,
+        actionText: Array.prototype.map.call(d.querySelectorAll('#gd-actions .act'), function(e){{ return e.textContent.slice(0, 400); }}),
         states: Array.prototype.map.call(d.querySelectorAll('#gd-mine .roster .st'), function(e){{ return e.textContent; }}),
         oppStates: Array.prototype.map.call(d.querySelectorAll('#gd-opp .roster .st'), function(e){{ return e.textContent; }}),
-        failures: api ? api.state().failures : null, live: api ? api.state().live : null,
-        rollover: api ? api.state().rollover : null, nextPoll: api ? api.state().nextPollMs : null,
-        oddsOnScore: /%|win prob|P\\(win\\)|odds/i.test(txt('#gd-score') + ' ' + txt('#gd-actions'))}});
+        failures: st ? st.failures : null, live: st ? st.live : null, inflight: st ? st.inflight : null,
+        buttonDisabled: d.getElementById('gd-refresh').disabled,
+        rollover: st ? st.rollover : null, nextPoll: st ? st.nextPollMs : null,
+        oddsOnScore: /%|win prob|P\\(win\\)|odds/i.test(txt('#gd-score') + ' ' + txt('#gd-actions'))}};
+      if (extra) for (var k in extra) rec[k] = extra[k];
+      out.push(rec);
     }}
-    snap('initial');
     if (!api) throw new Error('page script did not expose gridironGameDay');
-    var steps = {steps};
+    api.tune({{skewMs: {skew_ms}, timeoutMs: {timeout_ms}}});
+    snap('initial');
     for (var i = 0; i < steps.length; i++) {{
-      var r = await api.refresh(false);
-      snap(steps[i], r);
+      var s = steps[i], r = null, before = null;
+      if (s.fixture !== undefined) await fetch(base + '/__step/' + s.fixture);
+      if (s.clock) await fetch(base + '/__clock/' + encodeURIComponent(s.clock));
+      if (s.skewMs !== undefined) api.tune({{skewMs: {skew_ms} + s.skewMs}});
+      if (s.names) for (var sid in s.names) for (var k2 in s.names[sid]) api.data.names[sid][k2] = s.names[sid][k2];
+      if (s.refresh) {{ r = await api.refresh(false); }}
+      else {{ var vm = api.tick(); before = {{blockers: vm.blockers}}; }}
+      snap(s.label, r, before);
     }}
     // keyboard: the refresh control is a native button, focusable and labelled
     var b = d.getElementById('gd-refresh'); b.focus();
@@ -431,28 +542,13 @@ async function run(){{
       outline: d.defaultView.getComputedStyle(b).outlineStyle}});
   }} catch (err) {{ out.push({{label: 'ERROR', error: String(err && err.stack || err)}}); }}
   document.title = 'RESULT ' + btoa(unescape(encodeURIComponent(JSON.stringify(out))));
+  try {{ await fetch(base + '/__done'); }} catch (e) {{}}
 }}
 </script></body></html>"""
 
 
-def drive_browser(root: Path, page_dir: Path, archive: Path, now: datetime, gd_cli) -> dict:
-    """Render the page against a local fixture server and drive Refresh.
-
-    Steps the matchups endpoint walks, one per refresh:
-      1. correction  — the opponent's total is LOWERED, one of ours moves up;
-      2. 429         — rate limited: last good kept, page marked STALE;
-      3. recovery    — a good payload again;
-      4. older       — a good payload whose Date header is OLDER than the one
-                       applied in step 3: discarded, never applied;
-      5. malformed   — a body that is not JSON: last good kept;
-      6. rollover    — NFL state says week 4: scores shown, polling stops.
-    """
-    binary = chrome_binary()
-    if binary is None:
-        return {"executed": False, "reason": "no headless Chromium found"}
-    snap = json.loads((root / "season2026" / "sleeper_league.json").read_text("utf-8"))
-    rows = snap["matchups"]
-
+def _mixed_plan(rows: list) -> tuple[list[dict], list[dict], datetime]:
+    """Fixture steps and harness steps for the `mixed` drive."""
     def variant(my_delta: float, opp_total: float, mine_wr: float) -> list:
         out = json.loads(json.dumps(rows))
         out[0]["starters_points"][3] = mine_wr
@@ -461,22 +557,66 @@ def drive_browser(root: Path, page_dir: Path, archive: Path, now: datetime, gd_c
         out[1]["points"] = opp_total
         return out
 
-    base_my = rows[0]["points"]
-    # Older than the fixture server's own clock (the Date header on every
-    # other response is real wall time), not older than the scenario's frozen
-    # instant: the page compares server dates with server dates.
-    old_date = (datetime.now(UTC) - timedelta(days=2)).strftime("%a, %d %b %Y %H:%M:%S GMT")
-    _Fixture.sequence = [
-        {"kind": "rows", "rows": variant(2.0, 44.10, 19.10)},          # correction
-        {"kind": "status", "status": 429},                             # rate limit
-        {"kind": "rows", "rows": variant(3.5, 45.00, 20.60)},          # recovery
-        {"kind": "rows", "rows": variant(-10.0, 30.00, 5.00), "date": old_date},  # older
-        {"kind": "malformed"},                                         # malformed
-        {"kind": "rows", "rows": variant(3.5, 45.00, 20.60)},          # rollover (state wk 4)
+    good = variant(3.5, 45.00, 20.60)
+    fixture = [
+        {"rows": variant(2.0, 44.10, 19.10)},                                   # 0 correction
+        {"matchups": "status", "status": 429},                                  # 1 rate limit
+        {"rows": good},                                                         # 2 recovery
+        {"rows": variant(-10.0, 30.00, 5.00), "date": SUNDAY_LATE - timedelta(days=2)},  # 3 older
+        {"matchups": "malformed"},                                              # 4 malformed
+        {"rows": good, "state_status": 500},                                    # 5 state fails
+        {"rows": good, "feed_status": 503},                                     # 6 feed fails
+        {"matchups": "hang", "rows": good, "hang_s": 4},                        # 7 hangs
+        {"rows": [{"roster_id": 1}]},                                           # 8 partial
+        {"rows": good + [json.loads(json.dumps(good[1]))]},                     # 9 duplicate
+        {"rows": good, "state_week": 4},                                        # 10 rollover
     ]
+    labels = ["correction", "429", "recovery", "older", "malformed", "state_fail", "feed_fail",
+              "timeout", "partial", "duplicate", "rollover"]
+    steps = [{"label": lab, "fixture": i, "refresh": True} for i, lab in enumerate(labels)]
+    return fixture, steps, SUNDAY_LATE
+
+
+def _pregame_plan(rows: list) -> tuple[list[dict], list[dict], datetime]:
+    """Fixture steps and harness steps for the `pregame` drive: the legality
+    journey. The fixture's clock starts at Saturday noon; step 4 skews the
+    PAGE to Sunday morning without a refresh, step 5 refreshes at that time
+    (the fixture clock is moved too), step 6 crosses the deadline idle."""
+    same = json.loads(json.dumps(rows))
+    fixture = [{"rows": same}, {"rows": same}]
+    sunday_am = int((SUNDAY_MORNING - SATURDAY).total_seconds() * 1000)
+    after_kick = int((datetime(2026, 9, 27, 17, 30, tzinfo=UTC) - SATURDAY).total_seconds() * 1000)
+    steps = [
+        {"label": "live", "fixture": 0, "refresh": True},
+        {"label": "out", "names": {"5022": {"injury": "Out"}}},
+        {"label": "ineligible", "names": {"5022": {"injury": "", "positions": ["QB"], "position": "QB"}}},
+        {"label": "restored", "names": {"5022": {"positions": ["TE"], "position": "TE"}}},
+        {"label": "aged", "skewMs": sunday_am},
+        {"label": "refresh_sunday", "fixture": 1, "refresh": True,
+         "clock": (SUNDAY_MORNING + timedelta(minutes=5)).isoformat()},
+        {"label": "cross_kickoff_idle", "skewMs": after_kick},
+    ]
+    return fixture, steps, SATURDAY
+
+
+def drive_browser(root: Path, page_dir: Path, archive: Path, now: datetime, gd_cli, *,
+                  kind: str = "mixed") -> dict:
+    """Render the page against a local fixture server and drive its script.
+    See the module docstring for what each drive covers."""
+    import time
+    binary = chrome_binary()
+    if binary is None:
+        return {"executed": False, "reason": "no headless Chromium found"}
+    snap = json.loads((root / "season2026" / "sleeper_league.json").read_text("utf-8"))
+    rows = snap["matchups"]
+    fixture, steps, clock = (_mixed_plan if kind == "mixed" else _pregame_plan)(rows)
+    _Fixture.steps = fixture
     _Fixture.state = {"step": 0}
     _Fixture.feed = json.loads((root / "season2026" / GAME_STATUS_FILE).read_text("utf-8"))["games"]
     _Fixture.hits = []
+    _Fixture.clock = clock
+    _Fixture.started = time.monotonic()
+    _Fixture.release = threading.Event()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Fixture)
     port = server.server_port
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -490,23 +630,28 @@ def drive_browser(root: Path, page_dir: Path, archive: Path, now: datetime, gd_c
                           str(archive), "--now", now.isoformat(),
                           "--api-base", base, "--api-base", base])
         html_path = live_dir / "gameday_latest.html"
-        steps = ["correction", "429", "recovery", "older", "malformed", "rollover"]
+        # The page's clock is skewed to the scenario's instant: the fixture
+        # calendar (kickoffs, as-of times) is a week the machine is not in.
+        skew_ms = int((clock - datetime.now(UTC)).total_seconds() * 1000)
         harness = live_dir / "harness.html"
-        harness.write_text(_HARNESS.format(url=html_path.resolve().as_uri(),
-                                           steps=json.dumps(steps)), "utf-8")
+        harness.write_text(_HARNESS.format(url=html_path.resolve().as_uri(), base=base,
+                                           base_json=json.dumps(base), steps=json.dumps(steps),
+                                           skew_ms=skew_ms, timeout_ms=1500), "utf-8")
         proc = subprocess.run(
             [binary, "--headless=new", "--no-sandbox", "--disable-gpu",
              "--allow-file-access-from-files", "--window-size=900,1400",
-             "--virtual-time-budget=30000", "--dump-dom", harness.resolve().as_uri()],
+             "--dump-dom", harness.resolve().as_uri()],
             capture_output=True, timeout=240)
         m = re.search(r"<title>RESULT ([A-Za-z0-9+/=]+)</title>", proc.stdout.decode("utf-8", "replace"))
         if rc != 0 or not m:
             return {"executed": False, "reason": f"render rc={rc}; harness produced no result",
                     "hits": list(_Fixture.hits)}
         out = json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
-        return {"executed": True, "base": base, "steps": out, "hits": list(_Fixture.hits),
-                "base_my": base_my}
+        return {"executed": True, "kind": kind, "base": base, "steps": out,
+                "hits": list(_Fixture.hits), "base_my": rows[0]["points"],
+                "real_time": True}
     finally:
+        _Fixture.release.set()
         server.shutdown()
         server.server_close()
 
@@ -518,13 +663,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only", choices=SCENARIOS, default=None)
     ap.add_argument("--screenshot", action="store_true")
     ap.add_argument("--browser", action="store_true",
-                    help="drive the mixed scenario's Refresh against a local fixture server")
+                    help="drive the page's own script against a local fixture server "
+                         "(mixed: the refresh sequence; pregame: the legality journey)")
     args = ap.parse_args(argv)
     worst = 0
     for kind in SCENARIOS if args.only is None else (args.only,):
         print(f"=== scenario: {kind} ===")
         s = render(kind, args.out, take_screenshot=args.screenshot,
-                   drive=args.browser and kind == "mixed")
+                   drive=args.browser and kind in DRIVEN)
         worst = max(worst, s.get("board_rc", 0), s["gameday_rc"])
         b = s.get("browser")
         if b is not None:
@@ -532,8 +678,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[gameday] browser drive NOT executed: {b.get('reason')}", file=sys.stderr)
             else:
                 for step in b["steps"]:
-                    print(f"[browser] {json.dumps(step)[:400]}", file=sys.stderr)
-                (args.out / "browser_drive.json").write_text(json.dumps(b, indent=1), "utf-8")
+                    print(f"[browser:{kind}] {json.dumps(step)[:400]}", file=sys.stderr)
+                (args.out / f"browser_drive_{kind}.json").write_text(json.dumps(b, indent=1),
+                                                                     "utf-8")
     return worst
 
 

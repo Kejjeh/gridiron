@@ -31,11 +31,12 @@ PLAYERS = {
     "2": {"full_name": "Late Back", "position": "RB", "team": "SEA"},
     "3": {"full_name": "Night Receiver", "position": "WR", "team": "KC"},
     "4": {"full_name": "Early Kicker", "position": "K", "team": "PIT"},
-    "5": {"full_name": "Bench Night Back", "position": "RB", "team": "LAR"},
+    "5": {"full_name": "Bench Night Wideout", "position": "WR", "team": "LAR"},
     "6": {"full_name": "Bench Early End", "position": "TE", "team": "PHI"},
     "7": {"full_name": "Their Quarterback", "position": "QB", "team": "CAR"},
     "8": {"full_name": "Their Night Back", "position": "RB", "team": "IND"},
     "9": {"full_name": "Their Kicker", "position": "K", "team": "LAR"},
+    "10": {"full_name": "Night End", "position": "TE", "team": "KC"},
 }
 SLOTS = ["QB", "RB", "WR", "K", "DEF"]
 
@@ -73,7 +74,8 @@ def feed(status: dict[str, str], *, fresh: bool = True, as_of: datetime | None =
 def snapshot(*, my_starters=("1", "2", "3", "4", "SEA"), my_points=(14.0, 0.0, 0.0, 7.0, -1.0),
              opp_starters=("7", "8", "9", "0", "IND"), opp_points=(20.14, 0.0, 0.0, 0.0, 0.0),
              my_total=None, opp_total=None, custom=None, matchups=None, week=3,
-             my_players=("1", "2", "3", "4", "SEA", "5", "6"), state_week=None) -> dict:
+             my_players=("1", "2", "3", "4", "SEA", "5", "6"), state_week=None,
+             slots=SLOTS, reserve=(), taxi=()) -> dict:
     my_sp = list(my_points)
     opp_sp = list(opp_points)
     rows = matchups if matchups is not None else [
@@ -87,23 +89,27 @@ def snapshot(*, my_starters=("1", "2", "3", "4", "SEA"), my_points=(14.0, 0.0, 0
          "custom_points": custom}]
     return {"as_of": (NOW - timedelta(minutes=2)).isoformat(), "league_id": LEAGUE, "week": week,
             "state": {"season": 2026, "week": state_week or week, "season_type": "regular"},
-            "league": {"league_id": LEAGUE, "roster_positions": SLOTS},
+            "league": {"league_id": LEAGUE, "roster_positions": list(slots)},
             "users": [{"user_id": "U1", "display_name": "fixture_owner"}],
             "rosters": [{"roster_id": 1, "owner_id": "U1", "starters": list(my_starters),
-                         "players": list(my_players), "reserve": []},
+                         "players": list(my_players), "reserve": list(reserve),
+                         "taxi": list(taxi)},
                         {"roster_id": 2, "owner_id": "U2", "starters": list(opp_starters),
                          "players": list(opp_starters), "reserve": []}],
             "matchups": rows}
 
 
-def sources(*, league_fresh=True) -> tuple[SourceFreshness, ...]:
+def sources(*, league_fresh=True, players_fresh=True, schedule_fresh=True
+            ) -> tuple[SourceFreshness, ...]:
     return (SourceFreshness("sleeper_league", Status.FRESH if league_fresh else Status.STALE,
                             NOW - timedelta(minutes=2), 2, 3,
                             "pulled 0h ago" if league_fresh else "pulled 9h ago"),
-            SourceFreshness("sleeper_players", Status.FRESH, NOW - timedelta(hours=1), 9, None,
-                            "pulled 1h ago"),
-            SourceFreshness("schedules", Status.FRESH, NOW - timedelta(hours=5), 48, 3,
-                            "pulled 5h ago"))
+            SourceFreshness("sleeper_players", Status.FRESH if players_fresh else Status.STALE,
+                            NOW - timedelta(hours=1), 9, None,
+                            "pulled 1h ago" if players_fresh else "pulled 30h ago"),
+            SourceFreshness("schedules", Status.FRESH if schedule_fresh else Status.STALE,
+                            NOW - timedelta(hours=5), 48, 3,
+                            "pulled 5h ago" if schedule_fresh else "pulled 9 days ago"))
 
 
 def build(schedule, *, snap=None, fd=None, now=NOW, archive_root=None, previous=None,
@@ -292,15 +298,25 @@ def test_exposure_is_text_that_names_positions(schedule):
 
 # ---------------------------------------------------------------- actions
 
-def _actions(schedule, tmp_path, *, generated=None, deadline=None, status="ACTIONABLE",
-             ids=("5", "3"), kind="swap", **kw):
-    gen = generated or NOW - timedelta(days=1)
+def action(*, generated=None, deadline=None, status="ACTIONABLE", ids=("5", "3"), kind="swap",
+           slot=None, title="WR: start Bench Night Wideout over Night Receiver") -> dict:
     dl = (deadline or NOW + timedelta(hours=3)).isoformat()
+    raw = {"kind": kind, "status": status, "title": title, "body": "x", "deadline": dl,
+           "deadline_note": "act before kickoff", "backup": "none", "player_ids": list(ids)}
+    if slot is not None:
+        raw["slot"] = slot
+    return raw
+
+
+def _actions(schedule, tmp_path, *, generated=None, deadline=None, status="ACTIONABLE",
+             ids=("5", "3"), kind="swap", slot=None, **kw):
+    """One archived board with one action — a WR on the bench (night game)
+    into the WR slot held by a WR whose game is also tonight: legal on every
+    gate when nothing else is wrong."""
+    gen = generated or NOW - timedelta(days=1)
     root = tmp_path / f"ledger{len(list(tmp_path.glob('ledger*')))}"   # one ledger per case
     write_record(root, generated=gen, actions=[
-        {"kind": kind, "status": status, "title": "WR: start Bench Night Back over Night Receiver",
-         "body": "x", "deadline": dl, "deadline_note": "act before kickoff",
-         "backup": "none", "player_ids": list(ids)}])
+        action(deadline=deadline, status=status, ids=ids, kind=kind, slot=slot)])
     return build(schedule, archive_root=root, **kw)
 
 
@@ -308,7 +324,105 @@ def test_a_legal_pregame_swap_is_still_available_before_both_kickoffs(schedule, 
     d = _actions(schedule, tmp_path)
     a = d.actions[0]
     assert a.available and a.eligible and "proven unlocked" in a.why
+    assert "eligible for WR" in a.why and "all current" in a.why
     assert d.capacity.open_starters == 1 and d.capacity.open_bench == 1
+
+
+# --- the archive's ACTIONABLE is history; every gate is re-run NOW
+
+@pytest.mark.parametrize("kw, name", [
+    ({"srcs": sources(league_fresh=False)}, "sleeper_league"),
+    ({"srcs": sources(players_fresh=False)}, "sleeper_players"),
+    ({"srcs": sources(schedule_fresh=False)}, "schedules"),
+    ({"players_fresh": False}, "sleeper_players"),
+])
+def test_a_stale_input_withholds_the_advice_while_the_score_still_shows(schedule, tmp_path, kw, name):
+    d = _actions(schedule, tmp_path, **kw)
+    a = d.actions[0]
+    assert not a.available and a.eligible and name in a.why and "not current" in a.why
+    assert "score above stands on its own" in a.why
+    assert d.score.mine.platform_points == 20.0 and d.score.lead() == "behind by 0.14"
+
+
+def test_a_player_the_platform_lists_out_is_never_offered(schedule, tmp_path):
+    for word in ("Out", "IR", "PUP", "Sus", "NA", "COV", "DNR"):
+        d = _actions(schedule, tmp_path,
+                     players={**PLAYERS, "5": {**PLAYERS["5"], "injury_status": word}})
+        a = d.actions[0]
+        assert not a.available and word in a.why and "not offered as a start" in a.why, word
+        assert d.score.mine.platform_points == 20.0
+
+
+def test_questionable_and_doubtful_are_eligible_and_said_so(schedule, tmp_path):
+    """Rule #11: Questionable is not out. The card carries the word; the
+    owner decides."""
+    for word in ("Questionable", "Doubtful"):
+        d = _actions(schedule, tmp_path,
+                     players={**PLAYERS, "5": {**PLAYERS["5"], "injury_status": word}})
+        a = d.actions[0]
+        assert a.available and f"listed {word}" in a.why and "not out (rule #11)" in a.why
+
+
+def test_the_incoming_player_must_be_eligible_for_the_actual_destination_slot(schedule, tmp_path):
+    # an RB into the WR slot: never legal, whatever the board once said
+    rb = {**PLAYERS, "5": {**PLAYERS["5"], "position": "RB"}}
+    d = _actions(schedule, tmp_path, players=rb)
+    assert not d.actions[0].available and "not eligible for the WR slot" in d.actions[0].why
+    # the platform lists him at two positions: the list decides, not the tag
+    multi = {**PLAYERS, "5": {**PLAYERS["5"], "position": "RB", "fantasy_positions": ["RB", "WR"]}}
+    d = _actions(schedule, tmp_path, players=multi)
+    assert d.actions[0].available and "(RB/WR) is eligible for WR" in d.actions[0].why
+    # a position the dump does not carry cannot be shown eligible
+    d = _actions(schedule, tmp_path, players={**PLAYERS, "5": {"full_name": "No Tag", "team": "LAR"}})
+    assert not d.actions[0].available and "position is not known" in d.actions[0].why
+    # an id the dump lacks altogether is unknown on every axis, lock first
+    d = _actions(schedule, tmp_path, players={k: v for k, v in PLAYERS.items() if k != "5"})
+    assert not d.actions[0].available and "UNKNOWN" in d.actions[0].why
+
+
+def test_a_flex_slot_takes_any_flex_position_and_nothing_else(schedule, tmp_path):
+    slots = ["QB", "RB", "WR", "FLEX", "K", "DEF"]
+    snap = snapshot(slots=slots, my_starters=("1", "2", "3", "10", "4", "SEA"),
+                    my_points=(14.0, 0.0, 0.0, 0.0, 7.0, -1.0),
+                    my_players=("1", "2", "3", "10", "4", "SEA", "5", "6"))
+    # WR 5 into the FLEX held by TE 10 (both night games): eligible
+    wr = _actions(schedule, tmp_path, ids=("5", "10"), snap=snap)
+    assert wr.actions[0].available and "eligible for FLEX" in wr.actions[0].why
+    # a kicker into the same FLEX: not eligible
+    k = _actions(schedule, tmp_path, ids=("5", "10"), snap=snap,
+                 players={**PLAYERS, "5": {**PLAYERS["5"], "position": "K"}})
+    assert not k.actions[0].available and "not eligible for the FLEX slot" in k.actions[0].why
+
+
+def test_a_player_on_ir_or_taxi_is_a_roster_move_not_a_lineup_change(schedule, tmp_path):
+    ir = _actions(schedule, tmp_path, snap=snapshot(reserve=("5",)))
+    assert not ir.actions[0].available and "is on IR" in ir.actions[0].why
+    taxi = _actions(schedule, tmp_path, snap=snapshot(taxi=("5",)))
+    assert not taxi.actions[0].available and "is on TAXI" in taxi.actions[0].why
+    assert taxi.capacity.open_bench == 0             # a taxi player is not bench capacity
+
+
+def test_an_empty_slot_move_needs_the_slot_and_the_slot_must_still_be_empty(schedule, tmp_path):
+    empty = snapshot(my_starters=("1", "2", "0", "4", "SEA"), my_points=(14.0, 0.0, 0.0, 7.0, -1.0))
+    named = _actions(schedule, tmp_path, kind="empty_slot", ids=("5",), slot="WR", snap=empty)
+    assert named.actions[0].available and "eligible for WR" in named.actions[0].why
+    # only one slot is empty: no guess is needed
+    unnamed = _actions(schedule, tmp_path, kind="empty_slot", ids=("5",), snap=empty)
+    assert unnamed.actions[0].available
+    # the named slot is filled again: nothing to do
+    filled = _actions(schedule, tmp_path, kind="empty_slot", ids=("5",), slot="WR")
+    assert not filled.actions[0].available and "no longer empty" in filled.actions[0].why
+    # two empty slots and no name: not guessed
+    two = snapshot(my_starters=("1", "0", "0", "4", "SEA"), my_points=(14.0, 0.0, 0.0, 7.0, -1.0))
+    d = _actions(schedule, tmp_path, kind="empty_slot", ids=("5",), snap=two)
+    assert not d.actions[0].available and "a slot is not guessed" in d.actions[0].why
+
+
+def test_an_inactive_starter_replacement_is_judged_like_a_swap(schedule, tmp_path):
+    d = _actions(schedule, tmp_path, kind="inactive_starter", ids=("5", "3"))
+    assert d.actions[0].available and "eligible for WR" in d.actions[0].why
+    none = _actions(schedule, tmp_path, kind="inactive_starter", ids=("3",))
+    assert not none.actions[0].available and "nothing to move in" in none.actions[0].why
 
 
 def test_a_withheld_pregame_action_never_becomes_advice_during_games(schedule, tmp_path):
@@ -356,9 +470,15 @@ def test_no_legal_move_left_is_said_plainly(schedule, tmp_path):
     assert d.capacity.sentence().startswith("No legal lineup change remains")
 
 
-def test_unconfirmed_status_is_said_when_the_feed_cannot_confirm(schedule, tmp_path):
+def test_an_unconfirmed_game_status_is_never_legal_advice(schedule, tmp_path):
+    """No feed, or a stale one: the schedule alone says 'not started', and a
+    kickoff time is not proof. The move is withheld and says why; the score
+    still shows on its own."""
     d = _actions(schedule, tmp_path, fd=feed({}, present=False))
-    assert d.actions[0].available and "UNCONFIRMED" in d.actions[0].why
+    assert not d.actions[0].available and "UNCONFIRMED" in d.actions[0].why
+    assert d.score.mine.platform_points == 20.0
+    stale = _actions(schedule, tmp_path, fd=feed({"KC": "pre_game", "LAR": "pre_game"}, fresh=False))
+    assert not stale.actions[0].available and "UNCONFIRMED" in stale.actions[0].why
 
 
 # ------------------------------------------------------------ pregame join
@@ -380,11 +500,89 @@ def test_the_record_must_match_season_week_league_and_roster(schedule, tmp_path)
     assert d.pregame.path == good and d.pregame.tagged
 
 
-def test_an_untagged_record_is_accepted_and_said_to_be(schedule, tmp_path):
+def test_an_untagged_record_is_context_only_never_personalised_advice(schedule, tmp_path):
     root = tmp_path / "ledger"
-    write_record(root, generated=NOW - timedelta(days=1), actions=[], tagged=False)
+    write_record(root, generated=NOW - timedelta(days=1), actions=[action()], tagged=False)
     d = build(schedule, archive_root=root)
-    assert d.pregame.found and not d.pregame.tagged and "season and week only" in d.pregame.note
+    assert not d.pregame.found and d.actions == ()
+    assert len(d.pregame.context) == 1 and "historical context only" in d.pregame.context[0]
+    assert "no valid league_id tag" in d.pregame.context[0]
+    # ...and the same for one that carries a different league or roster, untagged or not
+    foreign = tmp_path / "foreign"
+    write_record(foreign, generated=NOW - timedelta(days=1), actions=[action()],
+                 league="DIFFERENT_LEAGUE", roster=99, tagged=False)
+    assert not build(schedule, archive_root=foreign).pregame.found
+    assert gd.find_pregame_record(foreign, season=2026, week=3, league_id=LEAGUE,
+                                  my_roster_id=1, now=NOW)[0] is None
+
+
+def test_a_record_from_the_future_is_refused_and_said_so(schedule, tmp_path):
+    root = tmp_path / "ledger"
+    write_record(root, generated=NOW + timedelta(hours=1), actions=[action()])
+    d = build(schedule, archive_root=root)
+    assert not d.pregame.found and d.actions == ()
+    assert any("record from the future" in c for c in d.pregame.context)
+    # a few minutes of device-clock drift is not 'the future'
+    close = tmp_path / "close"
+    write_record(close, generated=NOW + timedelta(minutes=2), actions=[action()])
+    assert build(schedule, archive_root=close).pregame.found
+
+
+def test_a_record_whose_bytes_no_longer_match_its_digest_is_refused(schedule, tmp_path):
+    root = tmp_path / "ledger"
+    path = write_record(root, generated=NOW - timedelta(days=1), actions=[action()])
+    blob = json.loads(path.read_text("utf-8"))
+    blob["actions"][0]["player_ids"] = ["6", "3"]           # an edit after the fact
+    path.write_text(json.dumps(blob, indent=1), "utf-8")
+    d = build(schedule, archive_root=root)
+    assert not d.pregame.found and d.actions == ()
+    assert any("no longer match the digest" in c for c in d.pregame.context)
+
+
+def test_a_malformed_identity_is_refused_safely(schedule, tmp_path):
+    root = tmp_path / "ledger"
+    for bad_league, bad_roster in (({"id": LEAGUE}, 1), (LEAGUE, "one"), (LEAGUE, True),
+                                   (["TESTLEAGUE"], 1), (LEAGUE, 1.5)):
+        rec_root = tmp_path / f"bad{len(list(tmp_path.iterdir()))}"
+        path = write_record(rec_root, generated=NOW - timedelta(days=1), actions=[action()])
+        blob = json.loads(path.read_text("utf-8"))
+        blob["league_id"], blob["my_roster_id"] = bad_league, bad_roster
+        path.unlink()
+        # re-archive with a matching digest so only the identity is at fault
+        body = {k: v for k, v in blob.items() if k != "archive_version"}
+        new = archive_path(2026, 3, NOW - timedelta(days=1), rec_root, body)
+        write_archive(body, new)
+        d = build(schedule, archive_root=rec_root)
+        assert not d.pregame.found and d.actions == (), (bad_league, bad_roster)
+        assert any("malformed" in c for c in d.pregame.context), (bad_league, bad_roster)
+    assert not build(schedule, archive_root=root).pregame.found
+
+
+def test_a_newer_postgame_board_does_not_erase_the_pregame_evidence(schedule, tmp_path):
+    """Saturday's board endorsed the swap before its deadline. A Sunday-night
+    render (after the deadline) is a newer record but not decision-time
+    evidence for that move: the Saturday provenance stands, the Sunday board
+    is listed, and the move is judged on today's gates (deadline passed)."""
+    root = tmp_path / "ledger"
+    sat = NOW - timedelta(days=1)
+    deadline = NOW - timedelta(hours=1)
+    write_record(root, generated=sat, actions=[action(deadline=deadline)])
+    sun = write_record(root, generated=NOW - timedelta(minutes=10), actions=[action(deadline=deadline)])
+    d = build(schedule, archive_root=root)
+    (a,) = d.actions
+    assert a.generated == sat and a.eligible and not a.available and "deadline passed" in a.why
+    assert len(d.pregame.records) == 2 and "newest board written before its own deadline" in d.pregame.note
+    assert d.pregame.path != sun
+
+
+def test_a_later_decision_time_board_that_dropped_a_move_supersedes_it(schedule, tmp_path):
+    root = tmp_path / "ledger"
+    write_record(root, generated=NOW - timedelta(days=1), actions=[action()])
+    write_record(root, generated=NOW - timedelta(hours=2), actions=[])     # still before the deadline
+    d = build(schedule, archive_root=root)
+    (a,) = d.actions
+    assert not a.available and "superseded" in a.why and a.superseded
+    assert a.generated == NOW - timedelta(days=1)
 
 
 def test_a_designation_that_moved_after_the_record_is_reported_without_blame(schedule, tmp_path):

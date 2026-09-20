@@ -55,13 +55,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from gridiron.decisions import list_archives, read_archive
-from gridiron.freshness import SourceFreshness, Status
+from gridiron.decisions import (ARCHIVE_RE, list_archives, read_archive,
+                                record_digest)
+from gridiron.freshness import CADENCES, LEAGUE_TZ, SourceFreshness, Status
 from gridiron.ids import TEAM_ALIASES, is_dst_id, nflverse_team, normalize_id
-from gridiron.league_config import LEAGUE_NAME
-from gridiron.lineup import (LOCKED, OPEN, KickoffIndex, kickoff_index,
+from gridiron.league_config import FLEX_ELIGIBLE, LEAGUE_NAME
+from gridiron.lineup import (LOCKED, OPEN, KickoffIndex, eligible, kickoff_index,
                              lock_state, slot_order)
-from gridiron.livesync import OBSERVED_GAME_STATUSES
+from gridiron.livesync import GAME_STATUS_NAME, OBSERVED_GAME_STATUSES
 from gridiron.sleeper import BASE as SLEEPER_BASE
 from gridiron.sleeper import SCHEDULE_BASE
 
@@ -93,6 +94,19 @@ EMPTY_SENTINEL = "0"
 #: How far apart two platform numbers may sit before the page calls them
 #: different. Sleeper scores to two decimals.
 POINTS_EPS = 0.005
+
+#: Sleeper designations under which a player is never OFFERED as a start.
+#: Questionable and Doubtful are deliberately absent (rule #11): a doubtful
+#: player is eligible, the card says the word, and the owner decides.
+NOT_STARTABLE = frozenset({"OUT", "IR", "PUP", "SUS", "NA", "COV", "DNR"})
+#: The sources a lineup move's legality rests on: the lineup and roster, the
+#: positions and designations, the kickoff times. The SCORE displays on the
+#: league snapshot's own freshness; ADVICE needs all three current, and a
+#: refresh in the browser renews only the first.
+LEGALITY_SOURCES = ("sleeper_league", "sleeper_players", "schedules")
+#: A record may claim a generation time this far ahead of the clock before
+#: it is refused as a record from the future (device clocks drift a little).
+FUTURE_SLACK = timedelta(minutes=5)
 
 
 def team_key(value: object) -> str:
@@ -272,6 +286,10 @@ class StarterView:
     injury_note: str
     empty: bool = False
     named: bool = True               # False when the cached player dump lacks him
+    #: Every position the platform lists him at (`fantasy_positions`), so a
+    #: FLEX or multi-position eligibility is checked against the list and not
+    #: against the one tag the roster shows.
+    positions: tuple[str, ...] = field(default=())
 
     @property
     def state(self) -> str:
@@ -286,7 +304,8 @@ class StarterView:
                 "lock": self.lock, "lock_note": self.lock_note,
                 "kickoff": self.kickoff.isoformat() if self.kickoff else None,
                 "injury": self.injury, "injury_note": self.injury_note,
-                "empty": self.empty, "named": self.named}
+                "empty": self.empty, "named": self.named,
+                "positions": list(self.positions)}
 
 
 @dataclass(frozen=True)
@@ -462,6 +481,9 @@ class LiveAction:
     why: str                         # why not, or how it was proven legal
     player_ids: tuple[str, ...] = field(default=())
     eligible: bool = True            # decided before its own deadline
+    generated: datetime | None = None   # when the record it comes from was written
+    slot: str = ""                   # the destination slot the record named, if any
+    superseded: str = ""             # a later decision-time board dropped this move
 
     def record(self) -> dict:
         return {"kind": self.kind, "title": self.title, "body": self.body,
@@ -469,7 +491,9 @@ class LiveAction:
                 "deadline_note": self.deadline_note, "backup": self.backup,
                 "archived_status": self.archived_status, "available": self.available,
                 "why": self.why, "player_ids": list(self.player_ids),
-                "eligible": self.eligible}
+                "eligible": self.eligible,
+                "generated": self.generated.isoformat() if self.generated else None,
+                "slot": self.slot, "superseded": self.superseded}
 
 
 @dataclass(frozen=True)
@@ -519,7 +543,12 @@ class PregameView:
     projection: str = ""             # the archived matchup projection, as context
     withheld: tuple[str, ...] = field(default=())
     designation_changes: tuple[str, ...] = field(default=())
-    tagged: bool = True              # record carries league/roster ids
+    tagged: bool = True              # every record that qualifies carries its tags
+    #: Every qualifying decision-time record, oldest first (stamps).
+    records: tuple[str, ...] = field(default=())
+    #: Archives of this season and week that were seen and NOT used as
+    #: evidence, each with the reason: untagged, future, altered, malformed.
+    context: tuple[str, ...] = field(default=())
 
     @property
     def found(self) -> bool:
@@ -532,44 +561,175 @@ class PregameView:
                 "outcomes": list(self.outcomes), "projection": self.projection,
                 "withheld": list(self.withheld),
                 "designation_changes": list(self.designation_changes),
-                "tagged": self.tagged}
+                "tagged": self.tagged, "records": list(self.records),
+                "context": list(self.context)}
 
 
-def find_pregame_record(root: Path | None, *, season: int, week: int,
-                        league_id: str, my_roster_id: int | None
-                        ) -> tuple[Path | None, dict | None, str, bool]:
-    """The newest archived board for THIS season, week, league and roster.
+@dataclass(frozen=True)
+class ArchiveMatch:
+    """One archived board that qualifies as decision-time evidence for THIS
+    owner in THIS league, season and week: tagged, digest-valid, readable,
+    and not from the future."""
 
-    Returns (path, record, note, tagged). A record that carries league and
-    roster tags must match them; one written before the tags existed is
-    accepted on season and week alone and said to be. Nothing is rebuilt: if
-    no record qualifies, there is no pregame record.
+    stamp: datetime                  # from the filename (the ordering key)
+    generated: datetime              # from the record itself
+    path: Path
+    record: dict
+
+    def keys(self) -> set[tuple]:
+        return {_action_key(a) for a in (self.record.get("actions") or [])
+                if isinstance(a, Mapping)}
+
+
+def _action_key(raw: Mapping[str, object]) -> tuple:
+    """What makes two archived actions 'the same move': the kind and the
+    player ids, never the wording."""
+    return (str(raw.get("kind") or ""),
+            tuple(normalize_id(i) for i in (raw.get("player_ids") or []) if normalize_id(i)))
+
+
+def _identity(value: object, expected: object, *, as_int: bool) -> str:
+    """'ok' = matches, 'other' = a DIFFERENT identity, 'absent' = no tag,
+    'malformed' = a tag of the wrong shape (never coerced into a match)."""
+    if value is None or value == "":
+        return "absent"
+    try:
+        if as_int:
+            if isinstance(value, bool) or not isinstance(value, (int, str)):
+                return "malformed"
+            if isinstance(value, str) and not value.strip().isdigit():
+                return "malformed"
+            return "ok" if int(value) == int(expected) else "other"
+        if not isinstance(value, str):
+            return "malformed"
+        return "ok" if value == str(expected) else "other"
+    except (TypeError, ValueError):
+        return "malformed"
+
+
+def qualifying_records(root: Path | None, *, season: int, week: int, league_id: str,
+                       my_roster_id: int | None, now: datetime
+                       ) -> tuple[tuple[ArchiveMatch, ...], tuple[str, ...]]:
+    """Every archived board that can stand as decision-time evidence, oldest
+    first, and a note for each archive of this season and week that cannot.
+
+    A record qualifies only when it names EXACTLY this league and this
+    roster (an untagged record is historical context, never personalised
+    advice), its bytes still match the digest in its own filename, its
+    identity fields are well formed, and it does not claim to be written in
+    the future. A record for another league or roster is somebody else's
+    and is neither used nor listed.
     """
-    candidates = []
-    untagged = False
+    matches: list[ArchiveMatch] = []
+    context: list[str] = []
+    now = _utc(now)
     for stamp, path in list_archives(root, season):
         try:
             rec = read_archive(path)
         except (OSError, ValueError):
+            context.append(f"{path.name}: unreadable, not used")
+            continue
+        if not isinstance(rec, Mapping):
+            context.append(f"{path.name}: not a record, not used")
             continue
         if rec.get("week") != int(week) or rec.get("season") != int(season):
             continue
-        lid, rid = rec.get("league_id"), rec.get("my_roster_id")
-        if lid is not None and str(lid) != str(league_id):
+        m = ARCHIVE_RE.match(path.stem)
+        digest = m.group("digest") if m else None
+        if digest:
+            body = {k: v for k, v in rec.items() if k != "archive_version"}
+            if record_digest(body) != digest:
+                context.append(f"{path.name}: its bytes no longer match the digest in its "
+                               f"name (altered or damaged), not used")
+                continue
+        lid = _identity(rec.get("league_id"), league_id, as_int=False)
+        rid = (_identity(rec.get("my_roster_id"), my_roster_id, as_int=True)
+               if my_roster_id is not None else "other")
+        if "malformed" in (lid, rid):
+            context.append(f"{path.name}: malformed league/roster identity, not used")
             continue
-        if rid is not None and my_roster_id is not None and int(rid) != int(my_roster_id):
+        if "other" in (lid, rid):
+            continue                     # another league or roster: not ours, not listed
+        if "absent" in (lid, rid):
+            missing = "league_id" if lid == "absent" else "my_roster_id"
+            context.append(f"{path.name}: carries no valid {missing} tag, so it cannot be "
+                           f"shown to be this roster's record — historical context only, "
+                           f"no advice is taken from it")
             continue
-        candidates.append((stamp, path, rec, lid is None or rid is None))
-    if not candidates:
-        return None, None, (f"no pregame record for week {week}: no archived board "
-                            f"matches this season, week, league and roster, and none "
-                            f"is reconstructed after the fact"), False
-    stamp, path, rec, untagged = candidates[-1]
-    note = f"archived board of {_stamp(stamp)}"
-    if untagged:
-        note += (" (written before records carried league and roster tags, so matched "
-                 "on season and week only)")
-    return path, rec, note, not untagged
+        generated = _parse_dt(rec.get("generated"))
+        if generated is None:
+            context.append(f"{path.name}: no readable generation time, not used")
+            continue
+        if generated > now + FUTURE_SLACK:
+            context.append(f"{path.name}: claims to be written at {_stamp(generated)}, after "
+                           f"now ({_stamp(now)}); a record from the future is not "
+                           f"decision-time evidence, not used")
+            continue
+        matches.append(ArchiveMatch(stamp, generated, path, dict(rec)))
+    matches.sort(key=lambda m: (m.generated, m.stamp, m.path.name))
+    return tuple(matches), tuple(context)
+
+
+def find_pregame_record(root: Path | None, *, season: int, week: int,
+                        league_id: str, my_roster_id: int | None,
+                        now: datetime | None = None
+                        ) -> tuple[Path | None, dict | None, str, bool]:
+    """The newest qualifying board (see `qualifying_records`), or nothing.
+
+    Returns (path, record, note, tagged). `tagged` is True for every record
+    returned: one that carries no league/roster identity never qualifies.
+    Nothing is rebuilt: if no record qualifies, there is no pregame record.
+    """
+    matches, context = qualifying_records(root, season=season, week=week, league_id=league_id,
+                                          my_roster_id=my_roster_id,
+                                          now=now or datetime.now(timezone.utc))
+    if not matches:
+        note = (f"no pregame record for week {week}: no archived board matches this season, "
+                f"week, league and roster, and none is reconstructed after the fact")
+        if context:
+            note += " (" + "; ".join(context) + ")"
+        return None, None, note, False
+    m = matches[-1]
+    return m.path, m.record, f"archived board of {_stamp(m.generated)}", True
+
+
+def select_evidence(matches: Sequence[ArchiveMatch]
+                    ) -> list[tuple[Mapping[str, object], ArchiveMatch, str]]:
+    """For every distinct move the boards listed, the record that is
+    decision-time evidence for it: the NEWEST board written before that
+    move's own deadline. A later board written after the deadline (a postgame
+    render) never displaces it. A later board written BEFORE the deadline
+    that dropped the move supersedes it, and the note says so.
+
+    Returns (raw action, its record, supersession note) in the order the
+    evidence records list them.
+    """
+    seen: dict[tuple, list[tuple[Mapping[str, object], ArchiveMatch]]] = {}
+    for m in matches:
+        for raw in (m.record.get("actions") or []):
+            if isinstance(raw, Mapping):
+                seen.setdefault(_action_key(raw), []).append((raw, m))
+    out: list[tuple[Mapping[str, object], ArchiveMatch, str]] = []
+    for key, pairs in seen.items():
+        chosen = None
+        for raw, m in pairs:                       # oldest first: the last hit wins
+            deadline = _parse_dt(raw.get("deadline"))
+            if deadline is not None and m.generated < deadline:
+                chosen = (raw, m)
+        if chosen is None:
+            chosen = pairs[-1]
+        raw, m = chosen
+        deadline = _parse_dt(raw.get("deadline"))
+        later = [x for x in matches if x.generated > m.generated
+                 and (deadline is None or x.generated < deadline) and key not in x.keys()]
+        note = ""
+        if later:
+            note = (f"a later decision-time board ({_stamp(later[-1].generated)}) no longer "
+                    f"listed this move, so the board of {_stamp(m.generated)} is superseded")
+        out.append((raw, m, note))
+    order = {id(m): i for i, m in enumerate(matches)}
+    out.sort(key=lambda t: (order[id(t[1])], ))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -723,6 +883,18 @@ def _name_of(sid: str, rec: Mapping[str, object] | None) -> tuple[str, str, str,
             str(rec.get("position") or "").upper(), team_key(rec.get("team")), True)
 
 
+def _positions_of(sid: str, rec: Mapping[str, object] | None, position: str) -> tuple[str, ...]:
+    """Every position the platform lists him at. `fantasy_positions` when the
+    dump carries it, else the one position tag; a DST is a DST."""
+    if is_dst_id(normalize_id(sid)):
+        return ("DST",)
+    fp = (rec or {}).get("fantasy_positions")
+    out = [str(x).upper() for x in fp if x] if isinstance(fp, (list, tuple)) else []
+    if position and position not in out:
+        out.append(position)
+    return tuple(out)
+
+
 def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
                   snapshot: Mapping[str, object],
                   sleeper_players: Mapping[str, Mapping[str, object]],
@@ -745,6 +917,17 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
 
     league_source = next((s for s in sources if s.name == "sleeper_league"), None)
     snap_as_of = _parse_dt(snapshot.get("as_of")) or (league_source.as_of if league_source else None)
+    # What ADVICE rests on, judged separately from what the score rests on.
+    by_source = {s.name: s for s in sources}
+    blockers: list[str] = []
+    for name in LEGALITY_SOURCES:
+        src = by_source.get(name)
+        if src is None:
+            blockers.append(f"{name} freshness was never assessed")
+        elif src.status is not Status.FRESH:
+            blockers.append(f"{name} is {src.status.value.upper()} ({src.reason})")
+    if players_fresh is False and not any(b.startswith("sleeper_players") for b in blockers):
+        blockers.append("sleeper_players (designations and positions) is not current")
     if league_source is None or league_source.status is not Status.FRESH:
         notes.append("the league snapshot the scores come from is "
                      + (league_source.status.value.upper() if league_source else "UNASSESSED")
@@ -786,7 +969,7 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
             inj_note = (f"designation from the player dump of {_stamp(players_as_of)}"
                         + ("" if players_fresh else " — STALE, not a current status"))
         return StarterView(slot, sid, name, pos, team, None, "", game, lock, lnote, kick,
-                           inj, inj_note, named=named)
+                           inj, inj_note, named=named, positions=_positions_of(sid, rec, pos))
 
     def side(row: Mapping[str, object] | None, roster: Mapping[str, object] | None,
              label: str, with_bench: bool) -> SideView | None:
@@ -814,21 +997,24 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
                 note += "; game not started, so this 0 is a placeholder"
             views.append(StarterView(v.slot, v.sleeper_id, v.name, v.position, v.team,
                                      val, note, v.game, v.lock, v.lock_note, v.kickoff,
-                                     v.injury, v.injury_note, named=v.named))
+                                     v.injury, v.injury_note, named=v.named,
+                                     positions=v.positions))
         bench: list[StarterView] = []
         if with_bench and roster is not None:
             reserve = {normalize_id(s) for s in (roster.get("reserve") or [])}
+            taxi = {normalize_id(s) for s in (roster.get("taxi") or [])}
             for sid in (roster.get("players") or []):
                 sid = normalize_id(sid)
                 if sid in ids or not sid:
                     continue
-                v = starter(sid, "IR" if sid in reserve else "BN", "BENCH")
+                v = starter(sid, "IR" if sid in reserve else "TAXI" if sid in taxi else "BN",
+                            "BENCH")
                 val = _num(pp.get(sid))
                 bench.append(StarterView(v.slot, v.sleeper_id, v.name, v.position, v.team,
                                          val, "platform players_points" if val is not None
                                          else "no platform value", v.game, v.lock,
                                          v.lock_note, v.kickoff, v.injury, v.injury_note,
-                                         named=v.named))
+                                         named=v.named, positions=v.positions))
         total, override, ssum, unknown, recon = _side_totals(row, views)
         side_notes: list[str] = []
         if len(ids) != len(slots):
@@ -899,12 +1085,12 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
         open_starters=sum(1 for s in mine.starters if not s.empty and s.lock == OPEN),
         locked_starters=sum(1 for s in mine.starters if not s.empty and s.lock == LOCKED),
         unknown_starters=sum(1 for s in mine.starters if not s.empty and s.lock == "UNKNOWN"),
-        open_bench=sum(1 for s in mine.bench if s.lock == OPEN and s.slot != "IR"),
+        open_bench=sum(1 for s in mine.bench if s.lock == OPEN and s.slot == "BN"),
         empty_slots=sum(1 for s in mine.starters if s.empty))
 
     # ---- pregame record and the actions still legal
-    path, rec, pnote, tagged = find_pregame_record(archive_root, season=season, week=week,
-                                                   league_id=league_id, my_roster_id=my_rid)
+    matches, context = qualifying_records(archive_root, season=season, week=week,
+                                          league_id=league_id, my_roster_id=my_rid, now=now)
     by_id = {s.sleeper_id: s for s in (*mine.starters, *mine.bench) if s.sleeper_id}
     starter_ids = [s.sleeper_id for s in mine.starters]
     actions: list[LiveAction] = []
@@ -913,8 +1099,19 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
     withheld: tuple[str, ...] = ()
     desig_changes: list[str] = []
     generated = None
-    if rec is not None:
-        generated = _parse_dt(rec.get("generated"))
+    path = None
+    if not matches:
+        pnote = (f"no pregame record for week {week}: no archived board matches this season, "
+                 f"week, league and roster, and none is reconstructed after the fact")
+    else:
+        evidence = select_evidence(matches)
+        used = {id(m) for _, m, _ in evidence}
+        primary = next((m for m in reversed(matches) if id(m) in used), matches[-1])
+        path, rec, generated = primary.path, primary.record, primary.generated
+        stamps = [_stamp(m.generated) for m in matches]
+        pnote = (f"archived board of {_stamp(generated)}" if len(matches) == 1 else
+                 f"archived boards of {', '.join(stamps)}; each move is judged from the "
+                 f"newest board written before its own deadline")
         withheld = tuple(str(w) for w in (rec.get("withheld_actions") or []))
         m = rec.get("matchup") if isinstance(rec.get("matchup"), Mapping) else None
         if m:
@@ -939,14 +1136,15 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
                     f"{s.name}: pregame record said \"{then}\"; the player dump now says "
                     f"{now_d} ({s.injury_note or 'current'}). The later status cannot "
                     f"show what was knowable before kickoff.")
-        for raw in (rec.get("actions") or []):
-            if not isinstance(raw, Mapping):
-                continue
-            actions.append(_judge_action(raw, generated=generated, now=now, by_id=by_id,
-                                         starter_ids=starter_ids))
+        for raw, m, superseded in evidence:
+            actions.append(_judge_action(raw, generated=m.generated, now=now, by_id=by_id,
+                                         starter_ids=starter_ids, blockers=blockers,
+                                         empty_slots=[s.slot for s in mine.starters if s.empty],
+                                         superseded=superseded))
         outcomes = _outcomes(actions, by_id, starter_ids)
     pregame = PregameView(path, generated, pnote, tuple(actions), tuple(outcomes),
-                          projection, withheld, tuple(desig_changes), tagged)
+                          projection, withheld, tuple(desig_changes), bool(matches),
+                          tuple(_stamp(m.generated) for m in matches), context)
 
     # ---- since the last game-day snapshot (server-side, like for like)
     partial = {"season": season, "week": week, "league_id": league_id,
@@ -963,15 +1161,26 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
                          pregame=pregame, now=now, api_bases=api_bases,
                          all_ids=[s.sleeper_id for s in (*mine.starters, *mine.bench,
                                                           *(opp.starters if opp else ()))
-                                  if s.sleeper_id])
+                                  if s.sleeper_id], sources=sources, blockers=blockers)
     return GameDay(int(season), int(week), str(league_id), my_rid, now, tuple(sources),
                    score, feed, cap, tuple(actions), pregame, changes, tuple(notes),
                    slots, embedded, state_week=state_week)
 
 
 def _judge_action(raw: Mapping[str, object], *, generated: datetime | None, now: datetime,
-                  by_id: Mapping[str, StarterView], starter_ids: Sequence[str]) -> LiveAction:
-    """Is this archived action still something Sleeper would accept?"""
+                  by_id: Mapping[str, StarterView], starter_ids: Sequence[str],
+                  blockers: Sequence[str] = (), empty_slots: Sequence[str] = (),
+                  superseded: str = "") -> LiveAction:
+    """Is this archived action still something Sleeper would accept NOW?
+
+    The archive's ACTIONABLE is history: it says the board endorsed the move
+    with the inputs it had then. Every gate is re-run against the present —
+    the record's own timing, the freshness of the roster, designations and
+    schedule, each player's lock, game status, roster placement (bench, not
+    IR or taxi) and current designation, and the destination slot's
+    eligibility for the incoming player's listed positions. The score on the
+    page never depends on any of this.
+    """
     kind = str(raw.get("kind") or "")
     status = str(raw.get("status") or "")
     title = str(raw.get("title") or raw.get("headline") or "")
@@ -980,10 +1189,11 @@ def _judge_action(raw: Mapping[str, object], *, generated: datetime | None, now:
     ids = tuple(normalize_id(i) for i in (raw.get("player_ids") or []) if normalize_id(i))
     backup = str(raw.get("backup") or "")
     dnote = str(raw.get("deadline_note") or "")
+    slot_named = str(raw.get("slot") or "").upper()
 
     def no(why: str, eligible: bool = True) -> LiveAction:
         return LiveAction(kind, title, body, deadline, dnote, backup, status, False, why,
-                          ids, eligible)
+                          ids, eligible, generated, slot_named, superseded)
 
     if kind == "acquire":
         return no("a pickup is not a game-day move: eligibility was UNVERIFIED pregame "
@@ -997,11 +1207,20 @@ def _judge_action(raw: Mapping[str, object], *, generated: datetime | None, now:
     if generated is None or generated >= deadline:
         return no("the record was written at or after its own deadline, so it is not "
                   "decision-time evidence for this move", eligible=False)
+    if generated > now + FUTURE_SLACK:
+        return no(f"the record claims to be written at {_stamp(generated)}, after now "
+                  f"({_stamp(now)}); a record from the future is not decision-time "
+                  f"evidence", eligible=False)
+    if superseded:
+        return no(superseded)
     if now >= deadline:
         return no(f"deadline passed ({_stamp(deadline)})")
     if not ids:
         return no("the record names no player ids (written before actions carried them), "
                   "so legality cannot be checked without name-matching, which is never done")
+    if blockers:
+        return no("the inputs legality rests on are not current — " + "; ".join(blockers)
+                  + ". The score above stands on its own; the advice does not")
     for sid in ids:
         p = by_id.get(sid)
         if p is None:
@@ -1014,21 +1233,73 @@ def _judge_action(raw: Mapping[str, object], *, generated: datetime | None, now:
                       f"shown legal")
         if p.game.state in (PLAYING, FINAL, SUSPENDED):
             return no(f"{p.name}'s game is {p.game.state} per the feed")
+        if not p.game.current:
+            return no(f"{p.name}'s game status is UNCONFIRMED ({p.game.note}); the schedule "
+                      f"says not started, but a kickoff time alone does not prove it, so "
+                      f"the move is not shown legal")
+    # ---- placement: who moves in, who moves out, and where
+    incoming = by_id[ids[0]] if kind in ("swap", "inactive_starter", "empty_slot") else None
+    outgoing = None
     if kind == "swap" and len(ids) >= 2:
-        bench, starter = ids[0], ids[1]
-        if starter not in starter_ids or bench in starter_ids:
+        outgoing = by_id[ids[1]]
+        if outgoing.sleeper_id not in starter_ids or incoming.sleeper_id in starter_ids:
             return no("the lineup already differs from the one this advice was about "
                       "(an observation, not proof that you acted on it)")
-    if kind in ("empty_slot", "inactive_starter") and ids:
-        if ids[0] in starter_ids and kind == "empty_slot":
+    elif kind == "inactive_starter":
+        if len(ids) < 2:
+            return no("the board found no legal replacement for this starter at decision "
+                      "time; there is nothing to move in")
+        outgoing = by_id[ids[1]]
+        if outgoing.sleeper_id not in starter_ids or incoming.sleeper_id in starter_ids:
+            return no("the lineup already differs from the one this advice was about "
+                      "(an observation, not proof that you acted on it)")
+    elif kind == "empty_slot":
+        if incoming.sleeper_id in starter_ids:
             return no("the slot is no longer empty in the observed lineup")
-    unconfirmed = [by_id[i].name for i in ids if not by_id[i].game.current]
-    why = ("every player involved is proven unlocked and still where the advice left "
-           "them; Sleeper will still refuse it after the real kickoff")
-    if unconfirmed:
-        why += (f". Game status is UNCONFIRMED for {', '.join(unconfirmed)} — the "
-                f"schedule says not started; the feed could not confirm it")
-    return LiveAction(kind, title, body, deadline, dnote, backup, status, True, why, ids)
+    if incoming is not None:
+        if incoming.slot in ("IR", "TAXI"):
+            return no(f"{incoming.name} is on {incoming.slot}; moving him to the active "
+                      f"roster is a roster move, not a lineup change, and it is not "
+                      f"offered here")
+        if incoming.injury.upper() in NOT_STARTABLE:
+            return no(f"{incoming.name}'s current designation is {incoming.injury} "
+                      f"({incoming.injury_note or 'player dump'}); a player the platform "
+                      f"lists {incoming.injury} is not offered as a start")
+        if not incoming.positions:
+            return no(f"{incoming.name}'s position is not known (id not in the cached "
+                      f"player dump), so slot eligibility cannot be checked")
+    dest = ""
+    if outgoing is not None:
+        dest = outgoing.slot
+    elif kind == "empty_slot":
+        empties = list(empty_slots)
+        if slot_named:
+            if slot_named not in empties:
+                return no(f"the {slot_named} slot is no longer empty in the observed lineup")
+            dest = slot_named
+        elif len(empties) == 1:
+            dest = empties[0]
+        elif not empties:
+            return no("no slot is empty in the observed lineup")
+        else:
+            return no(f"the record does not say which slot was empty and {len(empties)} "
+                      f"are ({', '.join(empties)}); a slot is not guessed")
+    if incoming is not None and dest:
+        if not any(eligible(dest, pos) for pos in incoming.positions):
+            return no(f"{incoming.name} ({'/'.join(incoming.positions)}) is not eligible for "
+                      f"the {dest} slot the move would fill")
+    why = (f"every player involved is proven unlocked, not under way per the feed, on the "
+           f"active roster and still where the advice left them"
+           + (f"; {incoming.name} ({'/'.join(incoming.positions)}) is eligible for {dest}"
+              if incoming is not None and dest else "")
+           + (f"; {incoming.name} is listed {incoming.injury} — eligible, not out (rule #11)"
+              if incoming is not None and incoming.injury else "")
+           + "; the roster, designations and schedule are all current. Sleeper will still "
+             "refuse it after the real kickoff")
+    if slot_named and dest and slot_named != dest:
+        why += f". The record named {slot_named}; the observed lineup has him at {dest}"
+    return LiveAction(kind, title, body, deadline, dnote, backup, status, True, why, ids,
+                      True, generated, slot_named, superseded)
 
 
 def _outcomes(actions: Sequence[LiveAction], by_id: Mapping[str, StarterView],
@@ -1061,14 +1332,45 @@ def _outcomes(actions: Sequence[LiveAction], by_id: Mapping[str, StarterView],
 def _embedded(*, season, week, league_id, my_rid, slots, mine_row, opp_row, my, opp_roster,
               sleeper_players, kickoffs: KickoffIndex | None, feed: GameFeed,
               players_as_of, players_fresh, snap_as_of, pregame: PregameView, now,
-              api_bases, all_ids) -> dict:
+              api_bases, all_ids, sources: Sequence[SourceFreshness] = (),
+              blockers: Sequence[str] = ()) -> dict:
     """What the inline script needs. No projection, no name lookup, no more
     of the player dump than the two rosters on the page."""
     names: dict[str, dict] = {}
     for sid in all_ids + [i for a in pregame.actions for i in a.player_ids]:
-        name, pos, team, named = _name_of(sid, sleeper_players.get(sid))
+        rec = sleeper_players.get(sid)
+        name, pos, team, named = _name_of(sid, rec)
         names[sid] = {"name": name, "position": pos, "team": team, "named": named,
-                      "injury": str((sleeper_players.get(sid) or {}).get("injury_status") or "")}
+                      "injury": str((rec or {}).get("injury_status") or ""),
+                      "positions": list(_positions_of(sid, rec, pos))}
+    # The cadences the script ages each source against, so a flag computed
+    # at build time is never frozen as true: the page re-judges at every tick.
+    by_source = {s.name: s for s in sources}
+    src_blob: dict[str, dict] = {}
+    for name in (*LEGALITY_SOURCES, GAME_STATUS_NAME):
+        cad = CADENCES.get(name)
+        src = by_source.get(name)
+        as_of = src.as_of if src else (feed.as_of if name == GAME_STATUS_NAME else None)
+        if name == "sleeper_players" and players_as_of is not None:
+            as_of = players_as_of
+        fresh = (src is not None and src.status is Status.FRESH)
+        if name == "sleeper_players":
+            fresh = fresh and bool(players_fresh)
+        if name == GAME_STATUS_NAME:
+            fresh = feed.fresh
+        blocker = None
+        if name != GAME_STATUS_NAME and not fresh:
+            blocker = next((b for b in blockers if b.startswith(name)),
+                           f"{name} freshness was never assessed")
+        src_blob[name] = {
+            "as_of": as_of.astimezone(timezone.utc).isoformat() if as_of else None,
+            "status": (src.status.value if src else "missing"),
+            "fresh_at_build": bool(fresh),
+            "blocker": blocker,
+            "reason": (src.reason if src else "freshness was never assessed"),
+            "max_age_hours": cad.max_age_hours if cad else 72.0,
+            "gameday_max_age_hours": cad.gameday_max_age_hours if cad else None,
+            "assessed": src is not None}
     kick = {t: dt.astimezone(timezone.utc).isoformat() for t, dt in
             (kickoffs.kickoffs.items() if kickoffs else ())}
     return {
@@ -1079,10 +1381,17 @@ def _embedded(*, season, week, league_id, my_rid, slots, mine_row, opp_row, my, 
                      "rows": [dict(r) for r in (mine_row, opp_row) if r is not None],
                      "my_players": list((my or {}).get("players") or []),
                      "my_reserve": list((my or {}).get("reserve") or []),
+                     "my_taxi": list((my or {}).get("taxi") or []),
                      "opp_players": list((opp_roster or {}).get("players") or [])},
+        "sources": src_blob,
+        "legality_sources": list(LEGALITY_SOURCES),
+        "league_tz": str(LEAGUE_TZ.key),
+        "not_startable": sorted(NOT_STARTABLE),
+        "flex_eligible": list(FLEX_ELIGIBLE),
+        "future_slack_ms": int(FUTURE_SLACK.total_seconds() * 1000),
         "feed": {"present": feed.present, "fresh": feed.fresh,
                  "as_of": feed.as_of.isoformat() if feed.as_of else None,
-                 "rows": [dict(r) for r in feed.rows]},
+                 "reason": feed.reason, "rows": [dict(r) for r in feed.rows]},
         "names": names,
         "players_as_of": players_as_of.isoformat() if players_as_of else None,
         "players_fresh": bool(players_fresh),
@@ -1413,13 +1722,22 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
 # --------------------------------------------------------------------------
 # The inline script: live mode
 # --------------------------------------------------------------------------
-#: Mirrors the Python model above, on purpose and by hand: a refresh must
-#: turn three raw payloads into the same page without a server. Every string
-#: from upstream reaches the DOM through textContent, never innerHTML.
-#: Nothing is fetched until the owner taps Refresh once; from then on the
-#: page polls only while visible, only while a game can still move, and
-#: backs off on every failure. A response that started before a newer one,
-#: or whose server date is older than the last applied one, is discarded.
+#: Mirrors the Python model above, on purpose and by hand (tests/
+#: test_gameday_parity.py runs both on one payload): a refresh must turn
+#: three raw payloads into the same page without a server. Every string from
+#: upstream reaches the DOM through textContent, never innerHTML. Nothing is
+#: fetched until the owner taps Refresh once; from then on the page polls
+#: only while visible, only while a game can still move, and backs off on
+#: every failure. Each request has its own timeout. A payload is validated
+#: field by field before it replaces anything (a missing point stays null,
+#: never 0); a response that started before a newer one, or whose server
+#: date is older than the last applied one, is discarded. A refresh renews
+#: the roster, scores and game statuses ONLY: designations, positions,
+#: kickoff times and the pregame record stay from the build and the page
+#: says so. Every 15 s, on every failure and whenever the tab becomes
+#: visible, the page re-judges locks, ages and legality at the present
+#: instant WITHOUT fetching, so a kickoff that passes while the page sits
+#: idle takes the old AVAILABLE card with it.
 _JS = r"""
 (function(){
 'use strict';
@@ -1432,14 +1750,18 @@ var PENDING={'NOT STARTED':1,PLAYING:1,SUSPENDED:1,UNKNOWN:1};
 var ORDER=['NOT STARTED','PLAYING','SUSPENDED','UNKNOWN','FINAL','CANCELED','EMPTY'];
 var WORD={'NOT STARTED':'yet to play',PLAYING:'playing',FINAL:'final',SUSPENDED:'suspended',
           CANCELED:'canceled',UNKNOWN:'unknown',EMPTY:'empty slot'};
-var EPS=0.005, FEED_MAX_AGE_MS=30*60*1000, THROTTLE_MS=10000, POLL_LIVE_MS=120000,
-    POLL_PRE_MS=600000, POLL_UNKNOWN_MS=600000, BACKOFF_MAX_MS=1200000;
+var NOT_STARTABLE={}; (D.not_startable||[]).forEach(function(w){ NOT_STARTABLE[w]=1; });
+var FLEX={}; (D.flex_eligible||[]).forEach(function(w){ FLEX[w]=1; });
+var LEGALITY=D.legality_sources||['sleeper_league','sleeper_players','schedules'];
+var EPS=0.005, THROTTLE_MS=10000, POLL_LIVE_MS=120000, POLL_PRE_MS=600000, POLL_UNKNOWN_MS=600000,
+    BACKOFF_MAX_MS=1200000, TICK_MS=15000, WINDOW_WARN_MS=60000, DEFAULT_TIMEOUT_MS=15000;
 
 function $(id){ return document.getElementById(id); }
 function el(tag,cls,text){ var n=document.createElement(tag); if(cls) n.className=cls;
   if(text!==undefined&&text!==null) n.textContent=String(text); return n; }
 function clear(n){ while(n&&n.firstChild) n.removeChild(n.firstChild); return n; }
 function num(v){ return (typeof v==='number'&&isFinite(v)) ? v : null; }
+function numOrNull(v){ return v===null||v===undefined||(typeof v==='number'&&isFinite(v)); }
 function pts(v){ return v===null||v===undefined ? '—' : v.toFixed(2); }
 function teamKey(t){ t=String(t===null||t===undefined?'':t).trim().toUpperCase();
   if(t==='NAN'||t==='NONE') t=''; return ALIAS[t]||t; }
@@ -1447,36 +1769,68 @@ function normId(v){ if(v===null||v===undefined) return ''; var s=String(v).trim(
   if(/^\d+\.0$/.test(s)) s=s.slice(0,-2); return s; }
 function fmt(iso){ if(!iso) return 'unknown time'; var d=new Date(iso); if(isNaN(d)) return 'unknown time';
   return d.toISOString().replace('T',' ').slice(0,16)+' UTC'; }
+function fmtMs(ms){ return (ms===null||ms===undefined||isNaN(ms))?'unknown time':fmt(new Date(ms).toISOString()); }
 function ageText(ms,nowMs){ if(!ms) return 'age unknown'; var s=Math.max(0,(nowMs-ms)/1000);
   if(s<90) return Math.floor(s)+'s ago'; if(s<5400) return Math.floor(s/60)+' min ago';
   if(s<172800) return (s/3600).toFixed(1)+' h ago'; return (s/86400).toFixed(1)+' days ago'; }
 function isDst(sid){ return !!sid && !/^\d+$/.test(sid); }
-function nameOf(sid){ var r=D.names[sid]; if(isDst(sid)) return {name:teamKey(sid)+' DST',position:'DST',team:teamKey(sid),named:true,injury:''};
-  if(!r) return {name:'sleeper:'+sid,position:'',team:'',named:false,injury:''}; return r; }
+function nameOf(sid){ var r=D.names[sid]; if(isDst(sid)) return {name:teamKey(sid)+' DST',position:'DST',team:teamKey(sid),named:true,injury:'',positions:['DST']};
+  if(!r) return {name:'sleeper:'+sid,position:'',team:'',named:false,injury:'',positions:[]}; return r; }
+function eligibleFor(slot,pos){ pos=String(pos||'').toUpperCase(); if(pos==='DEF') pos='DST'; slot=String(slot||'').toUpperCase();
+  if(slot==='FLEX') return !!FLEX[pos]; return pos===slot; }
+
+// ---- the clock. Real time plus a skew the scenario harness may set; the
+// page never trusts it for game status, only for locks, ages and deadlines.
+var S={seq:0,applied:0,inflight:false,mode:'snapshot',lastGood:null,lastGoodRaw:null,lastGoodAt:null,lastGoodAsOf:D.snapshot.as_of,
+  lastServerMs:null,lastAttemptAt:null,lastError:'',failures:0,timer:null,live:false,rollover:false,history:[],
+  skewMs:0,timeoutMs:DEFAULT_TIMEOUT_MS,sig:'',view:null,lastChanges:[],prevStamp:'',asOfNote:'',nextPollMs:null};
+function now(){ return Date.now()+S.skewMs; }
+
+// ---- source freshness, re-judged at every tick against the same cadences
+// the cloud build used. A flag computed at build time is never frozen.
+function etWeekday(ms){ try{ return new Intl.DateTimeFormat('en-US',{timeZone:D.league_tz,weekday:'short'}).format(new Date(ms)); }
+  catch(e){ return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(ms).getUTCDay()]; } }
+function limitHours(src,nowMs){ var wd=etWeekday(nowMs), planning=(wd==='Tue'||wd==='Sat');
+  return (!planning&&src.gameday_max_age_hours!==null&&src.gameday_max_age_hours!==undefined)?src.gameday_max_age_hours:src.max_age_hours; }
+function sourceState(name,nowMs,raw){
+  var src=(D.sources||{})[name];
+  if(!src||!src.assessed) return {fresh:false,as_of:null,reason:name+' freshness was never assessed'};
+  var league=(name==='sleeper_league'), asOf=league?raw.as_of:src.as_of;
+  if(!src.fresh_at_build&&!(league&&!raw.built)) return {fresh:false,as_of:asOf,reason:src.blocker||(name+' is '+String(src.status).toUpperCase()+' ('+src.reason+')')};
+  var t=Date.parse(asOf||''); if(isNaN(t)) return {fresh:false,as_of:asOf,reason:name+' carries no as-of time'};
+  var lim=limitHours(src,nowMs), age=(nowMs-t)/3600000;
+  if(age>lim) return {fresh:false,as_of:asOf,reason:name+' is STALE ('+age.toFixed(1)+' h old against a '+lim+' h limit'+(league?'':'; not renewed by a browser refresh')+')'};
+  return {fresh:true,as_of:asOf,reason:name+' is current ('+age.toFixed(1)+' h old)'};
+}
+function feedFresh(feed,nowMs){ if(!feed||!feed.present||!feed.fresh) return false; var t=Date.parse(feed.as_of||''); if(isNaN(t)) return false;
+  var src=(D.sources||{})[D.feed_source||'game_status']||{max_age_hours:12,gameday_max_age_hours:0.5};
+  return (nowMs-t)/3600000<=limitHours(src,nowMs); }
 
 // ---- game status, from observed evidence only
-function feedFresh(feed,nowMs){ if(!feed||!feed.present) return false; var t=Date.parse(feed.as_of||'');
-  if(isNaN(t)) return false; return !!feed.fresh && (nowMs-t)<=FEED_MAX_AGE_MS; }
-function gameStatus(team,feed,fresh){
+function feedReason(feed,nowMs){ if(!feed.fresh&&feed.reason) return feed.reason;
+  var t=Date.parse(feed.as_of||''); if(isNaN(t)) return 'the feed carries no as-of time';
+  var src=(D.sources||{})[D.feed_source||'game_status']||{max_age_hours:12,gameday_max_age_hours:0.5};
+  return 'feed is STALE: observed '+ageText(t,nowMs)+', over the '+limitHours(src,nowMs)+' h limit'; }
+function gameStatus(team,feed,fresh,nowMs){
   var t=teamKey(team);
-  if(!t) return {team:'',state:'UNKNOWN',raw:'',opponent:'',home:null,note:'no NFL team on this record',current:false};
-  if(!feed||!feed.present) return {team:t,state:'UNKNOWN',raw:'',opponent:'',home:null,note:'no game-status feed; a kickoff time alone cannot prove a game started or ended',current:false};
+  if(!t) return {team:'',state:'UNKNOWN',raw:'',opponent:'',home:null,note:'no NFL team on this player’s record',current:false};
+  if(!feed||!feed.present) return {team:t,state:'UNKNOWN',raw:'',opponent:'',home:null,note:'no game-status feed in the cache; a kickoff time alone cannot prove a game started or ended',current:false};
   var hits=(feed.rows||[]).filter(function(r){ return teamKey(r.home)===t||teamKey(r.away)===t; });
   if(!hits.length) return {team:t,state:'UNKNOWN',raw:'',opponent:'',home:null,note:'the feed lists no week-'+D.week+' game for '+t+'; a missing row is not a bye and not a final',current:false};
   if(hits.length>1){ var words={}; hits.forEach(function(r){ words[String(r.status)]=1; });
-    if(Object.keys(words).length>1) return {team:t,state:'UNKNOWN',raw:'',opponent:'',home:null,note:'the feed lists '+hits.length+' week-'+D.week+' games for '+t+' with different statuses; neither is trusted',current:false}; }
+    var ws=Object.keys(words).sort(); if(ws.length>1) return {team:t,state:'UNKNOWN',raw:'',opponent:'',home:null,note:'the feed lists '+hits.length+' week-'+D.week+' games for '+t+' with different statuses ('+ws.join(', ')+'); neither is trusted',current:false}; }
   var row=hits[0], raw=String(row.status||''), state=FEED[raw]||'UNKNOWN';
   var home=teamKey(row.home)===t, opp=teamKey(home?row.away:row.home), stamp=fmt(feed.as_of);
   if(state==='UNKNOWN') return {team:t,state:'UNKNOWN',raw:raw,opponent:opp,home:home,note:'the feed reports "'+raw+'", a status this page does not know; nothing is assumed from it',current:fresh};
   if(TERMINAL[state]) return {team:t,state:state,raw:raw,opponent:opp,home:home,note:'feed: '+raw+' (observed '+stamp+')',current:true};
-  if(!fresh) return {team:t,state:'UNKNOWN',raw:raw,opponent:opp,home:home,note:'the feed said '+raw+' at '+stamp+', which is too old to say anything about now',current:false};
+  if(!fresh) return {team:t,state:'UNKNOWN',raw:raw,opponent:opp,home:home,note:'the feed said '+raw+' at '+stamp+', which is too old to say anything about now ('+feedReason(feed,nowMs)+')',current:false};
   return {team:t,state:state,raw:raw,opponent:opp,home:home,note:'feed: '+raw+' (observed '+stamp+')',current:true};
 }
 // ---- kickoff lock, from the schedule only (three-valued)
 function lockState(team,nowMs){
   var t=teamKey(team);
   if(!D.schedule_loaded) return {lock:'UNKNOWN',note:'lock state UNKNOWN: no schedule loaded for this week',kickoff:null};
-  if(!t) return {lock:'UNKNOWN',note:'lock state UNKNOWN: no NFL team on this record',kickoff:null};
+  if(!t) return {lock:'UNKNOWN',note:'lock state UNKNOWN: no NFL team on this player’s record',kickoff:null};
   if(D.time_unknown.indexOf(t)>=0) return {lock:'UNKNOWN',note:'lock state UNKNOWN: '+t+' has a week-'+D.week+' game but no usable kickoff time',kickoff:null};
   if(D.declared_bye.indexOf(t)>=0) return {lock:'OPEN',note:'no week-'+D.week+' game: BYE declared by the schedule',kickoff:null};
   var k=D.kickoffs[t];
@@ -1485,30 +1839,30 @@ function lockState(team,nowMs){
   if(nowMs>=ms) return {lock:'LOCKED',note:'LOCKED — kicked off '+fmt(k),kickoff:ms};
   return {lock:'OPEN',note:'kicks off '+fmt(k),kickoff:ms};
 }
-function statusAndLock(team,feed,fresh,nowMs){
-  var g=gameStatus(team,feed,fresh), l=lockState(team,nowMs);
+function statusAndLock(team,ctx){
+  var g=gameStatus(team,ctx.feed,ctx.fresh,ctx.nowMs), l=lockState(team,ctx.nowMs);
   if(g.current&&g.state==='NOT STARTED'&&l.lock==='LOCKED')
     g.note+='; the schedule kickoff has passed but the feed still says pre-game (delayed start, moved game, or feed lag) — Sleeper locks at the real kickoff';
   else if(g.current&&(g.state==='PLAYING'||g.state==='FINAL'||g.state==='SUSPENDED')&&l.lock==='OPEN')
     l={lock:'LOCKED',note:'LOCKED — the feed says the game is '+g.raw+' although the schedule kickoff is still ahead; the observed status wins over the timetable',kickoff:l.kickoff};
   return {game:g,lock:l.lock,lockNote:l.note,kickoff:l.kickoff};
 }
-function starter(sid,slot,feed,fresh,nowMs){
+function starter(sid,slot,ctx){
   sid=normId(sid);
   if(!sid||sid==='0') return {slot:slot,sleeper_id:'',name:'EMPTY',position:'',team:'',points:null,points_note:'an empty slot scores nothing',
-    game:{state:'EMPTY',note:'',raw:'',current:false,opponent:'',home:null},state:'EMPTY',lock:'OPEN',lock_note:'an empty slot can take any unlocked eligible player',kickoff:null,injury:'',injury_note:'',empty:true,named:true};
-  var n=nameOf(sid), sl=statusAndLock(n.team,feed,fresh,nowMs);
-  var inj=String(n.injury||''), injNote=inj?('designation from the player dump of '+fmt(D.players_as_of)+(D.players_fresh?'':' — STALE, not a current status')):'';
+    game:{state:'EMPTY',note:'',raw:'',current:false,opponent:'',home:null},state:'EMPTY',lock:'OPEN',lock_note:'an empty slot can take any unlocked eligible player',kickoff:null,injury:'',injury_note:'',empty:true,named:true,positions:[]};
+  var n=nameOf(sid), sl=statusAndLock(n.team,ctx);
+  var inj=String(n.injury||''), injNote=inj?('designation from the player dump of '+fmt(D.players_as_of)+(ctx.players.fresh?'':' — STALE, not a current status')):'';
   return {slot:slot,sleeper_id:sid,name:n.name,position:n.position,team:n.team,points:null,points_note:'',game:sl.game,state:sl.game.state,
-    lock:sl.lock,lock_note:sl.lockNote,kickoff:sl.kickoff,injury:inj,injury_note:injNote,empty:false,named:!!n.named};
+    lock:sl.lock,lock_note:sl.lockNote,kickoff:sl.kickoff,injury:inj,injury_note:injNote,empty:false,named:!!n.named,positions:(n.positions||[]).slice()};
 }
-function side(row,players,reserve,label,withBench,feed,fresh,nowMs){
+function side(row,players,reserve,taxi,label,withBench,ctx){
   if(!row) return null;
   var ids=(row.starters||[]).map(normId), sp=Array.isArray(row.starters_points)?row.starters_points:[],
       pp=(row.players_points&&typeof row.players_points==='object')?row.players_points:{};
   var views=[], i;
   for(i=0;i<ids.length;i++){
-    var slot=i<D.slots.length?D.slots[i]:'SLOT'+(i+1), v=starter(ids[i],slot,feed,fresh,nowMs);
+    var slot=i<D.slots.length?D.slots[i]:'SLOT'+(i+1), v=starter(ids[i],slot,ctx);
     if(v.empty){ views.push(v); continue; }
     var val=i<sp.length?num(sp[i]):null, note='platform starters_points';
     if(val===null){ val=num(pp[ids[i]]); note=val!==null?'platform players_points':'the platform sent no value for this starter — UNKNOWN, not 0'; }
@@ -1516,8 +1870,9 @@ function side(row,players,reserve,label,withBench,feed,fresh,nowMs){
     v.points=val; v.points_note=note; views.push(v);
   }
   var bench=[];
-  if(withBench){ (players||[]).forEach(function(sid){ sid=normId(sid); if(!sid||ids.indexOf(sid)>=0) return;
-    var b=starter(sid,(reserve||[]).map(normId).indexOf(sid)>=0?'IR':'BN',feed,fresh,nowMs);
+  if(withBench){ var res=(reserve||[]).map(normId), tx=(taxi||[]).map(normId);
+    (players||[]).forEach(function(sid){ sid=normId(sid); if(!sid||ids.indexOf(sid)>=0) return;
+    var b=starter(sid,res.indexOf(sid)>=0?'IR':tx.indexOf(sid)>=0?'TAXI':'BN',ctx);
     b.points=num(pp[sid]); b.points_note=b.points!==null?'platform players_points':'no platform value'; bench.push(b); }); }
   var sent=num(row.points), override=num(row.custom_points), total=override!==null?override:sent;
   var known=views.filter(function(s){ return !s.empty&&s.points!==null; }).map(function(s){ return s.points; });
@@ -1553,26 +1908,56 @@ function settled(vm){ if(!vm.opp) return ''; var me=vm.mine.pending, them=vm.opp
   var bits=[]; if(them.length) bits.push('they still have '+them.length+' to play or playing ('+them.map(function(s){ return s.position||s.slot; }).join(', ')+')');
   if(me.length) bits.push('you still have '+me.length+' ('+me.map(function(s){ return s.position||s.slot; }).join(', ')+')');
   return 'not settled — '+bits.join('; '); }
-function judge(a,gen,nowMs,byId,starterIds){
-  var ids=(a.player_ids||[]).map(normId).filter(Boolean), dl=a.deadline?Date.parse(a.deadline):NaN;
-  function no(why,elig){ return {kind:a.kind,title:a.title,body:a.body,deadline:a.deadline,deadline_note:a.deadline_note,backup:a.backup,archived_status:a.archived_status,available:false,why:why,player_ids:ids,eligible:elig!==false}; }
+
+// ---- legality NOW. Mirrors gameday._judge_action gate for gate: the
+// archive's ACTIONABLE is history, every gate is re-run against the present.
+function judge(a,nowMs,byId,starterIds,emptySlots,blockers){
+  var ids=(a.player_ids||[]).map(normId).filter(Boolean), dl=a.deadline?Date.parse(a.deadline):NaN, gen=a.generated?Date.parse(a.generated):NaN;
+  var slotNamed=String(a.slot||'').toUpperCase();
+  function out(avail,why,elig){ return {kind:a.kind,title:a.title,body:a.body,deadline:a.deadline,deadline_note:a.deadline_note,backup:a.backup,archived_status:a.archived_status,
+    available:avail,why:why,player_ids:ids,eligible:elig!==false,generated:a.generated||null,slot:slotNamed,superseded:a.superseded||''}; }
+  function no(why,elig){ return out(false,why,elig); }
   if(a.kind==='acquire') return no('a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate');
   if(a.archived_status!=='ACTIONABLE') return no('the pregame board WITHHELD this (its inputs were stale or unreadable); a withheld comparison does not become advice because the games started');
   if(isNaN(dl)) return no('its deadline was UNKNOWN at decision time, so it was never a timed, legal move',false);
   if(isNaN(gen)||gen>=dl) return no('the record was written at or after its own deadline, so it is not decision-time evidence for this move',false);
+  if(gen>nowMs+(D.future_slack_ms||0)) return no('the record claims to be written at '+fmtMs(gen)+', after now ('+fmtMs(nowMs)+'); a record from the future is not decision-time evidence',false);
+  if(a.superseded) return no(a.superseded);
   if(nowMs>=dl) return no('deadline passed ('+fmt(a.deadline)+')');
-  if(!ids.length) return no('the record names no player ids, so legality cannot be checked without name-matching, which is never done');
+  if(!ids.length) return no('the record names no player ids (written before actions carried them), so legality cannot be checked without name-matching, which is never done');
+  if(blockers.length) return no('the inputs legality rests on are not current — '+blockers.join('; ')+'. The score above stands on its own; the advice does not');
   for(var i=0;i<ids.length;i++){ var p=byId[ids[i]];
     if(!p) return no('sleeper:'+ids[i]+' is no longer on the roster (observed lineup, not a statement about what you did)');
     if(p.lock==='LOCKED') return no(p.name+' is LOCKED — '+p.lock_note);
     if(p.lock!=='OPEN') return no(p.name+'’s lock state is UNKNOWN ('+p.lock_note+'); a move cannot be shown legal');
-    if(p.state==='PLAYING'||p.state==='FINAL'||p.state==='SUSPENDED') return no(p.name+'’s game is '+p.state+' per the feed'); }
-  if(a.kind==='swap'&&ids.length>=2&&(starterIds.indexOf(ids[1])<0||starterIds.indexOf(ids[0])>=0)) return no('the lineup already differs from the one this advice was about (an observation, not proof that you acted on it)');
-  if(a.kind==='empty_slot'&&ids.length&&starterIds.indexOf(ids[0])>=0) return no('the slot is no longer empty in the observed lineup');
-  var unc=ids.filter(function(i){ return !byId[i].game.current; }).map(function(i){ return byId[i].name; });
-  var why='every player involved is proven unlocked and still where the advice left them; Sleeper will still refuse it after the real kickoff';
-  if(unc.length) why+='. Game status is UNCONFIRMED for '+unc.join(', ')+' — the schedule says not started; the feed could not confirm it';
-  return {kind:a.kind,title:a.title,body:a.body,deadline:a.deadline,deadline_note:a.deadline_note,backup:a.backup,archived_status:a.archived_status,available:true,why:why,player_ids:ids,eligible:true};
+    if(p.state==='PLAYING'||p.state==='FINAL'||p.state==='SUSPENDED') return no(p.name+'’s game is '+p.state+' per the feed');
+    if(!p.game.current) return no(p.name+'’s game status is UNCONFIRMED ('+p.game.note+'); the schedule says not started, but a kickoff time alone does not prove it, so the move is not shown legal'); }
+  var incoming=(a.kind==='swap'||a.kind==='inactive_starter'||a.kind==='empty_slot')?byId[ids[0]]:null, outgoing=null;
+  if(a.kind==='swap'&&ids.length>=2){ outgoing=byId[ids[1]];
+    if(starterIds.indexOf(outgoing.sleeper_id)<0||starterIds.indexOf(incoming.sleeper_id)>=0) return no('the lineup already differs from the one this advice was about (an observation, not proof that you acted on it)'); }
+  else if(a.kind==='inactive_starter'){ if(ids.length<2) return no('the board found no legal replacement for this starter at decision time; there is nothing to move in');
+    outgoing=byId[ids[1]];
+    if(starterIds.indexOf(outgoing.sleeper_id)<0||starterIds.indexOf(incoming.sleeper_id)>=0) return no('the lineup already differs from the one this advice was about (an observation, not proof that you acted on it)'); }
+  else if(a.kind==='empty_slot'){ if(starterIds.indexOf(incoming.sleeper_id)>=0) return no('the slot is no longer empty in the observed lineup'); }
+  if(incoming){
+    if(incoming.slot==='IR'||incoming.slot==='TAXI') return no(incoming.name+' is on '+incoming.slot+'; moving him to the active roster is a roster move, not a lineup change, and it is not offered here');
+    if(NOT_STARTABLE[String(incoming.injury||'').toUpperCase()]) return no(incoming.name+'’s current designation is '+incoming.injury+' ('+(incoming.injury_note||'player dump')+'); a player the platform lists '+incoming.injury+' is not offered as a start');
+    if(!incoming.positions.length) return no(incoming.name+'’s position is not known (id not in the cached player dump), so slot eligibility cannot be checked'); }
+  var dest='';
+  if(outgoing) dest=outgoing.slot;
+  else if(a.kind==='empty_slot'){
+    if(slotNamed){ if(emptySlots.indexOf(slotNamed)<0) return no('the '+slotNamed+' slot is no longer empty in the observed lineup'); dest=slotNamed; }
+    else if(emptySlots.length===1) dest=emptySlots[0];
+    else if(!emptySlots.length) return no('no slot is empty in the observed lineup');
+    else return no('the record does not say which slot was empty and '+emptySlots.length+' are ('+emptySlots.join(', ')+'); a slot is not guessed'); }
+  if(incoming&&dest&&!incoming.positions.some(function(p){ return eligibleFor(dest,p); }))
+    return no(incoming.name+' ('+incoming.positions.join('/')+') is not eligible for the '+dest+' slot the move would fill');
+  var why='every player involved is proven unlocked, not under way per the feed, on the active roster and still where the advice left them'
+    +(incoming&&dest?('; '+incoming.name+' ('+incoming.positions.join('/')+') is eligible for '+dest):'')
+    +(incoming&&incoming.injury?('; '+incoming.name+' is listed '+incoming.injury+' — eligible, not out (rule #11)'):'')
+    +'; the roster, designations and schedule are all current. Sleeper will still refuse it after the real kickoff';
+  if(slotNamed&&dest&&slotNamed!==dest) why+='. The record named '+slotNamed+'; the observed lineup has him at '+dest;
+  return out(true,why,true);
 }
 function outcomes(actions,byId,starterIds){ var out=[]; actions.forEach(function(a){
   if(a.kind!=='swap'||a.archived_status!=='ACTIONABLE'||a.player_ids.length<2) return;
@@ -1582,9 +1967,12 @@ function outcomes(actions,byId,starterIds){ var out=[]; actions.forEach(function
   if(TERMINAL[b.state]&&TERMINAL[s.state]&&b.points!==null&&s.points!==null) out.push(a.title+': both final — '+b.name+' '+b.points.toFixed(2)+', '+s.name+' '+s.points.toFixed(2)+' (descriptive; whether the move was made is not known). '+obs);
   else out.push(a.title+': UNPROVEN — '+b.name+' '+pts(b.points)+' ('+b.state+'), '+s.name+' '+pts(s.points)+' ('+s.state+'); not both final. '+obs); }); return out; }
 
-// ---- the view model, from raw payloads
+// ---- the view model, from raw payloads, AT an instant
 function compute(raw,nowMs){
   var feed=raw.feed, fresh=feedFresh(feed,nowMs), rows=raw.rows||[];
+  var players=sourceState('sleeper_players',nowMs,raw), blockers=[];
+  LEGALITY.forEach(function(n){ var st=sourceState(n,nowMs,raw); if(!st.fresh) blockers.push(st.reason); });
+  var ctx={feed:feed,fresh:fresh,nowMs:nowMs,players:players};
   var mineRow=null, oppRow=null, reason='', i;
   for(i=0;i<rows.length;i++) if(rows[i]&&String(rows[i].roster_id)===String(D.my_roster_id)) mineRow=rows[i];
   if(D.my_roster_id===null||D.my_roster_id===undefined) reason='owner roster not found in the snapshot';
@@ -1595,14 +1983,14 @@ function compute(raw,nowMs){
     else if(others.length>1) reason='matchup '+mineRow.matchup_id+' has '+others.length+' other rosters — a multi-team or median format this page does not support; no opponent is chosen arbitrarily';
     else oppRow=others[0]; }
   var myPlayers=(mineRow&&mineRow.players&&mineRow.players.length)?mineRow.players:raw.my_players;
-  var mine=side(mineRow||{},myPlayers,raw.my_reserve,'You',true,feed,fresh,nowMs);
-  var opp=oppRow?side(oppRow,null,null,'Roster #'+oppRow.roster_id,false,feed,fresh,nowMs):null;
-  var vm={mine:mine,opp:opp,opp_reason:reason,as_of:raw.as_of,feed_present:!!(feed&&feed.present),feed_fresh:fresh,feed_as_of:feed?feed.as_of:null};
+  var mine=side(mineRow||{},myPlayers,raw.my_reserve,raw.my_taxi,'You',true,ctx);
+  var opp=oppRow?side(oppRow,null,null,null,'Roster #'+oppRow.roster_id,false,ctx):null;
+  var vm={mine:mine,opp:opp,opp_reason:reason,as_of:raw.as_of,feed_present:!!(feed&&feed.present),feed_fresh:fresh,feed_as_of:feed?feed.as_of:null,blockers:blockers,now_ms:nowMs};
   vm.margin=(opp&&mine.platform_points!==null&&opp.platform_points!==null)?Math.round((mine.platform_points-opp.platform_points)*100)/100:null;
   vm.lead=lead(vm); vm.settled=settled(vm);
   var st=mine.starters.filter(function(s){ return !s.empty; });
   vm.capacity={open_starters:st.filter(function(s){ return s.lock==='OPEN'; }).length,locked_starters:st.filter(function(s){ return s.lock==='LOCKED'; }).length,
-    unknown_starters:st.filter(function(s){ return s.lock==='UNKNOWN'; }).length,open_bench:mine.bench.filter(function(s){ return s.lock==='OPEN'&&s.slot!=='IR'; }).length,
+    unknown_starters:st.filter(function(s){ return s.lock==='UNKNOWN'; }).length,open_bench:mine.bench.filter(function(s){ return s.lock==='OPEN'&&s.slot==='BN'; }).length,
     empty_slots:mine.starters.filter(function(s){ return s.empty; }).length};
   var c=vm.capacity;
   vm.capacity.sentence=c.unknown_starters?(c.unknown_starters+' starter(s) have an UNKNOWN lock state, so this page cannot say what is still legal; Sleeper’s own lineup screen can. '+c.open_starters+' starter(s) are proven unlocked and '+c.open_bench+' bench player(s) are.')
@@ -1610,9 +1998,8 @@ function compute(raw,nowMs){
     :(!c.open_bench)?(c.open_starters+' starter(s) are still unlocked, but no bench player is, so no swap can be made; an unlocked starter could only be moved to an empty slot.')
     :('A swap needs both players unlocked: '+c.open_starters+' starter(s) and '+c.open_bench+' bench player(s) still are'+(c.empty_slots?(', and '+c.empty_slots+' slot(s) are empty'):'')+'.');
   var byId={}; mine.starters.concat(mine.bench).forEach(function(s){ if(s.sleeper_id) byId[s.sleeper_id]=s; });
-  var starterIds=mine.starters.map(function(s){ return s.sleeper_id; });
-  var gen=D.pregame&&D.pregame.generated?Date.parse(D.pregame.generated):NaN;
-  vm.actions=((D.pregame&&D.pregame.actions)||[]).map(function(a){ return judge(a,gen,nowMs,byId,starterIds); });
+  var starterIds=mine.starters.map(function(s){ return s.sleeper_id; }), emptySlots=mine.starters.filter(function(s){ return s.empty; }).map(function(s){ return s.slot; });
+  vm.actions=((D.pregame&&D.pregame.actions)||[]).map(function(a){ return judge(a,nowMs,byId,starterIds,emptySlots,blockers); });
   vm.outcomes=outcomes(vm.actions,byId,starterIds);
   vm.any_playing=[mine].concat(opp?[opp]:[]).some(function(sd){ return sd.starters.some(function(s){ return s.state==='PLAYING'; }); });
   vm.any_unknown=[mine].concat(opp?[opp]:[]).some(function(sd){ return sd.any_unknown; });
@@ -1669,15 +2056,16 @@ function actCard(a){ var d=el('div',a.available?'act':'act off'); d.appendChild(
   d.appendChild(document.createTextNode(' ')); d.appendChild(el('span','pill',a.kind)); d.appendChild(el('h3',null,a.title));
   if(a.available){ d.appendChild(el('p',null,a.body)); var b=el('p'); b.appendChild(el('b',null,a.deadline_note)); d.appendChild(b);
     if(a.backup) d.appendChild(el('p','why','Backup — '+a.backup));
-    d.appendChild(el('p','why',a.why+'. Advice as of the pregame record; check the current designation above before acting. Nothing here is submitted to Sleeper.')); }
+    d.appendChild(el('p','why',a.why+'. Advice as of the pregame record of '+fmt(a.generated)+'; check the current designation above before acting. Nothing here is submitted to Sleeper.')); }
   else d.appendChild(el('p','why',a.why+'.')); return d; }
 function renderActions(vm){ var root=clear($('gd-actions')); root.appendChild(el('p',null,vm.capacity.sentence));
+  if(vm.blockers.length) root.appendChild(el('p','small warn','Advice withheld: '+vm.blockers.join('; ')+'. The score is shown on its own freshness.'));
   var live=vm.actions.filter(function(a){ return a.available; }), held=vm.actions.filter(function(a){ return !a.available; });
   if(!D.pregame||!D.pregame.generated) root.appendChild(el('p','sub','No pregame record for this week; without a decision-time record there is no advice to re-check. Only the lock counts above are known.'));
   else if(!vm.actions.length) root.appendChild(el('p','sub','The pregame board listed no action for this week.'));
   else { if(live.length) live.forEach(function(a){ root.appendChild(actCard(a)); }); else root.appendChild(el('p','sub','None of the pregame board’s actions is still available.'));
     if(held.length){ var det=el('details'); det.appendChild(el('summary',null,held.length+' pregame item(s) not available now')); held.forEach(function(a){ det.appendChild(actCard(a)); }); root.appendChild(det); } }
-  root.appendChild(el('p','small sub','Legal means: both players proven unlocked by the schedule, not under way per the feed, still on the roster and still where the advice left them. Nothing is ever submitted to Sleeper.')); }
+  root.appendChild(el('p','small sub','Legal means: both players proven unlocked by the schedule, not under way per a current feed, on the active roster, still where the advice left them, eligible for the slot, not listed out, with the roster, designations and schedule all current. Re-judged at every tick; a refresh renews the roster and scores only. Nothing is ever submitted to Sleeper.')); }
 function renderChanges(items,prevStamp,note){ var root=clear($('gd-changes'));
   if(items.length){ root.appendChild(el('p','small sub','against your last reliable snapshot of '+prevStamp)); var ul=el('ul','chg');
     items.forEach(function(c){ var l=el('li'); l.appendChild(el('span','pill',c[0])); l.appendChild(document.createTextNode(' ')); l.appendChild(el('b',null,c[1])); l.appendChild(document.createTextNode(': '+c[2])); ul.appendChild(l); }); root.appendChild(ul); }
@@ -1693,78 +2081,121 @@ function renderAll(vm,changes,prevStamp,asOfNote){ renderScore(vm,asOfNote); ren
   renderSide($('gd-mine'),vm.mine,'',true); renderSide($('gd-opp'),vm.opp,vm.opp_reason,false); renderBench(vm); renderOutcomes(vm); }
 function setMode(mode,cls){ var p=$('gd-modepill'); p.textContent=mode; p.className='pill '+(cls||''); }
 function setStatus(text){ $('gd-status').textContent=text; }
-function setAsOf(){ var t=S.lastGoodAt?ageText(S.lastGoodAt,Date.now()):'', a=$('gd-asof');
-  if(S.mode==='snapshot') a.textContent='platform scores as of '+fmt(S.lastGoodAsOf)+' (cached by the cloud build; '+ageText(Date.parse(S.lastGoodAsOf||''),Date.now())+')';
-  else a.textContent='last good refresh '+fmt(new Date(S.lastGoodAt).toISOString())+' ('+t+')'+(S.mode==='stale'?' — STALE: the latest refresh failed':''); }
+function setAsOf(){ var t=S.lastGoodAt?ageText(S.lastGoodAt,now()):'', a=$('gd-asof');
+  if(S.mode==='snapshot') a.textContent='platform scores as of '+fmt(S.lastGoodAsOf)+' (cached by the cloud build; '+ageText(Date.parse(S.lastGoodAsOf||''),now())+')';
+  else a.textContent='last good refresh '+fmtMs(S.lastGoodAt)+' ('+t+')'+(S.mode==='stale'?' — STALE: the latest refresh failed':''); }
+function buildNote(){ return 'Designations, positions, kickoff times and the pregame record are from the cloud build ('+fmt(D.rendered_at)+') and are not refreshed by this page'; }
 
-// ---- state
-var S={seq:0,applied:0,inflight:false,mode:'snapshot',lastGood:null,lastGoodRaw:null,lastGoodAt:null,lastGoodAsOf:D.snapshot.as_of,
-  lastServerMs:null,lastAttemptAt:null,lastError:'',failures:0,timer:null,live:false,rollover:false,history:[]};
-var embeddedRaw={rows:D.snapshot.rows,my_players:D.snapshot.my_players,my_reserve:D.snapshot.my_reserve,feed:D.feed,as_of:D.snapshot.as_of};
-S.lastGood=compute(embeddedRaw,Date.parse(D.rendered_at)||Date.now()); S.lastGoodRaw=embeddedRaw;
+// ---- the tick: re-judge locks, ages and legality at the present instant
+// WITHOUT fetching. Kickoffs pass, sources age and a failed refresh leaves
+// old numbers behind; none of that may leave an old AVAILABLE card standing.
+function signature(vm){ return JSON.stringify({a:vm.actions.map(function(a){ return [a.available,a.why]; }),c:vm.capacity.sentence,b:vm.blockers,f:vm.feed_fresh,
+  m:vm.mine.starters.map(function(s){ return [s.state,s.lock,s.injury_note]; }),o:vm.opp?vm.opp.starters.map(function(s){ return [s.state,s.lock]; }):null,
+  n:vm.mine.bench.map(function(s){ return [s.state,s.lock]; })}); }
+function tick(){ var t=now(); var vm=compute(S.lastGoodRaw,t); var sig=signature(vm);
+  if(sig!==S.sig){ S.sig=sig; S.view=vm; renderAll(vm,S.lastChanges,S.prevStamp,S.asOfNote); }
+  setAsOf(); return vm; }
 
-function get(url){ var t0=Date.now();
-  return fetch(url,{cache:'no-store',credentials:'omit',mode:'cors'}).then(function(r){
+var embeddedRaw={rows:D.snapshot.rows,my_players:D.snapshot.my_players,my_reserve:D.snapshot.my_reserve,my_taxi:D.snapshot.my_taxi,feed:D.feed,as_of:D.snapshot.as_of,built:true};
+S.lastGood=compute(embeddedRaw,Date.parse(D.rendered_at)||now()); S.lastGoodRaw=embeddedRaw; S.view=S.lastGood; S.sig=signature(S.lastGood);
+S.prevStamp=''; S.asOfNote='platform scores as of '+fmt(D.snapshot.as_of)+' (cloud snapshot)';
+
+// ---- fetching: read-only GETs, each with a timeout, none trusted unread
+function get(url){ var t0=Date.now(), ctl=(typeof AbortController==='function')?new AbortController():null, timer=null;
+  var opts={cache:'no-store',credentials:'omit',mode:'cors'}; if(ctl) opts.signal=ctl.signal;
+  var work=fetch(url,opts).then(function(r){
     var serverMs=Date.parse(r.headers.get('date')||''); if(!r.ok) return {ok:false,status:r.status,error:'HTTP '+r.status,serverMs:serverMs,ms:Date.now()-t0};
     return r.json().then(function(j){ return {ok:true,status:r.status,json:j,serverMs:serverMs,ms:Date.now()-t0}; },function(e){ return {ok:false,status:r.status,error:'malformed JSON',serverMs:serverMs,ms:Date.now()-t0}; });
-  },function(e){ return {ok:false,status:0,error:(e&&e.message)||'network error',serverMs:NaN,ms:Date.now()-t0}; }); }
-function validRows(j){ return Array.isArray(j)&&j.every(function(r){ return r&&typeof r==='object'; })&&j.some(function(r){ return String(r.roster_id)===String(D.my_roster_id); }); }
-function validFeed(j){ return Array.isArray(j)&&j.length>0; }
-function normFeed(j,asOfIso){ var rows=[]; j.forEach(function(r){ if(!r||typeof r!=='object') return; var w=parseInt(r.week,10); if(w!==D.week) return;
+  },function(e){ return {ok:false,status:0,error:(e&&e.name==='AbortError')?('timeout after '+S.timeoutMs+' ms'):((e&&e.message)||'network error'),serverMs:NaN,ms:Date.now()-t0}; });
+  var late=new Promise(function(resolve){ timer=setTimeout(function(){ if(ctl) ctl.abort(); resolve({ok:false,status:0,error:'timeout after '+S.timeoutMs+' ms',serverMs:NaN,ms:Date.now()-t0}); },S.timeoutMs); });
+  return Promise.race([work,late]).then(function(x){ clearTimeout(timer); return x; }); }
+function checkRows(j,expectStarters){
+  if(!Array.isArray(j)) return 'matchup payload is not a list'; if(!j.length) return 'matchup payload is empty';
+  var seen={}, mine=null;
+  for(var i=0;i<j.length;i++){ var r=j[i];
+    if(!r||typeof r!=='object'||Array.isArray(r)) return 'row '+i+' is not an object';
+    var rid=r.roster_id; if(rid===null||rid===undefined||String(rid)===''||(typeof rid!=='number'&&typeof rid!=='string')) return 'row '+i+' has no roster_id';
+    if(seen[String(rid)]) return 'roster #'+rid+' appears twice in the payload'; seen[String(rid)]=1;
+    if(!('matchup_id' in r)) return 'roster #'+rid+' has no matchup_id field';
+    if(!Array.isArray(r.starters)) return 'roster #'+rid+' has no starters list';
+    if(!('points' in r)||!numOrNull(r.points)) return 'roster #'+rid+' has no numeric points (or null)';
+    if(r.custom_points!==undefined&&!numOrNull(r.custom_points)) return 'roster #'+rid+' custom_points is not a number or null';
+    if(r.starters_points!==undefined&&r.starters_points!==null&&(!Array.isArray(r.starters_points)||!r.starters_points.every(numOrNull))) return 'roster #'+rid+' starters_points is not a list of numbers and nulls';
+    if(r.players_points!==undefined&&r.players_points!==null&&(typeof r.players_points!=='object'||Array.isArray(r.players_points))) return 'roster #'+rid+' players_points is not an object';
+    if(r.players!==undefined&&r.players!==null&&!Array.isArray(r.players)) return 'roster #'+rid+' players is not a list';
+    if(String(rid)===String(D.my_roster_id)) mine=r; }
+  if(!mine) return 'this roster (#'+D.my_roster_id+') is missing from the payload';
+  if(!mine.starters.length) return 'this roster has an empty starters list';
+  if(expectStarters&&mine.starters.length!==expectStarters) return 'this roster lists '+mine.starters.length+' starters where the last good row had '+expectStarters;
+  return ''; }
+function checkState(j){ if(!j||typeof j!=='object'||Array.isArray(j)) return 'not an object';
+  var w=parseInt(j.week,10), sn=parseInt(j.season,10); if(isNaN(w)||isNaN(sn)) return 'no numeric season/week';
+  if(typeof j.season_type!=='string'||!j.season_type) return 'no season_type'; return ''; }
+function normFeed(j,asOfIso){ var rows=[]; (Array.isArray(j)?j:[]).forEach(function(r){ if(!r||typeof r!=='object') return; var w=parseInt(r.week,10); if(w!==D.week) return;
   var home=String(r.home||'').trim().toUpperCase(), away=String(r.away||'').trim().toUpperCase(), status=String(r.status||'').trim().toLowerCase();
   if(!home||!away||home===away||!status) return; rows.push({week:w,home:home,away:away,status:status,date:String(r.date||''),game_id:String(r.game_id||'')}); });
-  return {present:true,fresh:true,as_of:asOfIso,rows:rows}; }
+  return {present:true,fresh:true,as_of:asOfIso,reason:'',rows:rows}; }
+function checkFeed(j){ if(!Array.isArray(j)) return 'not a list'; if(!j.length) return 'empty list';
+  var n=normFeed(j,null).rows.length; if(!n) return 'no usable week-'+D.week+' row'; return ''; }
 
 function refresh(manual){
   if(S.inflight) return Promise.resolve('inflight');
-  var nowMs=Date.now();
+  var nowMs=now();
   if(manual&&S.lastAttemptAt&&nowMs-S.lastAttemptAt<THROTTLE_MS){ setStatus('A refresh ran '+ageText(S.lastAttemptAt,nowMs)+'; wait a few seconds.'); return Promise.resolve('throttled'); }
   var seq=++S.seq; S.inflight=true; S.lastAttemptAt=nowMs; $('gd-refresh').disabled=true; setStatus('Refreshing… (3 read-only requests to Sleeper)');
-  var started=nowMs, base=D.api.base, sb=D.api.schedule_base;
+  var started=Date.now(), base=D.api.base, sb=D.api.schedule_base;
   return Promise.all([get(base+'/state/nfl'),get(base+'/league/'+encodeURIComponent(D.league_id)+'/matchups/'+D.week),get(sb+'/nfl/regular/'+D.season)]).then(function(res){
     var finished=Date.now(), st=res[0], mu=res[1], fd=res[2], notes=[];
     if(seq<S.applied){ notes.push('a late response (started before a newer one) was discarded'); return finish(false,'late response discarded',notes,seq); }
-    if(st.ok&&st.json&&typeof st.json==='object'){ var w=parseInt(st.json.week,10), sn=parseInt(st.json.season,10);
+    if(finished-started>WINDOW_WARN_MS) notes.push('the three responses arrived over '+Math.round((finished-started)/1000)+' s, so they may not describe one instant');
+    var stWhy=st.ok?checkState(st.json):(st.error||'?');
+    if(!stWhy){ var w=parseInt(st.json.week,10), sn=parseInt(st.json.season,10), stype=String(st.json.season_type);
       if(sn!==D.season){ S.rollover=true; return finish(false,'the platform reports season '+sn+'; this page is season '+D.season+' and stops refreshing',notes,seq); }
-      if(w!==D.week){ S.rollover=true; notes.push('the platform is now in week '+w+'; this page is week '+D.week+', so week-'+D.week+' scores are shown as they stand and no further refresh runs'); } }
-    else notes.push('NFL state could not be read ('+(st.error||'?')+'); the week was not re-confirmed');
-    var feed=S.lastGoodRaw.feed;
-    if(fd.ok&&validFeed(fd.json)) feed=normFeed(fd.json,new Date(isNaN(fd.serverMs)?finished:fd.serverMs).toISOString());
-    else notes.push('game status feed not refreshed ('+(fd.error||'empty')+'); keeping the last good copy, dated '+fmt(feed.as_of));
-    if(!(mu.ok&&validRows(mu.json))){ var why=mu.ok?'matchup payload malformed or missing this roster':(mu.error||'?');
-      if(mu.status===429) why='rate limited (HTTP 429)';
+      if(stype!=='regular'){ S.rollover=true; notes.push('the platform is in the '+stype+' season; this page is a regular-season week, so week-'+D.week+' scores are shown as they stand and no further refresh runs'); }
+      else if(w!==D.week){ S.rollover=true; notes.push('the platform is now in week '+w+'; this page is week '+D.week+', so week-'+D.week+' scores are shown as they stand and no further refresh runs'); } }
+    else notes.push('NFL state could not be read ('+stWhy+'); the week was not re-confirmed');
+    var feed=S.lastGoodRaw.feed, feedWhy=fd.ok?checkFeed(fd.json):(fd.error||'?');
+    if(!feedWhy) feed=normFeed(fd.json,new Date(isNaN(fd.serverMs)?finished:fd.serverMs).toISOString());
+    else notes.push('game status feed not refreshed ('+feedWhy+'); keeping the last good copy, dated '+fmt(feed.as_of));
+    var lastMine=(S.lastGoodRaw.rows||[]).filter(function(r){ return r&&String(r.roster_id)===String(D.my_roster_id); })[0];
+    var muWhy=mu.ok?checkRows(mu.json,lastMine&&Array.isArray(lastMine.starters)?lastMine.starters.length:0):(mu.error||'?');
+    if(mu.status===429) muWhy='rate limited (HTTP 429)';
+    if(muWhy){
       // A feed that did arrive still updates statuses on the last good scores.
-      if(feed!==S.lastGoodRaw.feed){ S.lastGoodRaw={rows:S.lastGoodRaw.rows,my_players:S.lastGoodRaw.my_players,my_reserve:S.lastGoodRaw.my_reserve,feed:feed,as_of:S.lastGoodRaw.as_of}; }
-      return finish(false,'scores not refreshed: '+why+'; last good kept',notes,seq); }
+      if(feed!==S.lastGoodRaw.feed){ S.lastGoodRaw={rows:S.lastGoodRaw.rows,my_players:S.lastGoodRaw.my_players,my_reserve:S.lastGoodRaw.my_reserve,my_taxi:S.lastGoodRaw.my_taxi,feed:feed,as_of:S.lastGoodRaw.as_of,built:S.lastGoodRaw.built}; }
+      return finish(false,'scores not refreshed: '+muWhy+'; last good kept',notes,seq); }
     var serverMs=isNaN(mu.serverMs)?finished:mu.serverMs;
-    if(S.lastServerMs&&serverMs<S.lastServerMs){ notes.push('discarded a response dated '+fmt(new Date(serverMs).toISOString())+', older than the one already applied'); return finish(false,'older response discarded',notes,seq); }
-    var raw={rows:mu.json,my_players:S.lastGoodRaw.my_players,my_reserve:S.lastGoodRaw.my_reserve,feed:feed,as_of:new Date(serverMs).toISOString()};
+    if(S.lastServerMs&&serverMs<S.lastServerMs){ notes.push('discarded a response dated '+fmtMs(serverMs)+', older than the one already applied'); return finish(false,'older response discarded',notes,seq); }
+    var raw={rows:mu.json,my_players:S.lastGoodRaw.my_players,my_reserve:S.lastGoodRaw.my_reserve,my_taxi:S.lastGoodRaw.my_taxi,feed:feed,as_of:new Date(serverMs).toISOString(),built:false};
     var mine=raw.rows.filter(function(r){ return String(r.roster_id)===String(D.my_roster_id); })[0];
     if(mine&&Array.isArray(mine.players)&&mine.players.length) raw.my_players=mine.players;
-    var vm=compute(raw,serverMs), changes=diff(S.lastGood,vm), prevStamp=S.mode==='snapshot'?fmt(S.lastGoodAsOf):fmt(new Date(S.lastGoodAt).toISOString());
-    S.lastGood=vm; S.lastGoodRaw=raw; S.lastGoodAt=finished; S.lastGoodAsOf=raw.as_of; S.lastServerMs=serverMs; S.applied=seq; S.failures=0; S.lastError=''; S.live=true; S.mode='live';
+    var at=now(), vm=compute(raw,at), changes=diff(S.lastGood,vm), prevStamp=S.mode==='snapshot'?fmt(S.lastGoodAsOf):fmtMs(S.lastGoodAt);
+    S.lastGood=vm; S.lastGoodRaw=raw; S.lastGoodAt=at; S.lastGoodAsOf=raw.as_of; S.lastServerMs=serverMs; S.applied=seq; S.failures=0; S.lastError=''; S.live=true; S.mode='live';
     S.history.push({at:finished,seq:seq,window_ms:finished-started,changes:changes.length});
-    var asOfNote='platform scores fetched '+fmt(raw.as_of)+' (read window '+(finished-started)+' ms; device clock '+(Math.abs(finished-serverMs)>300000?'differs from Sleeper’s by '+Math.round(Math.abs(finished-serverMs)/60000)+' min, so Sleeper’s date is used':'agrees with Sleeper’s')+')';
+    var asOfNote='platform scores fetched '+fmt(raw.as_of)+' (read window '+(finished-started)+' ms; device clock '+(Math.abs(at-serverMs)>300000?'differs from Sleeper’s by '+Math.round(Math.abs(at-serverMs)/60000)+' min, so Sleeper’s date is used':'agrees with Sleeper’s')+'). '+buildNote();
+    S.view=vm; S.sig=signature(vm); S.lastChanges=changes; S.prevStamp=prevStamp; S.asOfNote=asOfNote;
     renderAll(vm,changes,prevStamp,asOfNote); setMode(S.rollover?'LIVE (week over)':'LIVE','ok');
-    return finish(true,'Updated '+fmt(raw.as_of)+': '+(changes.length?changes.length+' change(s) since your last snapshot':'no change since your last snapshot')+(notes.length?'. '+notes.join('. '):''),[],seq);
-  }); }
+    return finish(true,'Updated scores and game statuses '+fmt(raw.as_of)+': '+(changes.length?changes.length+' change(s) since your last snapshot':'no change since your last snapshot')+'. '+buildNote()+'.'+(notes.length?' '+notes.join('. '):''),[],seq);
+  }).then(null,function(e){ return finish(false,'the page could not apply the response ('+((e&&e.message)||String(e))+'); last good kept',[],seq); }); }
 function finish(ok,msg,notes,seq){ S.inflight=false; $('gd-refresh').disabled=false;
   if(!ok){ S.failures+=1; S.lastError=msg; if(S.live) S.mode='stale'; setMode(S.live?'STALE':'SNAPSHOT (refresh failed)',S.live?'warn':'bad');
-    setStatus('Refresh failed: '+msg+'. Showing the last good data from '+(S.live?fmt(new Date(S.lastGoodAt).toISOString()):fmt(S.lastGoodAsOf)+' (cloud snapshot)')+'.'+(notes.length?' '+notes.join('. '):'')); }
+    setStatus('Refresh failed: '+msg+'. Showing the last good data from '+(S.live?fmtMs(S.lastGoodAt):fmt(S.lastGoodAsOf)+' (cloud snapshot)')+'.'+(notes.length?' '+notes.join('. '):'')); tick(); }
   else setStatus(msg);
   setAsOf(); planNext(); return Promise.resolve(ok?'ok':'failed'); }
 function planNext(){ if(S.timer){ clearTimeout(S.timer); S.timer=null; } S.nextPollMs=null; if(!S.live||S.rollover||document.hidden) return;
-  var vm=S.lastGood, wait=null;
+  var vm=S.view||S.lastGood, wait=null;
   if(S.failures) wait=Math.min(BACKOFF_MAX_MS,60000*Math.pow(2,S.failures-1));
   else if(vm.any_playing) wait=POLL_LIVE_MS;
   else if(vm.any_unknown&&!vm.all_settled) wait=POLL_UNKNOWN_MS;
-  else if(vm.next_kickoff&&vm.next_kickoff-Date.now()<3*3600*1000) wait=POLL_PRE_MS;
+  else if(vm.next_kickoff&&vm.next_kickoff-now()<3*3600*1000) wait=POLL_PRE_MS;
   if(wait!==null) S.timer=setTimeout(function(){ refresh(false); },wait); S.nextPollMs=wait; }
-document.addEventListener('visibilitychange',function(){ if(document.hidden) planNext(); else if(S.live&&!S.inflight&&S.lastGoodAt&&Date.now()-S.lastGoodAt>POLL_LIVE_MS) refresh(false); else planNext(); });
+document.addEventListener('visibilitychange',function(){ if(document.hidden){ planNext(); return; } tick();
+  if(S.live&&!S.inflight&&S.lastGoodAt&&now()-S.lastGoodAt>POLL_LIVE_MS) refresh(false); else planNext(); });
 var btn=$('gd-refresh'); btn.disabled=false; btn.title='Fetch the current scores and game statuses from Sleeper (read-only)';
 btn.addEventListener('click',function(){ refresh(true); });
-setStatus('Snapshot mode: showing what the cloud build cached. Tap Refresh to fetch live scores from Sleeper (read-only); the page then keeps itself current while it is open and visible.');
-setAsOf(); setInterval(setAsOf,15000);
-window.gridironGameDay={refresh:refresh,compute:compute,diff:diff,state:function(){ return S; },data:D};
+setStatus('Snapshot mode: showing what the cloud build cached. Tap Refresh to fetch live scores and game statuses from Sleeper (read-only); the page then keeps itself current while it is open and visible. '+buildNote()+'.');
+tick(); setInterval(tick,TICK_MS);
+window.gridironGameDay={refresh:refresh,compute:compute,diff:diff,judge:judge,tick:tick,now:now,state:function(){ return S; },data:D,
+  tune:function(o){ o=o||{}; if(typeof o.skewMs==='number') S.skewMs=o.skewMs; if(typeof o.timeoutMs==='number'&&o.timeoutMs>0) S.timeoutMs=o.timeoutMs; return tick(); }};
 })();
 """

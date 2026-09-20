@@ -31,8 +31,10 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   Actions cache, not durable storage). Game Day (`scripts/weekly/gameday.py`,
   scenarios A-F in `gameday_scenarios.py --screenshot --browser`): platform
   actuals only, game status OBSERVED or UNKNOWN (never inferred from the
-  clock), legal moves re-judged by player id, no live win odds, and a
-  one-tap read-only refresh inside the artifact file itself.
+  clock), every archived move re-judged NOW by player id against freshness,
+  slot eligibility, designation, placement and lock (the archive's
+  ACTIONABLE is history, not authority), no live win odds, and a one-tap
+  read-only refresh inside the artifact file itself.
 - Settings drift check: `PYTHONPATH=src python scripts/verify_league_settings.py`.
 
 ## Rules (full text in docs/memory/rules.md — cite by number)

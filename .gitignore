@@ -40,7 +40,13 @@ docs/review/dashboard/caches/
 docs/review/dashboard/*/
 docs/review/gameday/caches/
 docs/review/gameday/*/
-docs/review/gameday/browser_drive.json
+# committed review evidence: pregame*, stale*, mixed*, injury_after* PNGs and the two drive logs
+docs/review/gameday/conflict*.png
+docs/review/gameday/custom*.png
+docs/review/gameday/empty*.png
+docs/review/gameday/no_archive*.png
+docs/review/gameday/rollover*.png
+docs/review/gameday/pregame_stale*.png
 
 # Cloud carryover store (private decision records restored from a cache)
 .carry/

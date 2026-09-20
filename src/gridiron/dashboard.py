@@ -568,6 +568,10 @@ class Action:
     #: sentence names them (bench first for a swap). Carried so a later page
     #: can re-check legality by ID and never by name (rule #3).
     player_ids: tuple[str, ...] = field(default=())
+    #: The lineup slot the move fills, for the moves that fill one. Carried
+    #: so Game Day can check the incoming player's eligibility for the slot
+    #: the record meant, instead of parsing a title.
+    slot: str = ""
     #: Tiebreak WITHIN a kind, set by the producer. Acquisitions need it
     #: because a lineup gain and a depth gain are not comparable quantities —
     #: sorting the two together once put a +15 bye-week depth add above a +6
@@ -606,7 +610,7 @@ class Action:
                 "evidence": list(self.evidence), "verify": list(self.verify),
                 "withheld_reasons": list(self.withheld_reasons),
                 "delta_points": self.delta_points, "z": self.z,
-                "player_ids": list(self.player_ids)}
+                "player_ids": list(self.player_ids), "slot": self.slot}
 
 
 def _edge_sentence(delta: float, z: float | None) -> str:
@@ -752,7 +756,7 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                 evidence=("an unfilled slot scores nothing; this is not a "
                           "projection question",),
                 withheld_reasons=l_why, verify=l_verify,
-                player_ids=(best.sleeper_id,) if best else ()))
+                player_ids=(best.sleeper_id,) if best else (), slot=slots[i]))
             continue
         if cur.projection.is_withheld and cur.movable:
             replacement = best if (best and best.sleeper_id != cur.sleeper_id) else None
@@ -784,7 +788,7 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                 withheld_reasons=l_why, verify=l_verify,
                 delta_points=(float(replacement.value or 0.0) if replacement else None),
                 player_ids=((replacement.sleeper_id, cur.sleeper_id) if replacement
-                            else (cur.sleeper_id,))))
+                            else (cur.sleeper_id,)), slot=slots[i]))
 
     # 2. Favourable swaps the optimizer found, above the noise floor.
     for a in plan.alternatives:
@@ -813,7 +817,7 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                       f"{_num(a.starter.sd, 2)}"),
             withheld_reasons=l_why, verify=l_verify,
             delta_points=a.delta_points, z=a.z,
-            player_ids=(a.bench.sleeper_id, a.starter.sleeper_id)))
+            player_ids=(a.bench.sleeper_id, a.starter.sleeper_id), slot=a.slot))
 
     # 3. Acquisitions. Never an imperative: eligibility is never proven here.
     w_status, w_why, w_verify = status_of(waiver_gate)
