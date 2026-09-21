@@ -6,19 +6,26 @@ as `3d018aa`; repair PR #6 (two HTML archive labels shown by filename, no
 runner path) merged as `b24d1f4`. The repository is PUBLIC, the Pages
 workflow is enabled with `GRIDIRON_PUBLIC_PUBLICATION=true`, and the site is
 LIVE at `https://kejjeh.github.io/gridiron/` (root redirect, both pages,
-hourly best-effort build, browser refresh). Main is the deployment source.
-The per-finding history lives in `docs/DECISIONS.md` and the PR bodies.
+hourly best-effort build on main, browser refresh). Main is the deployment
+source. The per-finding history lives in `docs/DECISIONS.md` and the PR bodies.
 
-**This branch** carries the next milestone — trustworthy weekly next
-decisions — described in "Next decision — trustworthy weekly advice" below.
-It is a draft for Astra's review; nothing on it merges, deploys or flips a
-variable.
+**This branch (draft PR #7)** carries two milestones on top of main:
+trustworthy weekly next decisions ("Next decision — trustworthy weekly
+advice" below, head `fb19a24`, reviewed by Astra: 681 passed, 4
+browser-related skips, smoke PASS) and, on top of it, the **Free Agent
+Radar** ("Free Agent Radar — continuous comparison" below): every projected
+available player verdicted against the roster, diffed by id between records,
+a shared design and navigation across both pages, a published-build check in
+the browser, and a 15-minute best-effort cloud cadence. It is a draft for
+Astra's review; nothing on it merges, deploys or flips a variable, and the
+cadence change takes effect only when main carries it.
 
 The desktop five-minute sync is **installed but its scheduled task is
 DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud:
 `.github/workflows/sleeper-sync.yml` (hourly) and
-`.github/workflows/dashboard-artifact.yml` (hourly, renders the board AND
-the Game Day page, uploads both as a run artifact and, under the publication
+`.github/workflows/dashboard-artifact.yml` (hourly on main; every 15 minutes
+on this branch, best effort, never real time — it renders the board AND the
+Game Day page, uploads both as a run artifact and, under the publication
 opt-in, deploys the two pages to GitHub Pages). Both are gated on the
 `GRIDIRON_CLOUD_SYNC_ENABLED` repository variable and, now that the repo is
 public, on `GRIDIRON_PUBLIC_PUBLICATION` being exactly `true` as well.
@@ -597,6 +604,59 @@ byte-identical before and after):
 no live-site deploy (the hourly workflow publishes main after merge); no
 grading of a real week (needs finals).
 
+## Free Agent Radar — continuous comparison (2026-09-21, second part)
+
+**The ask.** Constant comparison against the free-agent pool, integrated
+with Game Day, in a UI that reads as one premium product on a phone. The
+recommendation repairs above are preserved unchanged: the radar is the same
+`build_board` evaluation written down for every projected pool player, not a
+new pricing model, and a pickup is still a move only when it improves THIS
+WEEK's best legal lineup.
+
+**What changed** (scoring, projections, gating, locks, the protected-drop
+rules and the publication allowlist are untouched):
+
+| Change | Where |
+| --- | --- |
+| Every projected available player gets ONE verdict: LINEUP (with drop, slot, displaced starter, alternative drops), RESEARCH (same-position comparator and gap, lineup unchanged), COVERAGE (nothing droppable at his position; no number), BELOW, LOCKED (his game started), UNKNOWN (kickoff not established), UNRANKED (under the per-position cap). Unprojected players are counted as missing evidence and never listed with a number. Per-position coverage counts (pool / projected / compared / missing / locked / unknown) | `waivers.Candidate`, `PositionCoverage`, `WaiverBoard.candidates/.positions` |
+| The archive record carries a `radar` block by Sleeper id: counts, positions, the whole pool, every owned id, every candidate with its verdict, comparator and alternatives, the snapshot as-of and each source's as-of and status. `diff_radar` reports transitions only — newly available, now owned (claimed since the previous record, so no longer suggested), left the pool, verdict moved, projection moved ≥ 1.5, evidence expired — and separates REFRESHED (inputs newer) from REVISED (a number or verdict changed). A first run, a week rollover, a different league/roster, an older record without the block, or a different block version is "no comparison", never movement | `gridiron.radar` (new), `Dashboard.record()["radar"]`, `["radar_changes"]` |
+| Board section 5 is the Free Agent Radar: pool coverage KPIs, per-position line, "since the last record" (summary + change list + refreshed inputs), search, verdict filter, sort, position chips, and one expandable row per candidate carrying verdict, why, benefit, displaced starter, drop cost, alternatives, coverage after, deadline, availability UNVERIFIED, status (CONDITIONAL or WITHHELD), lock, evidence date and the projection's own explanation. Rows are server-rendered (no JavaScript still shows everything, LINEUP first); the script only filters and sorts, and keeps the chosen filters in sessionStorage across a reload | `dashboard._radar_html`, `_radar_row`, `_RADAR_JS` |
+| One design system for both pages: charcoal/navy tokens, lime and cyan accents, tabular numerals, cards, badges, tables, controls, focus rings, reduced-motion and print rules; a sticky three-tab navigation (Game Day · Board · Free Agents) with `aria-current`; a dated header strip (league snapshot, projections evidence, designations, page built) whose ages tick in the browser without fetching | `gridiron.theme` (new), both renderers |
+| The published-build check: every five minutes while the tab is visible, a conditional GET of the page's OWN URL on the hosting origin (`connect-src 'self'`), 304 when unchanged, a banner with a Reload control when the served build stamp is newer, an "older build" note when a deploy or cache lags, backoff doubling to 30 minutes on any failure (429 named), one timer cleared before it is re-armed, an in-flight guard, Pause/Resume and Check now, filters and scroll position carried across the reload, and a plain "off" status when the file is opened from disk. It never swaps content under the reader and never claims the cloud schedule is real time | `theme.SNAPSHOT_JS`, `snapshot_html`, `build_meta` |
+| Game Day: the shared theme and navigation, the header strip, the published-build check, and a "Free agents — what the pregame board found" card read from the pregame record's radar block (counts, snapshot as-of, LINEUP candidates with gain and drop, conditional on availability). A pickup is still never a game-day move and is never re-judged there; a record without the block says so | `gameday.summarise_radar`, `PregameView.radar`, `render_gameday_html` |
+| Cadence: `dashboard-artifact.yml` runs at 7, 22, 37 and 52 minutes past each hour (best effort; GitHub queues and drops scheduled runs). The Sleeper snapshot (five small GETs) refreshes each run; the 16 MB player dump and the nflverse frames refresh only past half their cadence, as before; carried inputs keep their original observation times. One carryover cache entry per run; the rolling restore-keys pattern tolerates eviction. The hourly `sleeper-sync.yml` is unchanged | `.github/workflows/dashboard-artifact.yml` |
+| Scenarios: `hold` (fresh inputs, empty pool, best lineup already started → HOLD), `sparse` (week-1 box scores for a third of the players → missing evidence), two-run `taken` (one player claimed, one released → "now owned" / "newly available"), `roster_changed` (the owner dropped a player → section 3 GONE, radar re-priced), `next_week` (week 4 → "week rollover — no comparison"); captures at 375, 768 and 1440 with a fit check at each; `--browser` drives the radar controls and the published-build check against a loopback fixture (200/304, 429, dropped socket, hang, recovery, in-flight guard, newer build, pause/resume, reload) | `dashboard_scenarios.py`, `scripts/weekly/radar_drive.py` (new) |
+
+**Before / after on the cached real league** (same cache, no league write;
+Monday 18:00 UTC, snapshot 95 h old so every action is withheld; every
+non-radar key of the record byte-identical before and after — 35 of 35):
+
+| | Before (`fb19a24`) | After |
+| --- | --- | --- |
+| Acquisitions section | table of lineup-gain pairs only (none on Monday); pool 608, 15 evaluated, 390 unprojected as one line | pool 608 · 218 with a projection · 15 compared to the lineup · 390 missing evidence · 0 lineup gains, per position; 218 candidates listed: 203 LOCKED (their week-2 game had kicked off), 9 COVERAGE, 3 RESEARCH, 3 BELOW; search, filters, sort |
+| Since the last record | roster/lineup/projection diff only | first run: "No comparison … no movement is invented"; a second render 15 minutes later from the same cache: "Unchanged: … nothing was refreshed and nothing moved" (no false changed badge) |
+| Header | title, evidence boundary, generated | tabs, four dated ages, published-build check strip (off when opened from disk, on under the hosted site) |
+| Game Day | link back to the board | tabs, ages, check strip, "Free agents — what the pregame board found": 0 lineup gains out of 15 compared, pool 608 |
+
+**Verification** (this container, sequential; exact numbers in the PR body):
+
+| Check | Result |
+| --- | --- |
+| `run_summary.py -- python -m pytest` then `scripts/ci/smoke.py` | see the PR body for the counts of this head |
+| `dashboard_scenarios.py --screenshot --browser` | ten scenarios; fit at 375/768/1440 for each; the radar drive PASS (`docs/review/dashboard/browser_drive_radar.json`) |
+| `gameday_scenarios.py --screenshot --browser` | ten scenarios; both drives executed |
+| `pages_site.py build` on the two real pages, `check` at 375, 768 and 1440 | see the PR body |
+| Archive compatibility | a record without the radar block diffs (no comparison, said so), grades and joins as before; old keys keep their shape |
+
+**Known limits, stated:** the 15-minute cron is a queue time, not a run
+time; the site can lag by a run or more, and each page says what it was
+built from. The check asks the hosting origin only and can only offer a
+reload. Availability stays UNVERIFIED (no transactions pull). The
+per-position cap (12) leaves the long tail UNRANKED and says so. Ages in
+the header trust the device clock. No FAAB, no rest-of-season value, no
+probabilities. Not covered here: no Windows run; no live deploy; no
+real-week grading.
+
 ## Publication — public Pages (2026-09-21)
 
 Implemented on this branch from `bb49650`; the head is in the PR body. The
@@ -670,11 +730,13 @@ Nothing was deleted, no setting was changed, no history was rewritten.
 
 ## Next — the release checklist
 
-0. **Astra review of this head (next-decision milestone).** Run the full
-   suite and smoke, `dashboard_scenarios.py --screenshot` (five scenarios,
-   `slate_end` included), and render the live cache at a pregame instant
-   and at a Monday instant to see the same before/after this branch
-   reports; then merge, and the hourly build publishes it.
+0. **Astra review of this head (next-decision + Free Agent Radar).** Run
+   the full suite and smoke, `dashboard_scenarios.py --screenshot --browser`
+   (ten scenarios, the radar drive) and `gameday_scenarios.py --screenshot
+   --browser`, build and `check` the site at 375/768/1440, and render the
+   live cache at a pregame instant and at a Monday instant to see the same
+   before/after this branch reports; then merge. Merging main activates the
+   15-minute cadence on the next scheduled run; nothing else needs setting.
 1. **Astra review of the Game Day head** (done for `2b7d373`; kept for the
    commands). Render both pages from the live cache
    (`dashboard.py --write` then `gameday.py --write`), open
@@ -928,7 +990,14 @@ performs them.
   connect policy. Hosting is GitHub Pages, from a run, never from the tree;
   the site is public by owner decision and the page's connect policy is
   unchanged.
-- No fetch on load and no background polling.
+- No fetch of Sleeper on load and no background polling of Sleeper. The
+  published-build check asks the HOSTING origin only, every five minutes
+  while the tab is visible, and offers a reload; it never swaps content.
+- No pricing model behind the radar: a verdict is this week's lineup
+  arithmetic, a same-position comparison, or "no comparison". No FAAB, no
+  win probability, no rest-of-season value, no forced recommendation.
+- No claim that a 15-minute cron is real time, and no second scheduled
+  heavy job: the player dump and the nflverse frames keep their cadences.
 - No fetch of the player dump from the page: a refresh renews the roster,
   scores and game statuses, and says that designations, positions, kickoff
   times and the pregame record are from the build. Advice therefore goes

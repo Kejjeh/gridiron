@@ -38,6 +38,7 @@ local file for the owner (rule #10 carve-out); the archive is gitignored.
 from __future__ import annotations
 
 import html
+import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -63,9 +64,12 @@ from gridiron.lineup import (
 from gridiron.projection import (
     BASELINE_LABEL, Projection, abstain, build_evidence, project,
 )
+from gridiron.radar import RadarChanges, diff_radar, radar_record
 from gridiron.scoring import ScoringCoverage
+from gridiron import theme
 from gridiron.waivers import (
-    WaiverBoard, available_ids, build_board, eligibility, pool_players,
+    BELOW, COVERAGE, LINEUP, RESEARCH, Candidate, WaiverBoard, available_ids,
+    build_board, eligibility, pool_players,
 )
 from gridiron.weekly import (
     BYE, NO_SCHEDULE, availability, injury_index, schedule_index,
@@ -129,6 +133,15 @@ class Dashboard:
     #: The week-transition view: what this page's advice is FOR, what can
     #: still be done, what waits for next week's inputs.
     next: "NextDecision | None" = None
+    #: The whole available pool (projected or not) and every id any roster
+    #: holds, so the radar block can be diffed by id later.
+    pool: tuple[Player, ...] = field(default=())
+    owned_ids: tuple[str, ...] = field(default=())
+    designations: Mapping[str, str] = field(default_factory=dict)
+    #: What the radar found since the previous record, like for like.
+    radar_changes: RadarChanges | None = None
+    #: The snapshot as-of, as the page states it.
+    snapshot_as_of: str = ""
 
     @property
     def degraded(self) -> bool:
@@ -200,6 +213,11 @@ class Dashboard:
                            "gap": w.gap} for w in self.board.watchlist],
             "coverage": list(self.board.coverage),
             "next": None if self.next is None else self.next.record(),
+            "radar": radar_record(self.board, pool=self.pool, owned_ids=self.owned_ids,
+                                  snapshot_as_of=self.snapshot_as_of,
+                                  sources=self.sources, designations=self.designations),
+            "radar_changes": (None if self.radar_changes is None
+                              else self.radar_changes.record()),
             "withheld_actions": list(self.gate.withheld),
             "gate": self.gate.record(),
             "locks": None if self.locks is None else {
@@ -471,24 +489,36 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
     league_id = str(snapshot.get("league_id")
                     or (league.get("league_id") if isinstance(league, Mapping) else "")
                     or "")
+    owned_ids = tuple(sorted({normalize_id(sid) for r in rosters
+                              for sid in (r.get("players") or []) if normalize_id(sid)}))
+    designations = {p.sleeper_id: str((sleeper_players.get(p.sleeper_id) or {})
+                                      .get("injury_status") or "") for p in pool}
     dash = Dashboard(context, tuple(sources), tuple(notes), now, tuple(roster), slots,
                      plan, matchup, matchup_reason, board, evaluation,
                      tuple(unresolved), my_roster_id, gate, actions, None, kickoffs,
-                     league_id=league_id, next=nxt)
+                     league_id=league_id, next=nxt, pool=tuple(pool), owned_ids=owned_ids,
+                     designations=designations, snapshot_as_of=snapshot_as_of)
 
     # What changed since the previous frozen page. Read-only: the diff never
     # feeds a projection, so yesterday's numbers cannot enter today's evidence.
     prev = previous_archive(archive_root, context.season, now)
     if prev is not None:
         try:
+            before = read_archive(prev)
+            current = dash.record()
             dash = Dashboard(**{**dash.__dict__,
-                                "changes": diff_archives(read_archive(prev),
-                                                         dash.record())})
+                                "changes": diff_archives(before, current),
+                                "radar_changes": diff_radar(before, current)})
         except (OSError, ValueError) as exc:
             dash = Dashboard(**{**dash.__dict__, "changes": Changes(
                 str(prev.name), None, (),
                 note=f"previous snapshot could not be read ({type(exc).__name__}); "
-                     f"no change list this run")})
+                     f"no change list this run"),
+                "radar_changes": RadarChanges(
+                    False, f"the previous record could not be read "
+                           f"({type(exc).__name__})", str(prev.name), None)})
+    else:
+        dash = Dashboard(**{**dash.__dict__, "radar_changes": diff_radar(None, {})})
 
     if write_archive_file:
         record = dash.record()
@@ -1114,67 +1144,29 @@ def next_decision(*, context: WeekContext, roster: Sequence[Player], plan: Lineu
 # --------------------------------------------------------------------------
 # HTML
 # --------------------------------------------------------------------------
-_CSS = """
-:root{--bg:#fafaf7;--fg:#1c1c1c;--muted:#5d5d5d;--line:#d9d6ce;--card:#ffffff;
---ok:#2f7d32;--warn:#b26a00;--bad:#b3261e;--info:#2a5db0;--chip:#eeece6;}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#15161a;--fg:#e8e6e1;
---muted:#a3a19b;--line:#33363d;--card:#1d1f25;--chip:#2a2d34;--ok:#6fbf73;--warn:#e0a24a;
---bad:#ef6f66;--info:#7fa6e8;}}
-:root[data-theme="dark"]{--bg:#15161a;--fg:#e8e6e1;--muted:#a3a19b;--line:#33363d;
---card:#1d1f25;--chip:#2a2d34;--ok:#6fbf73;--warn:#e0a24a;--bad:#ef6f66;--info:#7fa6e8;}
-*{box-sizing:border-box}html,body{max-width:100%}
-body{margin:0;padding:16px;background:var(--bg);color:var(--fg);
-font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-overflow-wrap:anywhere;word-break:break-word}
-main{max-width:1180px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;
-margin:28px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
-.sub{color:var(--muted)}.card{background:var(--card);border:1px solid var(--line);
-border-radius:8px;padding:12px 14px;margin:10px 0}
-.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;
-font-weight:600;border:1px solid var(--line);background:var(--chip)}
-.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.info{color:var(--info)}
-.banner{border-left:5px solid var(--bad);padding:8px 12px;margin:10px 0;background:var(--card)}
-.banner.ok{border-left-color:var(--ok)}
-table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;
-padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-weight:600;color:var(--muted);white-space:nowrap}
-td{overflow-wrap:anywhere}td.num{text-align:right;
-font-variant-numeric:tabular-nums;white-space:nowrap}
-.wrap{overflow-x:auto}details{margin:4px 0}summary{cursor:pointer;color:var(--info)}
-code,pre{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-overflow-wrap:anywhere;word-break:break-all}
-pre{background:var(--chip);padding:8px;border-radius:6px;overflow-x:auto;white-space:pre-wrap}
-ul{margin:6px 0;padding-left:20px}.small{font-size:12px}
-.kpi{display:flex;flex-wrap:wrap;gap:10px}.kpi div{flex:1 1 160px;background:var(--chip);
-border-radius:6px;padding:8px 10px}.kpi b{display:block;font-size:18px}
-.act{border:1px solid var(--line);border-left:5px solid var(--info);border-radius:8px;
-background:var(--card);padding:12px 14px;margin:10px 0}
-.act h3{font-size:16px;margin:6px 0 4px;line-height:1.3}
-.act p{margin:4px 0}.act .why{color:var(--muted);font-size:12px}
-.act-NOW{border-left-color:var(--bad)}.act-TODAY{border-left-color:var(--warn)}
-.act-UNKNOWN{border-left-color:var(--warn)}.act-INFO{border-left-color:var(--line)}
-.act.withheld{border-left-style:dashed;background:var(--bg)}
-.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:2px}
-.badge.now{background:var(--bad);color:#fff;border-color:transparent}
-.badge.today{background:var(--warn);color:#fff;border-color:transparent}
-.badge.held{background:transparent;color:var(--bad);border-color:var(--bad)}
-.badge.go{background:transparent;color:var(--ok);border-color:var(--ok)}
-.badge.cond{background:transparent;color:var(--warn);border-color:var(--warn)}
-.act.conditional{border-left-style:dotted}
-.next h3{font-size:15px;margin:14px 0 4px}.next ul{margin:4px 0}
-.deadline{font-weight:600}.backup{color:var(--muted);font-size:13px}
-.gatebox{border-left:5px solid var(--warn);padding:8px 12px;margin:8px 0;background:var(--chip)}
-@media (max-width:560px){
- body{padding:10px 12px;font-size:15px}
- main{max-width:100%}
- h1{font-size:19px}h2{font-size:16px;margin:22px 0 6px}
- .card{padding:10px 11px;border-radius:6px}
- .act{padding:10px 11px}.act h3{font-size:15px}
- .kpi{gap:6px}.kpi div{flex:1 1 calc(50% - 6px);padding:6px 8px}.kpi b{font-size:16px}
- table{font-size:12px}th,td{padding:4px 5px}
- summary{padding:6px 0}
-}
-@media print{.act{break-inside:avoid}details{display:block}details>*{display:block}}
+_CSS = theme.CSS + """
+.act p{margin:4px 0}.act-TODAY{border-left-color:var(--warn)}.act-UNKNOWN{border-left-color:var(--warn)}
+.next h3{font-size:15px;margin:16px 0 4px;letter-spacing:.02em}.next ul{margin:4px 0}
+.radar{list-style:none;margin:8px 0 0;padding:0}
+.radar li{border-top:1px solid var(--line)}.radar li:first-child{border-top:0}
+.radar summary{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center;padding:10px 4px;
+color:inherit;font-weight:500;list-style:none}
+.radar summary::-webkit-details-marker{display:none}
+.radar .rname{font-size:15.5px;font-weight:700}.radar .rmeta{color:var(--muted);font-size:12.5px;font-weight:500}
+.radar .rnum{text-align:right;white-space:nowrap}.radar .rnum .stat{display:block;line-height:1.1}
+.radar .rnum .lbl{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.radar .rbody{padding:2px 4px 14px;font-size:14px}
+.radar .rbody dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:6px 0}
+.radar .rbody dt{color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase;padding-top:2px}
+.radar .rbody dd{margin:0}
+.badge.v-LINEUP{color:var(--lime-ink);background:var(--lime);border-color:transparent}
+.badge.v-RESEARCH{color:var(--cyan);border-color:rgba(95,227,255,.45)}
+.badge.v-COVERAGE{color:var(--warn);border-color:rgba(255,200,107,.45)}
+.badge.v-BELOW,.badge.v-UNRANKED{color:var(--muted)}
+.badge.v-LOCKED,.badge.v-UNKNOWN{color:var(--bad);border-color:rgba(255,128,128,.45)}
+.radar li[hidden]{display:none}
+.chg li{margin:3px 0}
+@media (max-width:560px){.radar summary{padding:9px 2px}.radar .rname{font-size:15px}}
 """
 
 
@@ -1268,26 +1260,305 @@ def _action_card(a: "Action") -> str:
     return "".join(out)
 
 
+
+# --------------------------------------------------------------------------
+# The Free Agent Radar
+# --------------------------------------------------------------------------
+_VERDICT_WORD = {
+    LINEUP: "improves this week's lineup", RESEARCH: "research — lineup unchanged",
+    COVERAGE: "no like-for-like comparison", BELOW: "below your cheapest droppable",
+    "LOCKED": "locked this week", "UNKNOWN": "lock unknown",
+    "UNRANKED": "not compared (under the cap)",
+}
+
+
+def _dl(pairs: Sequence[tuple[str, str]]) -> str:
+    return "<dl>" + "".join(f"<dt>{_e(k)}</dt><dd>{v}</dd>" for k, v in pairs if v) + "</dl>"
+
+
+def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) -> str:
+    a = c.add
+    pr = a.projection
+    proj = _num(pr.mean, 1) if pr.usable else "—"
+    gain = c.lineup_gain if c.verdict == LINEUP else None
+    desig = d.designations.get(a.sleeper_id, "")
+    head_num = (f"<span class=\"stat plus\">{_num(gain, 1, True)}</span><span class=\"lbl\">Δ lineup</span>"
+                if gain is not None else
+                f"<span class=\"stat\">{proj}</span><span class=\"lbl\">proj</span>")
+    badge = f"<span class=\"badge v-{_e(c.verdict)}\">{_e(c.verdict)}</span>"
+    meta = f"{_e(a.position)} · {_e(a.team)} · proj {proj}"
+    if pr.usable and pr.is_withheld:
+        meta += " <span class=\"warn\">(withheld: will not play)</span>"
+    if desig:
+        meta += f" · <span class=\"warn\">{_e(desig)}</span>"
+    pairs: list[tuple[str, str]] = [("Verdict", f"{badge} {_e(_VERDICT_WORD.get(c.verdict, ''))}"),
+                                    ("Why", _e(c.reason))]
+    if c.verdict == LINEUP and c.drop is not None:
+        displ = (f"{_e(c.displaces.name)} ({_e(c.displaces.position)}, "
+                 f"{_num(c.displaces.value, 2)}) leaves the lineup"
+                 if c.displaces is not None and c.displaces.sleeper_id != c.drop.sleeper_id
+                 else f"{_e(c.drop.name)} leaves the roster and the lineup")
+        alts = ("; ".join(f"{_e(dp.name)} ({_e(dp.position)}, {_num(dp.value, 2)}) → "
+                          f"lineup {_num(g, 2, True)}" for dp, g in c.alternatives)
+                or "none — this is the only feasible drop; without it the move is off")
+        deadline, note = _deadline_for([a, c.displaces], d.generated)
+        pairs += [
+            ("Benefit", f"enters <b>{_e(c.slot)}</b>; best legal lineup "
+                        f"<b class=\"lime\">{_num(gain, 2, True)}</b> pts THIS WEEK"),
+            ("Displaces", displ),
+            ("Cost", f"drop <b>{_e(c.drop.name)}</b> ({_e(c.drop.position)}, "
+                     f"{_e(c.drop.lineup)}, {_num(c.drop.value, 2)} projected this week)"),
+            ("Alternatives", alts),
+            ("Coverage after", _e(_coverage_after(d.roster, c))),
+            ("Deadline", _e(note)),
+            ("Availability", f"<span class=\"badge held\">UNVERIFIED</span> " + _e(elig.verify)),
+            ("Status", ("<span class=\"badge cond\">CONDITIONAL — if available</span> the arithmetic "
+                        "is current; endorsed only if Sleeper shows him available" if waiver_ok else
+                        "<span class=\"badge held\">WITHHELD</span> the inputs behind this "
+                        "comparison are stale; it is the last known picture, not advice")),
+        ]
+    elif c.versus is not None:
+        pairs += [
+            ("Versus", f"your cheapest droppable {_e(c.versus.position)}: <b>{_e(c.versus.name)}</b> "
+                       f"({_num(c.versus.value, 2)} this week); gap "
+                       f"<b>{_num(c.gap, 2, True)}</b>"),
+            ("Lineup", "unchanged this week — no starter is displaced, so there is no "
+                       "gain to show and no drop is proposed"),
+            ("Future value", "not priced here (byes, injuries, role): a rest-of-season model "
+                             "does not exist in this repo and is not invented on this page"),
+        ]
+    kick = (f"kicks off {a.kickoff.astimezone(timezone.utc):%a %d %b %H:%M} UTC"
+            if a.kickoff and not a.locked else (a.lock_note or "lock state unknown"))
+    pairs.append(("Lock", _e(kick)))
+    pairs.append(("Evidence", _e(f"league snapshot {d.snapshot_as_of}; projections from box "
+                                 f"scores through week {d.context.stats_through}")))
+    if pr.usable:
+        pairs.append(("Projection", f"{_num(pr.mean, 2)} ± {_num(pr.sd, 2)} "
+                                    f"<details><summary class=\"small\">why</summary>"
+                                    f"<pre>{_e(pr.explain())}</pre></details>"))
+    elif pr.reasons:
+        pairs.append(("Projection", _e("abstained: " + "; ".join(pr.reasons))))
+    attrs = (f"data-id=\"{_e(a.sleeper_id)}\" data-pos=\"{_e(a.position)}\" "
+             f"data-verdict=\"{_e(c.verdict)}\" data-proj=\"{pr.mean if pr.usable else ''}\" "
+             f"data-gain=\"{'' if gain is None else gain}\" data-gap=\"{'' if c.gap is None else c.gap}\" "
+             f"data-name=\"{_e(a.name.lower())}\" data-team=\"{_e(a.team.lower())}\" data-order=\"{order}\"")
+    return (f"<li class=\"rrow\" {attrs}><details><summary>"
+            f"<span><span class=\"rname\">{_e(a.name)}</span> {badge}<br>"
+            f"<span class=\"rmeta\">{meta}</span></span>"
+            f"<span class=\"rnum\">{head_num}</span></summary>"
+            f"<div class=\"rbody\">{_dl(pairs)}</div></details></li>")
+
+
+def _radar_html(d: Dashboard) -> str:
+    b = d.board
+    out = ["<h2 id=\"free-agents\">5. Free Agent Radar — every available player against your "
+           "roster</h2><div class=\"card\">"]
+    waiver_ok = d.gate.allows("waiver")
+    if not waiver_ok:
+        out.append(f"<div class=\"gatebox\">{_e(d.gate.banner('waiver'))}</div>")
+    out.append(f"<p class=\"small sub\">Compared against your roster as of the league snapshot "
+               f"{_e(d.snapshot_as_of)}, with projections from box scores through week "
+               f"{d.context.stats_through}. Every verdict is for WEEK {d.context.report_week} "
+               f"only. A player on any roster in that snapshot is never listed; one claimed "
+               f"since it was taken still is, which is why availability stays UNVERIFIED.</p>")
+    projected = sum(1 for p in d.pool if p.projected)
+    lineup_n = sum(1 for c in b.candidates if c.verdict == LINEUP)
+    out.append("<div class=\"kpi\">"
+               f"<div>pool<b>{b.pool_size}</b></div>"
+               f"<div>with a projection<b>{projected}</b></div>"
+               f"<div>compared to lineup<b>{b.evaluated}</b></div>"
+               f"<div>missing evidence<b>{b.unprojected}</b></div>"
+               f"<div>lineup gains<b class=\"{'lime' if lineup_n else ''}\">{lineup_n}</b></div></div>")
+    if b.positions:
+        out.append("<p class=\"small sub\">By position: " + " · ".join(
+            f"<b>{_e(pc.position)}</b> {pc.pool} in pool, {pc.projected} projected, "
+            f"{pc.evaluated} compared, {pc.unprojected} without evidence"
+            + (f", {pc.locked} locked" if pc.locked else "")
+            + (f", {pc.unknown_lock} lock unknown" if pc.unknown_lock else "")
+            for pc in b.positions) + ".</p>")
+    if b.abstained:
+        out.append(f"<p class=\"bad\"><b>ABSTAINED:</b> {_e(b.abstained)}</p>")
+
+    rc = d.radar_changes
+    out.append("<h3>Since the last record</h3>")
+    if rc is None:
+        out.append("<p class=\"sub small\">No comparison was attempted.</p>")
+    else:
+        out.append(f"<p class=\"small\"><b>{_e(rc.summary())}</b></p>")
+        if rc.comparable and rc.refreshed:
+            out.append("<p class=\"small sub\">Refreshed inputs: " + _e("; ".join(rc.refreshed))
+                       + ". A newer timestamp is not a change in the numbers; the list below "
+                         "is the numbers.</p>")
+        if rc.items:
+            out.append("<ul class=\"chg small\">" + "".join(
+                f"<li><span class=\"badge\">{_e(c.kind)}</span> <b>{_e(c.subject)}</b>: "
+                f"{_e(c.detail)}</li>" for c in rc.items[:30]) + "</ul>")
+            if len(rc.items) > 30:
+                out.append(f"<p class=\"small sub\">{len(rc.items) - 30} further change(s) in "
+                           f"the archive record.</p>")
+        out.append("<p class=\"small sub\">Like for like: the previous decision-time record's "
+                   "radar block against this one, by player id. Nothing is recomputed; a "
+                   "first run or a week rollover is reported as no comparison, never as "
+                   "movement.</p>")
+
+    positions = sorted({c.add.position for c in b.candidates}) or ["QB", "RB", "WR", "TE", "K"]
+    out.append("<h3>Candidates</h3>")
+    out.append("<div class=\"controls\">"
+               "<div><label for=\"radar-q\">Search</label>"
+               "<input type=\"search\" id=\"radar-q\" placeholder=\"player or team\" autocomplete=\"off\"></div>"
+               "<div><label for=\"radar-v\">Show</label><select id=\"radar-v\">"
+               "<option value=\"\">every verdict</option>"
+               "<option value=\"LINEUP\">lineup gains</option>"
+               "<option value=\"RESEARCH\">research (same position)</option>"
+               "<option value=\"COVERAGE\">no comparison</option>"
+               "<option value=\"BELOW\">below cheapest droppable</option>"
+               "<option value=\"LOCKED\">locked this week</option>"
+               "<option value=\"UNRANKED\">under the cap</option></select></div>"
+               "<div><label for=\"radar-s\">Sort</label><select id=\"radar-s\">"
+               "<option value=\"verdict\">verdict, then gain</option>"
+               "<option value=\"gain\">lineup gain</option>"
+               "<option value=\"proj\">projection</option>"
+               "<option value=\"gap\">gap vs your cheapest droppable</option>"
+               "<option value=\"name\">name</option></select></div></div>")
+    out.append("<div class=\"chips\" id=\"radar-pos\" role=\"group\" aria-label=\"Position\">"
+               "<button type=\"button\" data-pos=\"\" aria-pressed=\"true\">All</button>"
+               + "".join(f"<button type=\"button\" data-pos=\"{_e(p)}\" aria-pressed=\"false\">{_e(p)}</button>"
+                         for p in positions) + "</div>")
+    out.append(f"<p class=\"small sub\" id=\"radar-count\">Showing {len(b.candidates)} of "
+               f"{len(b.candidates)} listed candidates; {b.unprojected} more are in the pool "
+               f"without a projection and are not listed.</p>")
+    elig = eligibility(snapshot_as_of=d.snapshot_as_of)
+    if b.candidates:
+        out.append("<ol class=\"radar\" id=\"radar-list\">"
+                   + "".join(_radar_row(d, c, elig, waiver_ok, i) for i, c in enumerate(b.candidates))
+                   + "</ol>")
+    else:
+        out.append("<p class=\"sub\">No available player carries a projection this week, so "
+                   "there is nothing to compare.</p>")
+    out.append("<p class=\"small sub\" id=\"radar-empty\" hidden>No candidate matches these "
+               "filters.</p>")
+    out.append("<p class=\"small warn\">Availability is UNVERIFIED for every row and cannot be "
+               "anything else from this cache: the snapshot proves only that the player is on "
+               "no roster at its as-of. Whether he is a free agent or sitting on waivers, and "
+               "when a claim would process, live in Sleeper\u2019s transactions feed, which this "
+               "repo does not pull. Check in the app before bidding.</p>")
+    out.append("<p class=\"small sub\">Only a LINEUP verdict is a move, and it is CONDITIONAL "
+               "on availability. Raw points across positions rank nothing here; a same-position "
+               "gap is research; a locked player cannot enter this week's lineup. Filters and "
+               "sort are kept across a reload on this device.</p>")
+    if b.droppable:
+        out.append("<p class=\"small sub\">Drop candidates, cheapest to lose first: "
+                   + ", ".join(f"{_e(p.name)} ({_num(p.value)})" for p in b.droppable[:5])
+                   + " — one week of projected points, not roster value.</p>")
+    if b.protected:
+        out.append("<details><summary>Protected from the drop list ("
+                   + str(len(b.protected)) + ")</summary><ul class=\"small\">"
+                   + "".join(f"<li><b>{_e(p.name)}</b> ({_e(p.position)}, {_e(p.lineup)}): {_e(r)}</li>"
+                             for p, r in b.protected) + "</ul>"
+                   "<p class=\"small sub\">These are never offered as an automatic drop. A "
+                   "player projected 0 because he is hurt, suspended or on a bye is not a "
+                   "player worth 0, and pricing him properly needs a rest-of-season model "
+                   "this repo does not have and will not fake (rule #5).</p></details>")
+    for n in b.notes:
+        out.append(f"<p class=\"small sub\">{_e(n)}</p>")
+    out.append("</div>")
+    return "".join(out)
+
+
+#: Filters, search and sort over the server-rendered rows. No data is
+#: fetched; the rows carry their numbers as data attributes. The chosen
+#: filters live in sessionStorage so a reload (the snapshot banner's, or the
+#: reader's) does not erase them. Without JavaScript every row is shown in
+#: the build's order, LINEUP first.
+_RADAR_JS = r"""
+(function(){
+'use strict';
+var list=document.getElementById('radar-list'), q=document.getElementById('radar-q'), v=document.getElementById('radar-v'),
+    s=document.getElementById('radar-s'), chips=document.getElementById('radar-pos'), count=document.getElementById('radar-count'),
+    empty=document.getElementById('radar-empty');
+if(!list||!q||!v||!s||!chips) return;
+var KEY='gridiron:radar:'+(document.querySelector('meta[name="gridiron-build"]')||{getAttribute:function(){return '';}}).getAttribute('data-page');
+var RANK={LINEUP:0,RESEARCH:1,COVERAGE:2,BELOW:3,LOCKED:4,UNKNOWN:5,UNRANKED:6};
+var state={q:'',verdict:'',sort:'verdict',pos:''}, rows=Array.prototype.slice.call(list.querySelectorAll('li.rrow')), total=rows.length;
+function num(x){ var n=parseFloat(x); return isNaN(n)?null:n; }
+function load(){ try{ var raw=sessionStorage.getItem(KEY); if(raw){ var o=JSON.parse(raw); ['q','verdict','sort','pos'].forEach(function(k){ if(typeof o[k]==='string') state[k]=o[k]; }); } }catch(e){} }
+function save(){ try{ sessionStorage.setItem(KEY,JSON.stringify(state)); }catch(e){} }
+function cmp(a,b){ var k=state.sort, x, y;
+  function d(el,n){ return el.getAttribute('data-'+n); }
+  if(k==='name'){ x=d(a,'name'); y=d(b,'name'); return x<y?-1:x>y?1:0; }
+  if(k==='gain'||k==='proj'||k==='gap'){ x=num(d(a,k)); y=num(d(b,k)); if(x===null&&y===null) return 0; if(x===null) return 1; if(y===null) return -1; return y-x; }
+  x=RANK[d(a,'verdict')]; y=RANK[d(b,'verdict')]; if(x===undefined) x=9; if(y===undefined) y=9; if(x!==y) return x-y;
+  return num(d(a,'order'))-num(d(b,'order')); }
+function apply(){ var needle=state.q.trim().toLowerCase(), shown=0;
+  rows.slice().sort(cmp).forEach(function(r){ list.appendChild(r); });
+  rows.forEach(function(r){ var ok=true;
+    if(state.pos&&r.getAttribute('data-pos')!==state.pos) ok=false;
+    if(ok&&state.verdict&&r.getAttribute('data-verdict')!==state.verdict) ok=false;
+    if(ok&&needle){ var hay=(r.getAttribute('data-name')||'')+' '+(r.getAttribute('data-team')||''); if(hay.indexOf(needle)<0) ok=false; }
+    if(ok){ r.removeAttribute('hidden'); shown+=1; } else r.setAttribute('hidden',''); });
+  if(count){ var extra=count.getAttribute('data-extra')||''; count.textContent='Showing '+shown+' of '+total+' listed candidates'+(extra?'; '+extra:'')+'.'; }
+  if(empty){ if(shown) empty.setAttribute('hidden',''); else empty.removeAttribute('hidden'); }
+  Array.prototype.forEach.call(chips.querySelectorAll('button'),function(b){ b.setAttribute('aria-pressed',(b.getAttribute('data-pos')||'')===state.pos?'true':'false'); });
+  if(q.value!==state.q) q.value=state.q; if(v.value!==state.verdict) v.value=state.verdict; if(s.value!==state.sort) s.value=state.sort;
+  save(); return shown; }
+if(count){ var m=/;\s*(.*)\.$/.exec(count.textContent||''); if(m) count.setAttribute('data-extra',m[1]); }
+load();
+q.addEventListener('input',function(){ state.q=q.value; apply(); });
+v.addEventListener('change',function(){ state.verdict=v.value; apply(); });
+s.addEventListener('change',function(){ state.sort=s.value; apply(); });
+chips.addEventListener('click',function(e){ var b=e.target&&e.target.closest?e.target.closest('button'):null; if(!b||!chips.contains(b)) return; state.pos=b.getAttribute('data-pos')||''; apply(); });
+apply();
+window.gridironRadar={apply:apply,state:function(){ return state; },set:function(o){ o=o||{}; ['q','verdict','sort','pos'].forEach(function(k){ if(typeof o[k]==='string') state[k]=o[k]; }); return apply(); },total:total};
+})();
+"""
+
+
 def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     ctx = d.context
     m = d.matchup
     title = f"Week {ctx.report_week} decision dashboard"
     if include_names:
         title += f" — {d.league_name}"
+    nonce = secrets.token_urlsafe(16)
+    generated_iso = d.generated.astimezone(timezone.utc).isoformat(timespec="seconds")
+    src_by = {x.name: x for x in d.sources}
+
+    def iso(name: str) -> str | None:
+        x = src_by.get(name)
+        return (x.as_of.astimezone(timezone.utc).isoformat(timespec="seconds")
+                if x is not None and x.as_of else None)
+
+    def when(name: str) -> str:
+        x = src_by.get(name)
+        if x is None or x.as_of is None:
+            return "never pulled"
+        return (x.as_of.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                + ("" if x.status is Status.FRESH else f" ({x.status.value.upper()})"))
+
     out: list[str] = [
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
-        f"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{_e(title)}</title>",
-        f"<style>{_CSS}</style></head><body><main>",
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        # The board fetches nothing but its own URL (the published-build
+        # check) and runs only its own two scripts.
+        f"<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+        f"connect-src 'self'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+        f"base-uri 'none'; form-action 'none'\">",
+        theme.build_meta(generated_iso, "dashboard_latest.html"),
+        f"<title>{_e(title)}</title>",
+        f"<style nonce=\"{nonce}\">{_CSS}</style></head><body><main>",
+        theme.nav_html("board"),
         f"<h1>{_e(title)}</h1>",
-        f"<div class=\"sub\">{_e(ctx.headline())} · evidence boundary week {ctx.evidence_boundary} · "
-        f"generated {_e(d.generated.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'))}</div>",
+        f"<div class=\"sub\">{_e(ctx.headline())} · evidence boundary week {ctx.evidence_boundary}</div>",
+        "<div class=\"ages\">"
+        + theme.age_span("League snapshot", iso("sleeper_league"), when("sleeper_league"))
+        + theme.age_span("Projections", iso("weekly_stats"),
+                         f"box scores through week {ctx.stats_through}, pulled {when('weekly_stats')}")
+        + theme.age_span("Designations", iso("sleeper_players"), when("sleeper_players"))
+        + theme.age_span("Page built", generated_iso,
+                         d.generated.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
+        + "</div>",
+        theme.snapshot_html(),
         f"<div class=\"sub small\">{_e(BASELINE_LABEL)}</div>",
-        # The one Game Day entry in the product: the live-scoring page is
-        # built beside this file by scripts/weekly/gameday.py.
-        "<p><a href=\"gameday_latest.html\"><b>Game Day →</b></a> <span class=\"small sub\">"
-        "the Sunday screen: platform score, who is yet to play, what is still legal, "
-        "what changed, and what this board advised (opens the file built beside "
-        "this one)</span></p>",
     ]
     if d.degraded:
         out.append("<div class=\"banner\"><b class=\"bad\">DEGRADED</b> — one or more inputs "
@@ -1311,6 +1582,14 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    + (f"; still open: {_e('; '.join(nd.open_starters))}" if nd.open_starters
                       else "; nothing on this week's lineup can still change")
                    + ".</p>")
+    rc = d.radar_changes
+    ch0 = d.changes
+    roster_line = ("no earlier record to compare against" if ch0 is None else
+                   (f"{len(ch0.items)} roster/lineup change(s) since {ch0.previous}"
+                    if ch0.any else f"roster, lineup and projections unchanged since {ch0.previous}"))
+    out.append("<p class=\"small\"><b>What changed:</b> " + _e(roster_line) + " · "
+               + (_e(rc.summary()) if rc is not None else "free-agent pool not compared")
+               + " <a href=\"#free-agents\">Free Agents ↓</a></p>")
     if d.actions and not live and not cond:
         out.append("<div class=\"gatebox\"><b class=\"bad\">No action is endorsed on "
                    "this data.</b> Every item below is WITHHELD: the inputs behind it "
@@ -1488,59 +1767,8 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                "accept it now: position-eligible, both players proven unlocked, nobody "
                "promoted off IR.</p></div>")
 
-    # --------------------------------------------------------- 5. acquisitions
-    out.append("<h2>5. Acquisitions — shortlist, with what each one costs</h2><div class=\"card\">")
-    b = d.board
-    if not d.gate.allows("waiver"):
-        out.append(f"<div class=\"gatebox\">{_e(d.gate.banner('waiver'))}</div>")
-    out.append(f"<p class=\"small sub\">pool {b.pool_size} unrostered players; {b.evaluated} "
-               f"evaluated for a lineup change; {b.unprojected} without a projection "
-               f"(counted, never ranked).</p>")
-    if b.abstained:
-        out.append(f"<p class=\"bad\"><b>ABSTAINED:</b> {_e(b.abstained)}</p>")
-    elif not b.upgrades:
-        out.append("<p class=\"ok\">No available player improves this week's best legal "
-                   "lineup.</p>")
-    else:
-        rows = []
-        for u in b.upgrades[:12]:
-            alts = ("; ".join(f"{_e(dp.name)} ({_num(g, 2, True)})" for dp, g in u.alternatives)
-                    or "none")
-            rows.append([_e(u.add.name) + f" <span class=\"sub\">({_e(u.add.position)}, {_e(u.add.team)})</span>",
-                         _num(u.add.value),
-                         "<span class=\"badge held\">UNVERIFIED</span>",
-                         _e(u.drop.name) + f" <span class=\"sub\">({_e(u.drop.position)}, {_e(u.drop.lineup)})</span>",
-                         _num(u.drop.value), _e(u.slot or "—"),
-                         _e(u.displaces.name if u.displaces else "—"),
-                         _num(u.lineup_gain, 2, True), alts])
-        out.append(_table(["add", "proj", "addable?", "drop (the cost)", "proj",
-                           "enters", "displaces", "Δ lineup", "other feasible drops"],
-                          rows, numeric=(1, 4, 7)))
-        out.append("<p class=\"small sub\">Only pairs that improve THIS WEEK's best legal "
-                   "lineup are listed. A raw point difference between two players at "
-                   "different positions is not a gain and ranks nothing here.</p>")
-        out.append("<p class=\"small warn\">\"Addable?\" is UNVERIFIED for every row and "
-                   "cannot be anything else from this cache: the snapshot proves only that "
-                   "the player is on no roster at its as-of. Whether he is a free agent or "
-                   "sitting on waivers, and when a claim would process, live in Sleeper\u2019s "
-                   "transactions feed, which this repo does not pull. Check in the app "
-                   "before bidding.</p>")
-        if b.droppable:
-            out.append("<p class=\"small sub\">Drop candidates, cheapest to lose first: "
-                       + ", ".join(f"{_e(p.name)} ({_num(p.value)})" for p in b.droppable[:5])
-                       + " — one week of projected points, not roster value.</p>")
-    if b.protected:
-        out.append("<details open><summary><b>Protected from the drop list ("
-                   + str(len(b.protected)) + ")</b></summary><ul class=\"small\">"
-                   + "".join(f"<li><b>{_e(p.name)}</b> ({_e(p.position)}, {_e(p.lineup)}): {_e(r)}</li>"
-                             for p, r in b.protected) + "</ul>"
-                   "<p class=\"small sub\">These are never offered as an automatic drop. A "
-                   "player projected 0 because he is hurt, suspended or on a bye is not a "
-                   "player worth 0, and pricing him properly needs a rest-of-season model "
-                   "this repo does not have and will not fake (rule #5).</p></details>")
-    for n in b.notes:
-        out.append(f"<p class=\"small sub\">{_e(n)}</p>")
-    out.append("</div>")
+    # ------------------------------------------------ 5. free agent radar
+    out.append(_radar_html(d))
 
     # ------------------------------------------------------------- 6. roster
     slot_of = {}
@@ -1634,5 +1862,9 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    "see data that arrived after the decision.</p>")
     else:
         out.append("<p class=\"sub\">Archive not written (dry run).</p>")
-    out.append("</div></main></body></html>")
+    out.append("</div>")
+    out.append(f"<script nonce=\"{nonce}\">{theme.AGES_JS}</script>")
+    out.append(f"<script nonce=\"{nonce}\">{theme.SNAPSHOT_JS}</script>")
+    out.append(f"<script nonce=\"{nonce}\">{_RADAR_JS}</script>")
+    out.append("</main></body></html>")
     return "\n".join(out)

@@ -57,6 +57,7 @@ import pandas as pd
 
 from gridiron.decisions import (ARCHIVE_RE, list_archives, read_archive,
                                 record_digest)
+from gridiron import theme
 from gridiron.freshness import CADENCES, LEAGUE_TZ, SourceFreshness, Status
 from gridiron.ids import TEAM_ALIASES, is_dst_id, nflverse_team, normalize_id
 from gridiron.league_config import FLEX_ELIGIBLE, LEAGUE_NAME
@@ -549,6 +550,12 @@ class PregameView:
     #: Archives of this season and week that were seen and NOT used as
     #: evidence, each with the reason: untagged, future, altered, malformed.
     context: tuple[str, ...] = field(default=())
+    #: What the pregame board's Free Agent Radar found, summarised from the
+    #: record's own block: counts, its snapshot as-of, and the LINEUP
+    #: candidates by name with their gain and drop. Empty when the record
+    #: predates the radar. Never re-evaluated here: a pickup is not a
+    #: game-day move, and this page says what the board said.
+    radar: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def found(self) -> bool:
@@ -562,7 +569,7 @@ class PregameView:
                 "withheld": list(self.withheld),
                 "designation_changes": list(self.designation_changes),
                 "tagged": self.tagged, "records": list(self.records),
-                "context": list(self.context)}
+                "context": list(self.context), "radar": dict(self.radar)}
 
 
 @dataclass(frozen=True)
@@ -1142,9 +1149,13 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
                                          empty_slots=[s.slot for s in mine.starters if s.empty],
                                          superseded=superseded))
         outcomes = _outcomes(actions, by_id, starter_ids)
+    radar_summary: dict = {}
+    if matches:
+        radar_summary = summarise_radar(primary.record.get("radar"))
     pregame = PregameView(path, generated, pnote, tuple(actions), tuple(outcomes),
                           projection, withheld, tuple(desig_changes), bool(matches),
-                          tuple(_stamp(m.generated) for m in matches), context)
+                          tuple(_stamp(m.generated) for m in matches), context,
+                          radar=radar_summary)
 
     # ---- since the last game-day snapshot (server-side, like for like)
     partial = {"season": season, "week": week, "league_id": league_id,
@@ -1165,6 +1176,29 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
     return GameDay(int(season), int(week), str(league_id), my_rid, now, tuple(sources),
                    score, feed, cap, tuple(actions), pregame, changes, tuple(notes),
                    slots, embedded, state_week=state_week)
+
+
+def summarise_radar(block: object) -> dict:
+    """The board's radar, reduced to what Game Day shows: counts, the
+    snapshot it was compared against, and the LINEUP candidates. Read as
+    data; a record without the block yields {} and the page says so."""
+    if not isinstance(block, Mapping):
+        return {}
+    counts = block.get("counts") if isinstance(block.get("counts"), Mapping) else {}
+    moves = []
+    for c in block.get("candidates") or []:
+        if not isinstance(c, Mapping) or c.get("verdict") != "LINEUP":
+            continue
+        drop = c.get("drop") if isinstance(c.get("drop"), Mapping) else {}
+        moves.append({"id": str(c.get("id") or ""), "name": str(c.get("name") or ""),
+                      "position": str(c.get("position") or ""),
+                      "lineup_gain": _num(c.get("lineup_gain")), "slot": str(c.get("slot") or ""),
+                      "drop": str(drop.get("name") or ""), "drop_id": str(drop.get("id") or "")})
+    return {"snapshot_as_of": str(block.get("snapshot_as_of") or ""),
+            "pool": _num(counts.get("pool")), "projected": _num(counts.get("projected")),
+            "evaluated": _num(counts.get("evaluated")),
+            "unprojected": _num(counts.get("unprojected")),
+            "abstained": str(block.get("abstained") or ""), "moves": moves[:5]}
 
 
 def _judge_action(raw: Mapping[str, object], *, generated: datetime | None, now: datetime,
@@ -1425,61 +1459,28 @@ def _embedded(*, season, week, league_id, my_rid, slots, mine_row, opp_row, my, 
 # --------------------------------------------------------------------------
 # HTML
 # --------------------------------------------------------------------------
-_CSS = """
-:root{--bg:#fafaf7;--fg:#1c1c1c;--muted:#5d5d5d;--line:#d9d6ce;--card:#ffffff;
---ok:#2f7d32;--warn:#b26a00;--bad:#b3261e;--info:#2a5db0;--chip:#eeece6;--focus:#2a5db0;}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#15161a;--fg:#e8e6e1;
---muted:#a3a19b;--line:#33363d;--card:#1d1f25;--chip:#2a2d34;--ok:#6fbf73;--warn:#e0a24a;
---bad:#ef6f66;--info:#7fa6e8;--focus:#9cc0ff;}}
-:root[data-theme="dark"]{--bg:#15161a;--fg:#e8e6e1;--muted:#a3a19b;--line:#33363d;
---card:#1d1f25;--chip:#2a2d34;--ok:#6fbf73;--warn:#e0a24a;--bad:#ef6f66;--info:#7fa6e8;--focus:#9cc0ff;}
-*{box-sizing:border-box}html,body{max-width:100%}
-body{margin:0;padding:16px;background:var(--bg);color:var(--fg);
-font:16px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;overflow-wrap:anywhere}
-main{max-width:860px;margin:0 auto}
-h1{font-size:22px;margin:0 0 2px}h2{font-size:17px;margin:24px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
-h3{font-size:16px;margin:8px 0 4px}p{margin:6px 0}.sub{color:var(--muted)}.small{font-size:13px}
-a{color:var(--info)}
-.nav{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:4px 0 10px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
-.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;
-border:1px solid var(--line);background:var(--chip);letter-spacing:.02em;white-space:nowrap}
-.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.warn{color:var(--warn);border-color:var(--warn)}
-.pill.bad{color:var(--bad);border-color:var(--bad)}.pill.info{color:var(--info);border-color:var(--info)}
-.pill.solid{background:var(--info);color:#fff;border-color:transparent}
-.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.info{color:var(--info)}
-button{font:inherit;font-weight:600;padding:8px 14px;border-radius:8px;border:1px solid var(--info);
-background:var(--info);color:#fff;cursor:pointer;min-height:40px}
-button[disabled]{opacity:.55;cursor:default}
-button:focus-visible,summary:focus-visible,a:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+_CSS = theme.CSS + """
 .modebar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
 .status{min-height:1.4em}
 .score{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;text-align:center}
-.score .who{font-size:13px;color:var(--muted)}.score .pts{font-size:34px;font-weight:700;
-font-variant-numeric:tabular-nums;line-height:1.1}.score .vs{color:var(--muted);font-size:13px}
-.lead{font-size:18px;font-weight:700;text-align:center;margin:8px 0 2px}
+.score .who{font-size:12px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+.score .pts{font-size:44px;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.05;letter-spacing:-.02em}
+.score .vs{color:var(--dim);font-size:12px;letter-spacing:.1em;text-transform:uppercase}
+.lead{font-size:20px;font-weight:800;text-align:center;margin:10px 0 2px}
 .settle{text-align:center}
 .roster{list-style:none;margin:0;padding:0}
-.roster li{display:grid;grid-template-columns:3.4em 1fr auto;gap:2px 8px;padding:7px 0;border-bottom:1px solid var(--line);align-items:start}
+.roster li{display:grid;grid-template-columns:3.6em 1fr auto;gap:2px 10px;padding:9px 0;border-bottom:1px solid var(--line);align-items:start}
 .roster li:last-child{border-bottom:0}
-.roster .slot{font-weight:700;color:var(--muted);font-size:13px;padding-top:2px}
-.roster .name{font-weight:600}.roster .meta{grid-column:2/4;font-size:13px;color:var(--muted)}
-.roster .pts{font-variant-numeric:tabular-nums;font-weight:700;text-align:right;white-space:nowrap}
+.roster .slot{font-weight:800;color:var(--dim);font-size:12px;padding-top:3px;letter-spacing:.06em}
+.roster .name{font-weight:700}.roster .meta{grid-column:2/4;font-size:13px;color:var(--muted)}
+.roster .pts{font-variant-numeric:tabular-nums;font-weight:800;text-align:right;white-space:nowrap;font-size:17px}
 .roster .pts.unk{color:var(--muted);font-weight:500}
-.st{font-weight:700;font-size:12px}.st.NOTSTARTED{color:var(--info)}.st.PLAYING{color:var(--ok)}
+.st{font-weight:800;font-size:11.5px;letter-spacing:.06em}.st.NOTSTARTED{color:var(--cyan)}.st.PLAYING{color:var(--lime)}
 .st.FINAL{color:var(--muted)}.st.SUSPENDED,.st.UNKNOWN,.st.CANCELED{color:var(--warn)}.st.EMPTY{color:var(--bad)}
-.act{border:1px solid var(--line);border-left:5px solid var(--ok);border-radius:8px;padding:10px 12px;margin:8px 0;background:var(--card)}
-.act.off{border-left-color:var(--line);border-left-style:dashed}
-.act h3{margin:2px 0 4px}.act .why{font-size:13px;color:var(--muted)}
-.banner{border-left:5px solid var(--warn);padding:8px 12px;margin:10px 0;background:var(--card);border-radius:0 8px 8px 0}
-.banner.bad{border-left-color:var(--bad)}.banner.ok{border-left-color:var(--ok)}
-ul{margin:6px 0;padding-left:20px}details{margin:6px 0}summary{cursor:pointer;color:var(--info);padding:4px 0}
-code{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
-.chg li{margin:2px 0}
-.hidden{display:none}
-@media (max-width:560px){body{padding:12px}main{max-width:100%}h1{font-size:20px}
-.score .pts{font-size:30px}.card{padding:10px 11px}.act{padding:9px 10px}}
-@media print{button{display:none}details{display:block}details>*{display:block}}
+.act h3{margin:6px 0 4px}
+.chg li{margin:3px 0}
+.moves li{margin:4px 0}
+@media (max-width:560px){.score .pts{font-size:36px}}
 """
 
 
@@ -1592,13 +1593,26 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
         # The policy is the request fan-out guard: the page may talk to the
         # Sleeper hosts it names and to nothing else, run only its own script,
         # load no image, font or frame, and submit no form anywhere.
+        # 'self' is the published-build check: a conditional GET of this
+        # page's own URL on the hosting origin, and nothing else.
         f"<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
-        f"connect-src {_e(bases)}; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+        f"connect-src 'self' {_e(bases)}; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
         f"base-uri 'none'; form-action 'none'\">",
+        theme.build_meta(d.generated.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                         "gameday_latest.html"),
         f"<title>{_e(title)}</title><style nonce=\"{nonce}\">{_CSS}</style></head><body><main>",
+        theme.nav_html("gameday"),
         f"<h1>{_e(title)}</h1>",
-        "<div class=\"nav small\"><a href=\"dashboard_latest.html\">← pregame board</a>"
-        f"<span class=\"sub\">season {d.season} · roster #{_e(d.my_roster_id)}</span></div>",
+        f"<div class=\"sub small\">season {d.season} · roster #{_e(d.my_roster_id)}</div>",
+        "<div class=\"ages\">"
+        + theme.age_span("Live scores", None, "snapshot until you tap Refresh")
+        + theme.age_span("League snapshot", s.as_of.astimezone(timezone.utc).isoformat(timespec="seconds") if s.as_of else None,
+                         _stamp(s.as_of) if s.as_of else "no as-of")
+        + theme.age_span("Designations", d.embedded.get("players_as_of"),
+                         _stamp(_parse_dt(d.embedded.get("players_as_of"))) if d.embedded.get("players_as_of") else "never pulled")
+        + theme.age_span("Page built", d.generated.astimezone(timezone.utc).isoformat(timespec="seconds"), _stamp(d.generated))
+        + "</div>",
+        theme.snapshot_html(),
         "<div class=\"modebar\" id=\"gd-mode\">"
         "<span class=\"pill\" id=\"gd-modepill\">SNAPSHOT</span>"
         f"<span id=\"gd-asof\" class=\"small\">{_e(s.as_of_note)}</span>"
@@ -1655,6 +1669,38 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
     out.append("<p class=\"small sub\">Legal means: both players proven unlocked by the "
                "schedule, not under way per the feed, still on the roster and still where "
                "the advice left them. Nothing is ever submitted to Sleeper.</p></div>")
+
+    # 2b. what the board's radar found — the board's finding, not a re-judgement
+    p = d.pregame
+    r = p.radar
+    out.append("<h2>Free agents — what the pregame board found</h2><div class=\"card\" id=\"gd-radar\">")
+    if not p.found:
+        out.append("<p class=\"sub\">No pregame record, so no radar to report.</p>")
+    elif not r:
+        out.append("<p class=\"sub\">The pregame record predates the Free Agent Radar and carries "
+                   "no pool comparison.</p>")
+    else:
+        moves = r.get("moves") or []
+        def n(key: str) -> str:
+            v = r.get(key)
+            return str(int(v)) if isinstance(v, (int, float)) else "?"
+        out.append(f"<p><b>{len(moves)} available player(s) improved that week's lineup</b> on the "
+                   f"board's arithmetic, out of {n('evaluated')} compared "
+                   f"(pool {n('pool')}, {n('unprojected')} without a projection), "
+                   f"against the league snapshot of {_e(r.get('snapshot_as_of'))}.</p>")
+        if r.get("abstained"):
+            out.append(f"<p class=\"small warn\">The board abstained: {_e(r.get('abstained'))}</p>")
+        if moves:
+            out.append("<ul class=\"moves\">" + "".join(
+                f"<li><span class=\"pill ok\">LINEUP</span> <b>{_e(m['name'])}</b> ({_e(m['position'])}) "
+                f"into {_e(m['slot'])}: <span class=\"num lime\">{'+' if (m['lineup_gain'] or 0) > 0 else ''}{_pts(m['lineup_gain'])}</span> to the best "
+                f"legal lineup, at the cost of dropping {_e(m['drop'])} — conditional on availability, "
+                f"which the board could not verify</li>" for m in moves) + "</ul>")
+        out.append("<p class=\"small sub\">A pickup is not a game-day move: Sleeper processes "
+                   "claims on its own clock and this page never re-judges one. The full "
+                   "comparison, with every alternative drop, is the "
+                   "<a href=\"dashboard_latest.html#free-agents\">Free Agents</a> tab.</p>")
+    out.append("</div>")
 
     # 3. changes
     out.append("<h2>Since the last snapshot</h2><div class=\"card\" id=\"gd-changes\">")
@@ -1726,6 +1772,8 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
                "added to points already earned.</p></div>")
     out.append(f"<script type=\"application/json\" id=\"gd-data\">{_json_for_html(d.embedded)}</script>")
     out.append(f"<script nonce=\"{nonce}\">{_JS}</script>")
+    out.append(f"<script nonce=\"{nonce}\">{theme.AGES_JS}</script>")
+    out.append(f"<script nonce=\"{nonce}\">{theme.SNAPSHOT_JS}</script>")
     out.append("</main></body></html>")
     return "\n".join(out)
 

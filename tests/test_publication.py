@@ -154,10 +154,14 @@ def test_the_workflow_states_that_public_artifacts_and_caches_are_public():
     assert "private snapshot" not in SYNC and "any signed-in GitHub user" in SYNC
 
 
-def test_the_schedule_is_hourly_and_the_dispatch_input_is_still_data():
+def test_the_schedule_is_every_fifteen_minutes_and_the_dispatch_input_is_still_data():
+    """15 minutes is the floor GitHub honours only loosely; the workflow's
+    own comments say so, and the schedule stays a plain cron (no second
+    trigger, no matrix)."""
     on = _on_block(DASH)
     crons = re.findall(r"cron: '([^']+)'", on)
-    assert crons == ["41 * * * *"], crons
+    assert crons == ["7,22,37,52 * * * *"], crons
+    assert "AT BEST" in DASH and "QUEUED, not when it runs" in DASH
     assert "GRIDIRON_WEEK: ${{ inputs.week }}" in DASH
 
 

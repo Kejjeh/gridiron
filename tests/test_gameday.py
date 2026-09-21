@@ -685,7 +685,10 @@ def test_upstream_names_cannot_inject_markup_or_script(schedule):
 
 def test_the_page_may_only_talk_to_sleeper(schedule):
     html = build(schedule).to_html()
-    assert "connect-src https://api.sleeper.app;" in html
+    # 'self' is the published-build check (a GET of the page's own URL);
+    # the API origin is the only other host, and there is no wildcard.
+    assert "connect-src 'self' https://api.sleeper.app;" in html
+    assert "connect-src *" not in html and "https://api.sleeper.app https://" not in html
     assert "default-src 'none'" in html and "form-action 'none'" in html
     assert "nonce-" in html
 

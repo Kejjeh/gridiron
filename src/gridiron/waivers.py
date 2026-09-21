@@ -35,6 +35,18 @@ would produce, so two pickups that both want the same cheapest drop can be
 shown as the either/or they are rather than as two moves that can both be
 made.
 
+The RADAR (`WaiverBoard.candidates`) is the same evaluation written down for
+EVERY projected player in the pool, not only the ones that clear a bar, so
+the page can show the whole comparison the owner would otherwise make by
+hand: each candidate carries one verdict — LINEUP, RESEARCH, COVERAGE,
+BELOW (projects at or below the cheapest droppable player at his position;
+lineup unchanged), LOCKED (his game this week has started), UNKNOWN (his
+kickoff could not be established) or UNRANKED (projected, but under the
+per-position evaluation cap) — with the reason, and the like-for-like
+comparator where one exists. Verdicts are this week's only. A candidate the
+projection abstains on is counted as missing evidence and never listed with
+a number.
+
 Two things this module refuses to pretend to know, because getting either
 wrong costs a real roster spot:
 
@@ -163,6 +175,57 @@ class Watch:
                 f"and his value after this week is not priced here")
 
 
+#: Radar verdicts. Every projected pool player gets exactly one.
+LINEUP, RESEARCH, COVERAGE, BELOW = "LINEUP", "RESEARCH", "COVERAGE", "BELOW"
+LOCKED, UNKNOWN, UNRANKED = "LOCKED", "UNKNOWN", "UNRANKED"
+VERDICTS = (LINEUP, RESEARCH, COVERAGE, BELOW, LOCKED, UNKNOWN, UNRANKED)
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One projected pool player, compared against the roster THIS WEEK.
+
+    `verdict` says what the comparison found; `reason` says why in words.
+    Only a LINEUP candidate carries a drop, a slot and a displaced starter,
+    and its `lineup_gain` is > 0. A RESEARCH or BELOW candidate carries the
+    same-position comparator (`versus`) and the raw gap; a COVERAGE one has
+    no comparator at all. Nothing here prices a player beyond this week.
+    """
+
+    add: Player
+    verdict: str
+    reason: str
+    lineup_gain: float = 0.0
+    drop: Player | None = None
+    slot: str = ""
+    displaces: Player | None = None
+    alternatives: tuple[tuple[Player, float], ...] = field(default=())
+    versus: Player | None = None
+    gap: float | None = None
+
+    @property
+    def is_move(self) -> bool:
+        return self.verdict == LINEUP
+
+
+@dataclass(frozen=True)
+class PositionCoverage:
+    """How much of the pool at one position the board actually looked at."""
+
+    position: str
+    pool: int                 # unrostered, active, teamed players at this position
+    projected: int            # ...with a usable projection
+    evaluated: int            # ...compared against the lineup (movable, under the cap)
+    unprojected: int          # missing evidence: no projection, never ranked
+    locked: int               # projected, but his game this week has started
+    unknown_lock: int         # projected, but his kickoff could not be established
+
+    def record(self) -> dict:
+        return {"position": self.position, "pool": self.pool, "projected": self.projected,
+                "evaluated": self.evaluated, "unprojected": self.unprojected,
+                "locked": self.locked, "unknown_lock": self.unknown_lock}
+
+
 @dataclass(frozen=True)
 class Eligibility:
     """What the cache can and cannot prove about adding this player.
@@ -229,6 +292,11 @@ class WaiverBoard:
     watchlist: tuple[Watch, ...] = field(default=())
     #: Positions the board could not compare like for like, with the reason.
     coverage: tuple[str, ...] = field(default=())
+    #: The radar: every projected pool player with his verdict, LINEUP first
+    #: (largest gain), then RESEARCH by gap, then the rest by projection.
+    candidates: tuple[Candidate, ...] = field(default=())
+    #: Pool coverage per position, so the page can say what was NOT looked at.
+    positions: tuple[PositionCoverage, ...] = field(default=())
 
 
 #: How many watchlist rows per position. Research, so short.
@@ -311,31 +379,59 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
     projected = [p for p in pool if p.projected and p.movable]
     unprojected = pool_size - len([p for p in pool if p.projected])
     protected = protected_players(roster)
+    # The radar lists every projected player, so the ones that cannot enter
+    # this week's lineup are written down with the reason rather than dropped.
+    immovable: list[Candidate] = []
+    for p in pool:
+        if not p.projected or p.movable:
+            continue
+        if p.locked:
+            immovable.append(Candidate(p, LOCKED, "his game this week has kicked off "
+                                       f"({p.lock_note}); he cannot enter this week's lineup"))
+        else:
+            immovable.append(Candidate(p, UNKNOWN, "lock state UNKNOWN — "
+                                       f"{p.lock_note or 'his kickoff could not be established'}"
+                                       "; no move involving him can be shown legal"))
     if not locks_known:
-        return WaiverBoard((), pool_size, 0, unprojected, (), abstained=(
-            "lock state UNKNOWN — no schedule for this week, so whether a "
-            "pickup could legally enter the lineup cannot be verified"),
-            protected=protected)
+        why = ("lock state UNKNOWN — no schedule for this week, so whether a "
+               "pickup could legally enter the lineup cannot be verified")
+        cands = tuple(Candidate(p, UNKNOWN, why) for p in sorted(
+            (p for p in pool if p.projected), key=lambda p: -(p.value or 0.0)))
+        return WaiverBoard((), pool_size, 0, unprojected, (), abstained=why,
+                           protected=protected, candidates=cands,
+                           positions=_position_coverage(pool, cands))
     drops = droppable_players(roster)
     if not drops:
-        return WaiverBoard((), pool_size, 0, unprojected, (), abstained=(
-            f"no droppable player on the roster — all {len(protected)} candidate "
-            f"drop(s) are protected (locked, unprojected, or projected 0 only "
-            f"because they are not playing this week)"), protected=protected)
+        why = (f"no droppable player on the roster — all {len(protected)} candidate "
+               f"drop(s) are protected (locked, unprojected, or projected 0 only "
+               f"because they are not playing this week)")
+        cands = tuple(Candidate(p, COVERAGE, why + "; nothing to compare him against")
+                      for p in sorted(projected, key=lambda p: -(p.value or 0.0)))
+        cands = _sort_candidates(cands + tuple(immovable))
+        return WaiverBoard((), pool_size, 0, unprojected, (), abstained=why,
+                           protected=protected, candidates=cands,
+                           positions=_position_coverage(pool, cands))
 
     base_points, base_best = _best_points(roster, starters, slots)
     base_ids = [b.sleeper_id for b in base_best if b is not None]
 
-    # Top candidates per position by projection; the rest are counted.
+    # Top candidates per position by projection; the rest are counted, and
+    # listed on the radar as UNRANKED so the cap is visible rather than silent.
     by_pos: dict[str, list[Player]] = {}
+    unranked: list[Candidate] = []
     for p in sorted(projected, key=lambda p: (p.value or 0.0), reverse=True):
         by_pos.setdefault(p.position, [])
         if len(by_pos[p.position]) < CANDIDATES_PER_POSITION:
             by_pos[p.position].append(p)
+        else:
+            unranked.append(Candidate(
+                p, UNRANKED, f"projects below the top {CANDIDATES_PER_POSITION} available "
+                f"{p.position}s this week, so he was not compared against the lineup"))
     candidates = [p for ps in by_pos.values() for p in ps]
 
     upgrades: list[Upgrade] = []
     watchlist: list[Watch] = []
+    radar: list[Candidate] = []
     roster_ids = {p.sleeper_id for p in roster}
     cheapest_at: dict[str, Player] = {}
     for d in drops:                                   # drops are cheapest-first
@@ -375,20 +471,45 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
         if best_pair is not None and best_pair.lineup_gain > 0:
             others = tuple((d, g) for d, g in sorted(feasible, key=lambda t: -t[1])
                            if d.sleeper_id != best_pair.drop.sleeper_id)[:ALTERNATIVE_DROPS]
-            upgrades.append(Upgrade(best_pair.add, best_pair.drop, best_pair.lineup_gain,
-                                    best_pair.depth_gain, best_pair.slot,
-                                    best_pair.displaces, others))
+            u = Upgrade(best_pair.add, best_pair.drop, best_pair.lineup_gain,
+                        best_pair.depth_gain, best_pair.slot, best_pair.displaces, others)
+            upgrades.append(u)
+            who = (f", displacing {u.displaces.name}" if u.displaces is not None
+                   and u.displaces.sleeper_id != u.drop.sleeper_id else "")
+            radar.append(Candidate(
+                add, LINEUP, f"enters {u.slot}{who} for {u.lineup_gain:+.2f} to this week's "
+                f"best legal lineup, at the cost of dropping {u.drop.name} "
+                f"({u.drop.position}, {u.drop.value or 0.0:.2f})",
+                u.lineup_gain, u.drop, u.slot, u.displaces, others,
+                cheapest_at.get(add.position), None))
             continue
         # Lineup unchanged. A like-for-like comparison only: the cheapest
         # droppable player at the SAME position, or nothing.
         versus = cheapest_at.get(add.position)
         if versus is None:
+            radar.append(Candidate(
+                add, COVERAGE, f"would not change this week's lineup, and the roster has "
+                f"no droppable {add.position} to compare him against; whether a backup "
+                f"{add.position} is worth a roster spot is not priced here"))
             continue
         gap = round(float(add.value or 0.0) - float(versus.value or 0.0), 3)
         if gap > 0 and watched.get(add.position, 0) < WATCHLIST_PER_POSITION:
             watched[add.position] = watched.get(add.position, 0) + 1
             watchlist.append(Watch(add, versus, gap))
+        if gap > 0:
+            radar.append(Candidate(
+                add, RESEARCH, f"would not change this week's lineup; projects {gap:+.2f} "
+                f"above your cheapest droppable {add.position}, {versus.name} "
+                f"({versus.value or 0.0:.2f}). Research only: his value after this "
+                f"week is not priced here", versus=versus, gap=gap))
+        else:
+            radar.append(Candidate(
+                add, BELOW, f"would not change this week's lineup and projects "
+                f"{gap:+.2f} against your cheapest droppable {add.position}, "
+                f"{versus.name} ({versus.value or 0.0:.2f}); no reason to move",
+                versus=versus, gap=gap))
     upgrades.sort(key=lambda u: (u.lineup_gain, -(u.drop.value or 0.0)), reverse=True)
+    all_cands = _sort_candidates(tuple(radar) + tuple(unranked) + tuple(immovable))
     coverage: list[str] = []
     for pos in sorted({p.position for p in candidates}):
         if pos in cheapest_at:
@@ -413,7 +534,36 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
     )
     return WaiverBoard(tuple(upgrades), pool_size, len(candidates), unprojected,
                        drops, notes=notes, protected=protected,
-                       watchlist=tuple(watchlist), coverage=tuple(coverage))
+                       watchlist=tuple(watchlist), coverage=tuple(coverage),
+                       candidates=all_cands, positions=_position_coverage(pool, all_cands))
+
+
+_VERDICT_RANK = {v: i for i, v in enumerate(VERDICTS)}
+
+
+def _sort_candidates(cands: Sequence[Candidate]) -> tuple[Candidate, ...]:
+    """LINEUP by gain, RESEARCH by gap, then everything else by projection;
+    the verdict order is the reading order of the page."""
+    return tuple(sorted(cands, key=lambda c: (
+        _VERDICT_RANK.get(c.verdict, 9), -(c.lineup_gain or 0.0), -(c.gap or 0.0),
+        -(c.add.value or 0.0), c.add.name)))
+
+
+def _position_coverage(pool: Sequence[Player], cands: Sequence[Candidate]
+                       ) -> tuple[PositionCoverage, ...]:
+    out = []
+    by_id = {c.add.sleeper_id: c for c in cands}
+    for pos in sorted({p.position for p in pool}):
+        here = [p for p in pool if p.position == pos]
+        verdicts = [by_id[p.sleeper_id].verdict for p in here if p.sleeper_id in by_id]
+        projected = [p for p in here if p.projected]
+        out.append(PositionCoverage(
+            pos, len(here), len(projected),
+            sum(1 for v in verdicts if v in (LINEUP, RESEARCH, COVERAGE, BELOW)),
+            len(here) - len(projected),
+            sum(1 for v in verdicts if v == LOCKED),
+            sum(1 for v in verdicts if v == UNKNOWN)))
+    return tuple(out)
 
 
 def pool_players(ids: Iterable[str], players: Mapping[str, Mapping[str, object]],

@@ -103,7 +103,11 @@ def test_the_shortlist_lists_lineup_gains_only_and_no_depth_column(tmp_path):
     assert rec["upgrades"] and all(u["lineup_gain"] > 0 and u["kind"] == "lineup"
                                    for u in rec["upgrades"])
     assert "Δ depth" not in html and "DEPTH" not in html
-    assert "other feasible drops" in html
+    # the radar names every feasible alternative drop for a lineup gain
+    assert "Alternatives" in html
+    lineup = [c for c in rec["radar"]["candidates"] if c["verdict"] == "LINEUP"]
+    assert len(lineup) == len(rec["upgrades"])
+    assert all(c["drop"] and c["lineup_gain"] > 0 for c in lineup)
 
 
 def test_a_bench_only_pickup_is_on_the_watchlist_with_unpriced_future_value(tmp_path):

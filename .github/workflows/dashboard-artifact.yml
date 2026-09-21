@@ -24,12 +24,22 @@ name: Weekly dashboard artifact
 #     that must stay so. Public step logs name no player (checked below).
 #
 # What this is NOT, deliberately:
-#   * not a live feed. The site is rebuilt hourly at best; GitHub delays and
-#     drops scheduled runs under load. The Game Day page refreshes scores and
-#     game statuses itself on one tap; designations, positions, kickoffs and
-#     the pregame record are only as fresh as the last successful build, and
-#     the page says so on every refresh. There is no guarantee of live advice
-#     or live injury news.
+#   * not a live feed. The site is rebuilt every 15 minutes AT BEST; GitHub
+#     queues, delays and drops scheduled runs under load, and a cron says
+#     when a job is QUEUED, not when it runs. The Game Day page refreshes
+#     scores and game statuses itself on one tap; both pages ask the hosting
+#     server every five minutes, while open and visible, whether a newer
+#     build was published, and offer a reload — they never swap content
+#     underneath the reader. Designations, positions, kickoffs, the pregame
+#     record and the free-agent comparison are only as fresh as the last
+#     successful build, and every page dates each of them. There is no
+#     guarantee of live advice or live injury news.
+#   * not a full re-pull every run. The Sleeper league snapshot (five small
+#     GETs) is refreshed each run; the 16 MB player dump and the nflverse
+#     frames are refreshed only when older than half their cadence
+#     (scripts/ingest/pull_week.py), and a run that refreshes nothing
+#     re-renders from the carried inputs, which keep their ORIGINAL
+#     observation times. Nothing is restamped.
 #   * not durable storage. See "Carrying history" below.
 #
 # Carrying history. A hosted runner starts empty, so without the two carryover
@@ -64,13 +74,15 @@ on:
         required: false
         type: string
   schedule:
-    # Hourly, best effort, offset off the hour so it does not queue behind the
-    # top-of-hour rush, and 24 minutes after the hourly Sleeper sync so a
-    # fresh snapshot is usually there to render. Hourly is what makes a public
-    # site useful on a game day: the page's own refresh renews scores and
-    # game statuses, but designations and the pregame record only move when
-    # this job runs. A cron says when a job is QUEUED, not when it runs.
-    - cron: '41 * * * *'
+    # Every 15 minutes, best effort, offset off the quarter-hours so it does
+    # not queue behind the top-of-hour rush. This job refreshes the Sleeper
+    # snapshot itself, so it does not wait on the hourly sync workflow. A
+    # cron says when a job is QUEUED, not when it runs; GitHub drops
+    # scheduled runs under load and the pages say what they were built from.
+    # Each run saves one carryover cache entry (~1 per 15 min); the Actions
+    # cache evicts the oldest under the 10 GB limit, which the rolling
+    # restore-keys pattern below tolerates by design.
+    - cron: '7,22,37,52 * * * *'
 
 permissions:
   contents: read

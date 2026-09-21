@@ -142,7 +142,8 @@ def test_complete_projects_matches_and_recommends_with_labels(tmp_path):
     # the bench-only QB is research, not an upgrade
     assert any(w["add"]["position"] == "QB" for w in rec["watchlist"])
     assert "Δ depth" not in html
-    assert "Acquisitions — shortlist, with what each one costs" in html
+    assert "5. Free Agent Radar" in html
+    assert rec["radar"]["counts"]["lineup"] == len(rec["upgrades"])
     # evaluation ran, and does not claim calibration
     assert "evaluated chronologically" in rec["evaluation"]["verdict"]
     assert rec["evaluation"]["pwin_calibrated"] is False
