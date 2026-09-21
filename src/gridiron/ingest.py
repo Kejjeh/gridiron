@@ -222,7 +222,7 @@ class Manifest:
             return SourceFreshness(
                 name, Status.MISSING, None, 0, e.covers_through_week,
                 f"last pull failed: {e.error[:120]}" if e.error
-                else "never pulled")
+                else "never pulled", refresh_failed=bool(e.error))
         fresh = assess(name, now=now, as_of=e.as_of_dt, rows=e.rows,
                        covers_through_week=e.covers_through_week,
                        required_week=required_week,
@@ -233,6 +233,7 @@ class Manifest:
         # the newest thing that happened to this source is a failure.
         return replace(
             fresh,
+            refresh_failed=True,
             status=Status.STALE if fresh.status is Status.FRESH else fresh.status,
             reason=(f"{fresh.reason}; REFRESH FAILED at "
                     f"{e.last_attempt or 'unknown time'}: {e.error[:100]}"),

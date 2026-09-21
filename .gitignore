@@ -23,5 +23,34 @@ data/outputs/week*_report.csv
 data/outputs/weekly_report_latest.md
 data/outputs/weekly_report_latest.csv
 
+# The decision dashboard and the decision-time archive name the owner's
+# players and lineup: local files, regenerable from the cache in one command.
+data/outputs/dashboard/
+data/ledger/decisions/
+
 # research-agent scratch drafts (synthesized into docs/research/*.md)
 docs/research/drafts/
+
+# The scenario runner writes its synthetic caches and rendered pages next to
+# the committed review screenshots. Only the PNGs belong in the repo: the
+# caches are regenerable fixtures, and a rendered page is a roster artifact
+# by shape even when the roster inside it is invented — keeping the rule
+# mechanical is what stops a real cache being published by an out-dir typo.
+docs/review/dashboard/caches/
+docs/review/dashboard/*/
+docs/review/gameday/caches/
+docs/review/gameday/*/
+# committed review evidence: pregame*, stale*, mixed*, injury_after* PNGs and the two drive logs
+docs/review/gameday/conflict*.png
+docs/review/gameday/custom*.png
+docs/review/gameday/empty*.png
+docs/review/gameday/no_archive*.png
+docs/review/gameday/rollover*.png
+docs/review/gameday/pregame_stale*.png
+
+# Cloud carryover store (private decision records restored from a cache)
+.carry/
+
+# The packaged public site (two allowlisted pages plus an index), rebuilt
+# by scripts/cloud/pages_site.py from the render directory; never committed.
+.site/

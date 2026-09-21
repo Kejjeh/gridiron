@@ -27,6 +27,15 @@ from typing import Any
 from gridiron.league_config import SEASON_YEAR, SLEEPER_LEAGUE_ID
 
 BASE = "https://api.sleeper.app/v1"
+#: The per-game status feed Sleeper's own app reads. It is NOT in Sleeper's
+#: published API documentation (docs.sleeper.com lists no schedule or score
+#: endpoint), so it is used as what it is: an undocumented read-only feed that
+#: may change shape without notice. One real response was inspected on
+#: 2026-09-20 before anything relied on it — a list of games carrying
+#: `week`, `date`, `home`, `away`, `game_id` and `status`, with the statuses
+#: pre_game / in_game / complete / suspended / canceled observed. Anything the
+#: reader has not seen is passed through as UNKNOWN, never guessed at.
+SCHEDULE_BASE = "https://api.sleeper.app/schedule"
 USER_AGENT = "gridiron/0.1 (python-urllib)"  # a plain script UA, never a browser spoof
 
 Fetch = Callable[[str], Any]
@@ -108,6 +117,12 @@ class SleeperReadOnly:
         it (rule #10). Used for injury_status, depth chart order and as the
         fallback id overlay."""
         return self._fetch(f"{BASE}/players/nfl") or {}
+
+    def schedule(self, season: int, season_type: str = "regular") -> list:
+        """Per-game status for a season (see SCHEDULE_BASE). Read-only, one
+        GET, a few tens of KB, cached upstream for ten minutes. A 404 is an
+        empty list: a season the feed does not know is missing data."""
+        return self._fetch(f"{SCHEDULE_BASE}/nfl/{str(season_type)}/{int(season)}") or []
 
     # --- assembled reads -------------------------------------------------
     def snapshot(self, week: int | None = None) -> dict:

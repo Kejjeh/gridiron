@@ -97,6 +97,14 @@ def main(argv: list[str] | None = None) -> int:
               f"scripts/verify_league_settings.py and decide by hand.",
               file=sys.stderr)
     if result.ok:
+        # The per-game status feed rides along with a successful league sync:
+        # one more GET, recorded beside the snapshot, and never fatal — a
+        # feed that fails leaves its last good copy marked as not refreshed.
+        feed = ls.refresh_game_status(_client(args.timeout, args.retries),
+                                      directory, now=now, season=args.season)
+        if not args.quiet or not feed.ok:
+            print(f"{'OK ' if feed.ok else '!! '}game_status: {feed.detail}",
+                  file=sys.stdout if feed.ok else sys.stderr)
         return 0
     return 3 if result.code == "busy" else 1
 

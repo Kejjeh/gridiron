@@ -33,7 +33,7 @@ from datetime import datetime
 import pandas as pd
 
 from gridiron.freshness import SourceFreshness, Status, WeekContext, degradations
-from gridiron.ids import Crosswalk, is_dst_id, normalize_id
+from gridiron.ids import Crosswalk, is_dst_id, nflverse_team, normalize_id
 from gridiron.league_config import LEAGUE_NAME, ROSTER_SLOTS, SEASON_YEAR
 from gridiron.scoring import ScoringCoverage
 from gridiron.vegas import implied_totals_from_nflverse
@@ -375,7 +375,7 @@ def build_report(
         lineup = ("IR" if sid in reserve else
                   "START" if sid in starters else "BENCH")
         nfl_team = _txt(sp.get("team")) or (sid if dst else "")
-        game = games.get(nfl_team, unplayed)
+        game = games.get(nflverse_team(nfl_team), unplayed)
         note = availability(gid, sp, inj, report_week=context.report_week,
                             covers_report_week=injuries_cover,
                             designation_fresh=designation_fresh,

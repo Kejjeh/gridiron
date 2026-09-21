@@ -84,6 +84,18 @@ LEGACY_SNAPSHOT_NAME = "sleeper_league.json"
 KEEP_GENERATIONS = 3
 STATE_NAME = "sync_state.json"
 LOCK_NAME = "sync.lock"
+#: The per-game status feed, kept beside the league snapshot under the same
+#: lock. One fixed filename: the feed is small, the as-of is written INSIDE
+#: the file as well as in the manifest, and a reader that lands between the
+#: two writes uses the file's own stamp. Terminal statuses are monotone, so an
+#: older copy can only be less complete, never wrong about a final.
+GAME_STATUS_NAME = "game_status"
+GAME_STATUS_FILE = "game_status.json"
+#: Statuses actually observed in the feed (2026-09-20). Anything else is
+#: recorded verbatim and rendered as UNKNOWN with the raw word shown; the
+#: reader never maps an unseen word onto a state it did not earn.
+OBSERVED_GAME_STATUSES: frozenset[str] = frozenset(
+    {"pre_game", "in_game", "complete", "suspended", "canceled"})
 
 
 
@@ -765,6 +777,101 @@ def _sync_locked(client, d: Path, stamp: datetime, league_id: str, season: int,
                       f"{len(_dicts(payload.get('rosters')))} rosters, "
                       f"{len(_dicts(payload.get('matchups')))} matchup rows",
                       state, published=True, week=week, drift=drift)
+
+
+# --------------------------------------------------------------------------
+# Per-game status feed
+# --------------------------------------------------------------------------
+def validate_game_status(payload: Any) -> tuple[list[dict], int, str]:
+    """Normalise the feed to the rows a reader may trust.
+
+    Returns `(games, dropped, reason)`. `games` is the list of well-formed
+    rows (team names upper-cased, week an int, status a lower-cased word);
+    `dropped` counts members that were not; `reason` is non-empty when the
+    whole payload must be refused — not a list, or no usable row at all. A
+    feed with a few broken rows still counts, because a final that IS in it
+    is worth more than a run that refuses everything over one bad member.
+    """
+    if not isinstance(payload, Sequence) or isinstance(payload, (str, bytes)):
+        return [], 0, "game status feed is not a list"
+    out: list[dict] = []
+    dropped = 0
+    for raw in payload:
+        row = _mapping(raw)
+        if row is None:
+            dropped += 1
+            continue
+        try:
+            week = int(row.get("week"))
+        except (TypeError, ValueError):
+            dropped += 1
+            continue
+        home = str(row.get("home") or "").strip().upper()
+        away = str(row.get("away") or "").strip().upper()
+        status = str(row.get("status") or "").strip().lower()
+        if week < 1 or not home or not away or home == away or not status:
+            dropped += 1
+            continue
+        out.append({"week": week, "home": home, "away": away, "status": status,
+                    "date": str(row.get("date") or ""),
+                    "game_id": str(row.get("game_id") or "")})
+    if not out:
+        return [], dropped, "game status feed carries no usable game row"
+    return out, dropped, ""
+
+
+def refresh_game_status(client, directory: Path, *, now: datetime | None = None,
+                        season: int = SEASON_YEAR) -> SyncResult:
+    """Fetch the per-game status feed and record it, or fail without touching
+    the last good copy. Separate from `sync_once` on purpose: the league
+    snapshot's publish path and its validation are reviewed invariants, and
+    this feed is an optional companion — a run where the league sync works
+    and this fails still leaves a coherent snapshot behind.
+    """
+    stamp = now or _now()
+    d = Path(directory)
+    source = f"api.sleeper.app/schedule/nfl/regular/{int(season)} (undocumented feed)"
+    try:
+        with single_writer(d, now=stamp, holder="game_status"):
+            from gridiron.ingest import Manifest
+
+            manifest = Manifest.load(d, season)
+
+            def fail(code: str, detail: str) -> SyncResult:
+                manifest.record_failure(GAME_STATUS_NAME, source=source,
+                                        error=detail[:300], at=stamp)
+                manifest.save()
+                return SyncResult(False, code, detail, SyncState.load(d))
+
+            fetch = getattr(client, "schedule", None)
+            if fetch is None:
+                return fail("unsupported", "this client has no schedule feed")
+            try:
+                payload = fetch(int(season))
+            except Exception as exc:  # timeout, rate limit, transport, decode
+                return fail("fetch_failed", f"{type(exc).__name__}: {exc}"[:300])
+            games, dropped, why = validate_game_status(payload)
+            if why:
+                return fail("invalid", why)
+            blob = {"as_of": _iso(stamp), "season": int(season), "source": source,
+                    "dropped": dropped, "games": games}
+            try:
+                _atomic_write(d / GAME_STATUS_FILE, json.dumps(blob, indent=1))
+            except OSError as exc:
+                return fail("write_failed", f"{type(exc).__name__}: {exc}"[:300])
+            manifest.record(GAME_STATUS_NAME, path=d / GAME_STATUS_FILE,
+                            rows=len(games), source=source,
+                            weeks=sorted({g["week"] for g in games}), as_of=stamp)
+            manifest.save()
+            unseen = sorted({g["status"] for g in games} - OBSERVED_GAME_STATUSES)
+            return SyncResult(True, "ok",
+                              f"{len(games)} game rows"
+                              + (f", {dropped} dropped" if dropped else "")
+                              + (f", unrecognised status word(s): {', '.join(unseen)}"
+                                 if unseen else ""),
+                              SyncState.load(d), published=True)
+    except LockBusy as exc:
+        return SyncResult(False, "busy", str(exc), SyncState.load(d))
 
 
 def _read_json(path: Path) -> Any | None:

@@ -16,7 +16,15 @@ concurrency:
 jobs:
   sync:
     # Activation is deliberate: configure spending limits before enabling.
-    if: vars.GRIDIRON_CLOUD_SYNC_ENABLED == 'true' && github.event.repository.private == true
+    # A public repository additionally needs the explicit publication opt-in
+    # (GRIDIRON_PUBLIC_PUBLICATION exactly `true`), because the snapshot
+    # artifact below holds every roster in the league and, on a public
+    # repository, any signed-in GitHub user can download it while it is
+    # retained. The owner authorised that on 2026-09-21. The sync itself is
+    # unchanged: GET-only, read-only, never a league write.
+    if: >-
+      vars.GRIDIRON_CLOUD_SYNC_ENABLED == 'true' &&
+      (github.event.repository.private == true || vars.GRIDIRON_PUBLIC_PUBLICATION == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
@@ -38,7 +46,7 @@ jobs:
           echo 'Validated read-only refresh succeeded. Download sleeper-snapshot from this run.' >> "$GITHUB_STEP_SUMMARY"
           echo 'Runner-local counters restart each run. Use run history for cloud failures; snapshot as_of is authoritative.' >> "$GITHUB_STEP_SUMMARY"
           python scripts/sync/sleeper_sync.py status --interval 3600 >> "$GITHUB_STEP_SUMMARY"
-      - name: Save successful private snapshot
+      - name: Save the successful snapshot as a run artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sleeper-snapshot
