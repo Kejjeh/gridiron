@@ -17,6 +17,11 @@ stale, and when inputs are missing. Nothing here reads the real cache.
             and the league snapshot only covering week 2.
   missing   no schedule (locks unknown → start/sit and upgrades abstain),
             no box scores (every projection abstains), no injury table.
+  partial_schedule
+            the complete cache with two week-3 kickoffs damaged.
+  slate_end the complete cache rendered on the Tuesday after week 3's last
+            game: every starter locked, so the page has to say what can
+            still be done and what waits for next week's inputs.
 
 `--screenshot` renders each page to PNG with the pre-installed headless
 Chromium when one is found (no Python dependency is added); it is skipped,
@@ -45,11 +50,15 @@ from gridiron.paths import REPO_ROOT
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
 UTC = timezone.utc
-SCENARIOS = ("complete", "stale", "missing", "partial_schedule")
+SCENARIOS = ("complete", "stale", "missing", "partial_schedule", "slate_end")
 
 #: Saturday of NFL week 3 in the fixture calendar (games Sun 2026-09-27),
 #: rendered at noon UTC: pregame, nothing locked, waivers cleared.
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+#: The Tuesday after: every week-3 game has kicked off and finished.
+NOW_SLATE_END = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
+#: Scenarios rendered at an instant other than NOW.
+SCENARIO_NOW = {"slate_end": NOW_SLATE_END}
 
 #: Unrostered fixture players with box scores AND crosswalk rows. Two go to
 #: the opponent's lineup, three become free agents.
@@ -115,6 +124,8 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW) -> ing.Manifes
     """Write one synthetic season-2026 cache under `root`."""
     if kind not in SCENARIOS:
         raise ValueError(f"unknown scenario {kind!r}; choose from {SCENARIOS}")
+    if kind == "slate_end":
+        kind = "complete"                      # same cache, later instant
     season = 2026
     fresh = now - timedelta(hours=1)
     old = now - timedelta(days=5)
@@ -402,7 +413,8 @@ def main(argv: list[str] | None = None) -> int:
     worst = 0
     for kind in SCENARIOS if args.only is None else (args.only,):
         print(f"=== scenario: {kind} ===")
-        rc = render(kind, args.out, take_screenshot=args.screenshot)
+        rc = render(kind, args.out, take_screenshot=args.screenshot,
+                    now=SCENARIO_NOW.get(kind, NOW))
         worst = max(worst, rc)
     return worst
 

@@ -126,6 +126,9 @@ class Dashboard:
     #: Day page) join this record to the right league and roster by id
     #: instead of by season and week alone.
     league_id: str = ""
+    #: The week-transition view: what this page's advice is FOR, what can
+    #: still be done, what waits for next week's inputs.
+    next: "NextDecision | None" = None
 
     @property
     def degraded(self) -> bool:
@@ -181,13 +184,22 @@ class Dashboard:
             "upgrades": [{
                 "add": player(u.add), "drop_id": u.drop.sleeper_id, "slot": u.slot,
                 "lineup_gain": u.lineup_gain, "depth_gain": u.depth_gain,
-                "kind": u.kind} for u in self.board.upgrades],
+                "kind": u.kind,
+                "displaces_id": u.displaces.sleeper_id if u.displaces else None,
+                "drop_alternatives": [{"drop_id": d.sleeper_id, "lineup_gain": g}
+                                      for d, g in u.alternatives]}
+                for u in self.board.upgrades],
             "waiver_abstained": self.board.abstained,
             "protected_from_drop": [
                 {"sleeper_id": p.sleeper_id, "name": p.name, "reason": r}
                 for p, r in self.board.protected],
             "actions": [a.record() for a in self.actions],
             "actionable": sum(1 for a in self.actions if a.actionable),
+            "conditional": sum(1 for a in self.actions if a.conditional),
+            "watchlist": [{"add": player(w.add), "versus_id": w.versus.sleeper_id,
+                           "gap": w.gap} for w in self.board.watchlist],
+            "coverage": list(self.board.coverage),
+            "next": None if self.next is None else self.next.record(),
             "withheld_actions": list(self.gate.withheld),
             "gate": self.gate.record(),
             "locks": None if self.locks is None else {
@@ -451,7 +463,10 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         if league_source is not None and league_source.as_of is not None
         else "at an UNKNOWN time (the league snapshot carries no as-of)")
     actions = build_actions(plan=plan, board=board, gate=gate, now=now, slots=slots,
-                            snapshot_as_of=snapshot_as_of)
+                            snapshot_as_of=snapshot_as_of, roster=roster)
+    nxt = next_decision(context=context, roster=roster, plan=plan, schedule=schedule,
+                        sources=sources, snapshot_as_of=snapshot_as_of, now=now,
+                        actions=actions)
 
     league_id = str(snapshot.get("league_id")
                     or (league.get("league_id") if isinstance(league, Mapping) else "")
@@ -459,7 +474,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
     dash = Dashboard(context, tuple(sources), tuple(notes), now, tuple(roster), slots,
                      plan, matchup, matchup_reason, board, evaluation,
                      tuple(unresolved), my_roster_id, gate, actions, None, kickoffs,
-                     league_id=league_id)
+                     league_id=league_id, next=nxt)
 
     # What changed since the previous frozen page. Read-only: the diff never
     # feeds a projection, so yesterday's numbers cannot enter today's evidence.
@@ -538,13 +553,17 @@ class Action:
     `status` is the whole point of this type. An ACTIONABLE action is one
     every input behind it is current for; a WITHHELD action is displayed with
     its comparison intact and its imperative removed, because the page cannot
-    stand behind advice built on a five-day-old roster. Nothing here submits
-    anything to Sleeper — every action is a description of a move the owner
-    makes by hand.
+    stand behind advice built on a five-day-old roster. CONDITIONAL sits
+    between them and exists for acquisitions only: the inputs are current
+    and the lineup arithmetic holds, but whether the player can be claimed
+    at all is something this page never establishes, so the card is
+    endorsed IF Sleeper shows him available and never wears an unqualified
+    ACTIONABLE badge. Nothing here submits anything to Sleeper — every action
+    is a description of a move the owner makes by hand.
     """
 
     kind: str
-    status: str                       # ACTIONABLE | WITHHELD
+    status: str                       # ACTIONABLE | CONDITIONAL | WITHHELD
     urgency: str                      # NOW | TODAY | THIS WEEK | UNKNOWN | INFO
     headline: str
     detail: str
@@ -583,15 +602,24 @@ class Action:
         return self.status == "ACTIONABLE"
 
     @property
+    def conditional(self) -> bool:
+        return self.status == "CONDITIONAL"
+
+    @property
+    def withheld(self) -> bool:
+        return self.status == "WITHHELD"
+
+    @property
     def title(self) -> str:
-        """What the card actually says. Imperative only when endorsed."""
-        if not self.actionable and self.neutral_headline:
+        """What the card actually says. Imperative only when endorsed
+        (a conditional card keeps its wording: the condition is in it)."""
+        if self.withheld and self.neutral_headline:
             return self.neutral_headline
         return self.headline
 
     @property
     def body(self) -> str:
-        if not self.actionable and self.neutral_detail:
+        if self.withheld and self.neutral_detail:
             return self.neutral_detail
         return self.detail
 
@@ -702,9 +730,27 @@ def _slot_backup(plan: LineupPlan, slot_index: int, exclude: set[str]) -> str:
             f"{_num(best.value, 2)} pts) is the next legal option for {slot}")
 
 
+def _coverage_after(roster: Sequence[Player], u) -> str:
+    """Roster count by position once the pair is made, for the positions it
+    touches, naming who is retained. Roster composition is known; what the
+    retained players are worth beyond this week is not, and this says
+    nothing about that."""
+    seen: dict[str, Player] = {}
+    for p in roster:
+        seen.setdefault(p.sleeper_id, p)
+    seen.pop(u.drop.sleeper_id, None)
+    seen[u.add.sleeper_id] = u.add
+    bits = []
+    for pos in sorted({u.add.position, u.drop.position}):
+        held = [p for p in seen.values() if p.position == pos]
+        names = ", ".join(sorted(p.name for p in held))
+        bits.append(f"{pos} {len(held)} ({names or 'none'})")
+    return "; ".join(bits)
+
+
 def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                   now: datetime, slots: Sequence[str],
-                  snapshot_as_of: str) -> tuple[Action, ...]:
+                  snapshot_as_of: str, roster: Sequence[Player] = ()) -> tuple[Action, ...]:
     """Turn the plan and the board into a ranked to-do list.
 
     Every action carries the freshness verdict of the inputs it rests on. A
@@ -819,50 +865,250 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
             delta_points=a.delta_points, z=a.z,
             player_ids=(a.bench.sleeper_id, a.starter.sleeper_id), slot=a.slot))
 
-    # 3. Acquisitions. Never an imperative: eligibility is never proven here.
+    # 3. Acquisitions. Only a pair that improves THIS WEEK's best legal
+    # lineup gets a card, and the card is CONDITIONAL at best: the lineup
+    # arithmetic is current, the player's availability is not established
+    # here and never will be from a cache. The board is ranked by lineup
+    # gain; two cards that want the same drop are shown as the either/or
+    # they are, with the next feasible drop for each named or ruled out.
     w_status, w_why, w_verify = status_of(waiver_gate)
-    # Short by design: the full shortlist is a section of its own. The board is
-    # already ranked lineup-gain first, and that order is preserved here rather
-    # than re-sorted on a number that mixes two different kinds of gain.
-    for i, u in enumerate(board.upgrades[:2]):
+    if w_status == "ACTIONABLE":
+        w_status = "CONDITIONAL"
+    shown = list(board.upgrades[:2])
+    for i, u in enumerate(shown):
         elig = eligibility(snapshot_as_of=snapshot_as_of)
-        deadline, note = (None, "waiver timing NOT established — " + elig.verify)
+        kick, kick_note = _deadline_for([u.add, u.displaces], now)
+        deadline, note = (None, "waiver timing NOT established — " + elig.verify
+                          + (f" To count this week the claim has to clear before "
+                             f"{kick.astimezone(timezone.utc):%a %d %b %H:%M} UTC "
+                             f"(first kickoff among the players involved)."
+                             if kick is not None else f" {kick_note}."))
+        rivals = [o for o in shown if o is not u and o.drop.sleeper_id == u.drop.sleeper_id]
+        if rivals:
+            nxt = u.alternatives[0] if u.alternatives else None
+            either = (f"Either/or with {', '.join(r.add.name for r in rivals)}: both cost "
+                      f"the same drop, {u.drop.name}, so they are not both possible with "
+                      f"it. If that one is made first, "
+                      + (f"the next feasible drop for {u.add.name} is {nxt[0].name} "
+                         f"({nxt[0].position}, {_num(nxt[0].value, 2)} pts), and the "
+                         f"lineup gain with that drop is {_num(nxt[1], 2, True)}"
+                         if nxt else
+                         f"there is no other feasible drop for {u.add.name}: the move "
+                         f"is off"))
+        else:
+            nxt = u.alternatives[0] if u.alternatives else None
+            either = (f"if {u.drop.name} cannot be dropped, the next feasible drop is "
+                      f"{nxt[0].name} ({nxt[0].position}, {_num(nxt[0].value, 2)} pts) "
+                      f"with a lineup gain of {_num(nxt[1], 2, True)}"
+                      if nxt else
+                      f"{u.drop.name} is the only feasible drop; without it the move is off")
+        after = _coverage_after(roster or [p for p in plan.current if p is not None]
+                                + list(plan.bench_pool), u)
+        displ = (f"{u.displaces.name} leaves the lineup"
+                 if u.displaces is not None and u.displaces.sleeper_id != u.drop.sleeper_id
+                 else f"{u.drop.name} leaves the roster")
         out.append(Action(
             "acquire", w_status, "INFO",
-            f"Consider claiming {u.add.name} ({u.add.position})",
-            (f"{u.describe()}. Cost of the drop: {u.drop.name} "
-             f"({u.drop.position}, {_num(u.drop.value, 2)} projected this week). "
-             f"Eligibility {elig.state}: this page cannot tell a free agent from a "
-             f"player on waivers."),
+            f"If available, claim {u.add.name} ({u.add.position}) — this week's lineup "
+            f"{_num(u.lineup_gain, 2, True)} via {u.slot}",
+            (f"Benefit: {u.add.name} enters {u.slot} ({_num(u.add.value, 2)} projected), "
+             f"{displ}; best legal lineup {_num(u.lineup_gain, 2, True)} pts THIS WEEK. "
+             f"Cost: drop {u.drop.name} ({u.drop.position}, {_num(u.drop.value, 2)} "
+             f"projected this week). Coverage after the move: {after}. "
+             f"Availability {elig.state}: this page cannot tell a free agent from a "
+             f"player on waivers, so this is endorsed only if Sleeper shows him "
+             f"available. Limits: projections are the UNVALIDATED baseline; FAAB, "
+             f"rest-of-season value and the waiver order are not modelled."),
             deadline, note,
-            f"if {u.add.name} is claimed by someone else, the next candidate on the "
-            f"shortlist below applies with the same drop",
-            neutral_headline=(f"The last snapshot ranked {u.add.name} "
-                              f"({u.add.position}) above your cheapest legal drop"),
+            either,
+            neutral_headline=(f"The last snapshot found {u.add.name} ({u.add.position}) "
+                              f"would have improved that week's lineup"),
             # Deliberately NOT `u.describe()`. That sentence opens "add X,
             # drop Y", which is an instruction, and an instruction inside a
             # withheld card is the exact failure the neutral wording exists
             # to prevent — the badge says no advice is being given while the
             # first words of the body give some.
             neutral_detail=(f"{seen}, {u.add.name} ({u.add.position}) projected "
-                            f"{_num(u.add.value, 2)} and the cheapest legal drop "
-                            f"beside him, {u.drop.name} ({u.drop.position}), "
-                            f"projected {_num(u.drop.value, 2)}; the pair was worth "
-                            f"{_num(u.lineup_gain or u.depth_gain, 2)} pts "
-                            + (f"to the best lineup via {u.slot}"
-                               if u.kind == "lineup" else "to depth, with that "
-                               "week's lineup unchanged")
-                            + f". Eligibility {elig.state} in that snapshot too: "
-                            f"this page cannot tell a free agent from a player on "
-                            f"waivers, and it does not know whether "
-                            f"{u.add.name} is still unrostered."),
-            evidence=elig.basis, withheld_reasons=w_why,
-            verify=tuple(w_verify) + (elig.verify,),
-            delta_points=u.lineup_gain or u.depth_gain, order=i,
-            player_ids=(u.add.sleeper_id, u.drop.sleeper_id)))
+                            f"{_num(u.add.value, 2)} and would have entered {u.slot} for "
+                            f"{_num(u.lineup_gain, 2, True)} pts, at the cost of "
+                            f"{u.drop.name} ({u.drop.position}, {_num(u.drop.value, 2)}). "
+                            f"Availability {elig.state} in that snapshot too: this page "
+                            f"cannot tell a free agent from a player on waivers, and it "
+                            f"does not know whether {u.add.name} is still unrostered."),
+            evidence=(f"evidence: league snapshot {snapshot_as_of}; projections built "
+                      f"from box scores up to the evidence boundary stated at the top",)
+                     + elig.basis,
+            withheld_reasons=w_why,
+            verify=tuple(w_verify) + (elig.verify,
+                                      f"confirm {u.drop.name} is the player you would "
+                                      f"drop and that no injured or bye player is a better "
+                                      f"drop — the protected list names the ones this "
+                                      f"page will not rank"),
+            delta_points=u.lineup_gain, order=i,
+            player_ids=(u.add.sleeper_id, u.drop.sleeper_id), slot=u.slot))
 
     out.sort(key=lambda a: a.rank)
     return tuple(out)
+
+
+# --------------------------------------------------------------------------
+# The week transition: what this advice is for, and what waits
+# --------------------------------------------------------------------------
+@dataclass(frozen=True)
+class NextDecision:
+    """What the page's advice is FOR, what can still be done, what waits.
+
+    Everything here is read off inputs the page already holds — the phase,
+    each starter's lock, the dated sources, and the schedule's rows for the
+    week after this one. Nothing is projected for next week: this week's
+    lineup gains are this week's, and a next-week projection would need
+    box scores that do not exist yet. Where the schedule has no rows for
+    next week the preview says UNAVAILABLE rather than guessing.
+    """
+
+    week: int
+    phase: str
+    evidence: tuple[str, ...]            # dated, one line per input class
+    open_starters: tuple[str, ...]       # "name (POS) — kicks off ..." for unlocked starters
+    locked_starters: int
+    total_starters: int
+    still_possible: tuple[str, ...]
+    must_wait: tuple[str, ...]
+    next_week: int | None
+    next_week_lines: tuple[str, ...]     # schedule coverage from admissible data, or why not
+
+    @property
+    def all_locked(self) -> bool:
+        return self.total_starters > 0 and self.locked_starters >= self.total_starters
+
+    def record(self) -> dict:
+        return {"week": self.week, "phase": self.phase, "evidence": list(self.evidence),
+                "open_starters": list(self.open_starters),
+                "locked_starters": self.locked_starters,
+                "total_starters": self.total_starters,
+                "still_possible": list(self.still_possible),
+                "must_wait": list(self.must_wait), "next_week": self.next_week,
+                "next_week_lines": list(self.next_week_lines)}
+
+
+def next_decision(*, context: WeekContext, roster: Sequence[Player], plan: LineupPlan,
+                  schedule: pd.DataFrame | None, sources: Sequence[SourceFreshness],
+                  snapshot_as_of: str, now: datetime,
+                  actions: Sequence[Action]) -> NextDecision:
+    week = context.report_week
+    phase = context.phase.value
+
+    def as_of(name: str) -> str:
+        src = next((s for s in sources if s.name == name), None)
+        if src is None or src.as_of is None:
+            return f"{name}: never pulled"
+        return (f"{name}: as-of {src.as_of.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC "
+                f"({src.status.value.upper()})")
+
+    evidence = (
+        f"advice is for WEEK {week} ({phase})",
+        f"league snapshot (roster, lineup): {snapshot_as_of}",
+        f"projections: box scores through week {context.stats_through} "
+        f"(evidence boundary week {context.evidence_boundary}); a projection is this "
+        f"week's, never next week's",
+        as_of("injuries"), as_of("sleeper_players"),
+    )
+
+    starters = [p for p in plan.current if p is not None]
+    total = len(plan.slots)
+    locked = sum(1 for p in starters if p.locked)
+    empty = total - len(starters)
+    open_: list[str] = []
+    for p in starters:
+        if p.locked:
+            continue
+        when = (f"kicks off {p.kickoff.astimezone(timezone.utc):%a %d %b %H:%M} UTC"
+                if p.kickoff is not None else (p.lock_note or "lock state UNKNOWN"))
+        open_.append(f"{p.name} ({p.position}) — {when}")
+    unknown = sum(1 for p in starters if not p.lock_known)
+
+    live = [a for a in actions if a.actionable and a.kind != "acquire"]
+    held_lineup = [a for a in actions if a.withheld and a.kind not in ("acquire", "verify")]
+    cond = [a for a in actions if a.conditional]
+    held_acq = [a for a in actions if a.withheld and a.kind == "acquire"]
+    possible: list[str] = []
+    waits: list[str] = []
+    if plan.abstained:
+        possible.append("no lineup change can be shown legal: " + plan.abstained)
+    elif not starters:
+        possible.append("the lineup is empty in the snapshot; nothing here can be judged")
+    elif locked >= len(starters) and empty == 0:
+        possible.append(f"nothing on this week's lineup can change: all {total} starters "
+                        f"have kicked off")
+        possible.append(f"roster moves for week {week + 1} (add/drop) are still yours to "
+                        f"make in Sleeper, subject to its waiver processing, whose timing "
+                        f"this page does not know; none is ranked here because no "
+                        f"week-{week + 1} projection exists yet")
+    else:
+        possible.append(f"lineup changes for the {len(open_)} starter(s) not yet locked"
+                        + (f" and the {empty} EMPTY slot(s)" if empty else "")
+                        + (f"; {unknown} starter(s) have an UNKNOWN lock and are not moved"
+                           if unknown else ""))
+        if live:
+            possible.append(f"{len(live)} supported lineup change(s) are on this page")
+        elif held_lineup:
+            possible.append(f"{len(held_lineup)} lineup comparison(s) are WITHHELD: the "
+                            f"inputs behind them are stale, so they are the last known "
+                            f"picture, not advice")
+        else:
+            possible.append("no supported lineup change: the current lineup is the best "
+                            "legal one the projections find")
+    if cond:
+        possible.append(f"{len(cond)} conditional acquisition(s): each improves THIS "
+                        f"WEEK's lineup only if the player is available and the claim "
+                        f"clears before his kickoff — when a claim would process is not "
+                        f"known here")
+    elif held_acq:
+        possible.append(f"{len(held_acq)} acquisition comparison(s) are WITHHELD on stale "
+                        f"inputs; none is endorsed")
+    else:
+        possible.append("no acquisition improves this week's best legal lineup; a pickup "
+                        "that would only sit on the bench is research, not a move")
+    waits.append(f"week {week + 1} projections: they need week-{week} box scores, which "
+                 f"arrive after the slate, and a week-{week + 1} league snapshot; this "
+                 f"week's lineup gains are not next week's")
+    waits.append("what a pickup is worth beyond this week (byes, injuries, role): "
+                 "unpriced here, so it is never the reason for a move")
+
+    nxt_lines: list[str] = []
+    nxt_week = week + 1
+    if schedule is None:
+        nxt_lines.append(f"week {nxt_week} preview UNAVAILABLE: no schedule is loaded")
+    else:
+        idx = kickoff_index(schedule, nxt_week)
+        if idx is None or (not idx.kickoffs and not idx.time_unknown):
+            nxt_lines.append(f"week {nxt_week} preview UNAVAILABLE: the cached schedule "
+                             f"carries no week-{nxt_week} game rows")
+        else:
+            timed, untimed, absent = [], [], []
+            for p in sorted(roster, key=lambda p: p.name):
+                t = nflverse_team(p.team)
+                if t in idx.kickoffs:
+                    timed.append(p)
+                elif t in idx.time_unknown:
+                    untimed.append(p.name)
+                else:
+                    absent.append(f"{p.name} ({t or 'no team'})")
+            nxt_lines.append(f"week {nxt_week} schedule: {len(timed)} of {len(roster)} roster "
+                             f"players have a timed game"
+                             + (f"; first kickoff {min(idx.kickoffs[nflverse_team(p.team)] for p in timed).astimezone(timezone.utc):%a %d %b %H:%M} UTC"
+                                if timed else ""))
+            if untimed:
+                nxt_lines.append("game found but no usable kickoff time: " + ", ".join(untimed))
+            if absent:
+                nxt_lines.append(f"no week-{nxt_week} row in the schedule for: "
+                                 + ", ".join(absent)
+                                 + " — UNKNOWN, not read as a bye (the schedule declares "
+                                 "no byes; a missing row and a week off look the same)")
+            nxt_lines.append(f"no week-{nxt_week} projection, lineup or pickup is made here: "
+                             f"the inputs for it do not exist yet")
+    return NextDecision(week, phase, evidence, tuple(open_), locked, total,
+                        tuple(possible), tuple(waits), nxt_week, tuple(nxt_lines))
 
 
 # --------------------------------------------------------------------------
@@ -913,6 +1159,9 @@ background:var(--card);padding:12px 14px;margin:10px 0}
 .badge.today{background:var(--warn);color:#fff;border-color:transparent}
 .badge.held{background:transparent;color:var(--bad);border-color:var(--bad)}
 .badge.go{background:transparent;color:var(--ok);border-color:var(--ok)}
+.badge.cond{background:transparent;color:var(--warn);border-color:var(--warn)}
+.act.conditional{border-left-style:dotted}
+.next h3{font-size:15px;margin:14px 0 4px}.next ul{margin:4px 0}
 .deadline{font-weight:600}.backup{color:var(--muted);font-size:13px}
 .gatebox{border-left:5px solid var(--warn);padding:8px 12px;margin:8px 0;background:var(--chip)}
 @media (max-width:560px){
@@ -980,18 +1229,24 @@ def _player_rows(players: Sequence[Player], slots_of: Mapping[str, str] | None =
 
 
 def _action_card(a: "Action") -> str:
-    held = not a.actionable
+    held = a.withheld
     bar = [f"<span class=\"badge {'now' if a.urgency == 'NOW' else 'today' if a.urgency in ('TODAY', 'UNKNOWN') else ''}\">"
            f"{_e(a.urgency)}</span>"]
-    bar.append(f"<span class=\"badge {'held' if held else 'go'}\">{_e(a.status)}</span>")
+    cls = "held" if held else "cond" if a.conditional else "go"
+    label = a.status + (" — if available" if a.conditional else "")
+    bar.append(f"<span class=\"badge {cls}\">{_e(label)}</span>")
     out = [f"<div class=\"act act-{_e(a.urgency.replace(' ', '-'))}"
-           f"{' withheld' if held else ''}\">",
+           f"{' withheld' if held else ' conditional' if a.conditional else ''}\">",
            "<div class=\"bar\">" + "".join(bar) + "</div>"]
     if held:
         # Said before the card's own wording, so the frame is set even for a
         # reader who never reaches the explanation underneath.
         out.append("<p class=\"why\"><b>Last known picture — no action is being "
                    "recommended.</b></p>")
+    elif a.conditional:
+        out.append("<p class=\"why\"><b>Conditional.</b> The lineup arithmetic is current; "
+                   "whether the player can be claimed is NOT established here. Endorsed "
+                   "only if Sleeper shows him available.</p>")
     out += [
            f"<h3>{_e(a.title)}</h3>",
            f"<p>{_e(a.body)}</p>",
@@ -1042,23 +1297,94 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     else:
         out.append("<div class=\"banner ok\"><b class=\"ok\">All inputs current.</b></div>")
 
-    # ---------------------------------------------------------------- 1. do
+    # ------------------------------------------------- 1. the next decision
+    nd = d.next
     live = [a for a in d.actions if a.actionable]
-    out.append("<h2>1. This week — what to do</h2>")
-    if not d.actions:
-        out.append("<div class=\"card\"><p class=\"ok\">Nothing to do. The current lineup "
-                   "is already the best legal one the projections can find, and no "
-                   "available player beats a droppable roster player.</p></div>")
-    else:
-        if not live:
-            out.append("<div class=\"gatebox\"><b class=\"bad\">No action is endorsed on "
-                       "this data.</b> Every item below is WITHHELD: the inputs behind it "
-                       "are stale or unreadable, so what follows is the last known "
-                       "picture rather than current advice. The comparisons are kept "
-                       "deliberately — old information is still information, as long as "
-                       "it is labelled as old.</div>")
-        for a in d.actions:
+    cond = [a for a in d.actions if a.conditional]
+    lineup_cards = [a for a in d.actions if a.kind != "acquire"]
+    acquire_cards = [a for a in d.actions if a.kind == "acquire"]
+    out.append(f"<h2>1. Next decision — week {ctx.report_week}</h2><div class=\"next\">")
+    if nd is not None:
+        out.append("<p class=\"small sub\">" + " · ".join(_e(x) for x in nd.evidence) + "</p>")
+        out.append(f"<p class=\"small\"><b>Lineup lock:</b> {nd.locked_starters} of "
+                   f"{nd.total_starters} starters locked"
+                   + (f"; still open: {_e('; '.join(nd.open_starters))}" if nd.open_starters
+                      else "; nothing on this week's lineup can still change")
+                   + ".</p>")
+    if d.actions and not live and not cond:
+        out.append("<div class=\"gatebox\"><b class=\"bad\">No action is endorsed on "
+                   "this data.</b> Every item below is WITHHELD: the inputs behind it "
+                   "are stale or unreadable, so what follows is the last known "
+                   "picture rather than current advice. The comparisons are kept "
+                   "deliberately — old information is still information, as long as "
+                   "it is labelled as old.</div>")
+
+    out.append("<h3>Lineup — this week</h3>")
+    if lineup_cards:
+        for a in lineup_cards:
             out.append(_action_card(a))
+    elif nd is not None and nd.all_locked:
+        out.append("<div class=\"card\"><p>Every starter has kicked off. No lineup change "
+                   "this week is possible, and none is proposed.</p></div>")
+    elif d.plan.abstained:
+        out.append(f"<div class=\"card\"><p class=\"bad\">{_e(d.plan.abstained)}</p></div>")
+    else:
+        out.append("<div class=\"card\"><p class=\"ok\">No supported lineup change: the "
+                   "current lineup is already the best legal one the projections can "
+                   "find.</p></div>")
+
+    out.append("<h3>Acquisitions — conditional on availability</h3>")
+    if acquire_cards:
+        for a in acquire_cards:
+            out.append(_action_card(a))
+        out.append("<p class=\"small sub\">Each card names the ONE drop it costs and what "
+                   "the next feasible drop would be. Two cards that cost the same player "
+                   "are an either/or, not two moves.</p>")
+    else:
+        out.append("<div class=\"card\"><p>No available player improves this week's best "
+                   "legal lineup"
+                   + (": " + _e(d.board.abstained) if d.board.abstained else "")
+                   + ". A pickup that would only sit on the bench is research, "
+                   "listed below, not a move.</p></div>")
+
+    b = d.board
+    out.append("<h3>Watchlist and withheld — research, not moves</h3><div class=\"card\">")
+    if b.watchlist:
+        out.append("<ul class=\"small\">"
+                   + "".join(f"<li>{_e(w.describe())}</li>" for w in b.watchlist) + "</ul>")
+    for c in b.coverage:
+        out.append(f"<p class=\"small warn\">{_e(c)}</p>")
+    if not b.watchlist and not b.coverage:
+        out.append("<p class=\"small sub\">No available player projects above your cheapest "
+                   "droppable player at the same position this week.</p>")
+    out.append("<p class=\"small sub\">Same position, this week's projection only, lineup "
+               "unchanged. Nothing here is a ranked recommendation, and a player's value "
+               "beyond this week is not priced — that would need a rest-of-season model "
+               "this repo does not have (rule #5).</p></div>")
+
+    if not live and not cond:
+        why = ("the inputs behind every comparison are stale or unreadable (see section 2)"
+               if d.actions else
+               "every starter has kicked off, and no available player improves this "
+               "week's lineup" if nd is not None and nd.all_locked else
+               "the current lineup is the best legal one the projections find, and no "
+               "available player improves it")
+        out.append("<div class=\"act act-INFO\"><div class=\"bar\"><span class=\"badge\">HOLD"
+                   "</span></div><h3>Hold — no supported change</h3>"
+                   f"<p>Why: {_e(why)}.</p>"
+                   "<p class=\"why\">What would change it: a fresh league snapshot and "
+                   "player dump within their gameday limits, a projection edge outside "
+                   "noise, or an available player who enters this week's lineup.</p></div>")
+
+    if nd is not None:
+        out.append("<h3>Week transition</h3><div class=\"card\">")
+        out.append("<p><b>Still possible now:</b></p><ul class=\"small\">"
+                   + "".join(f"<li>{_e(x)}</li>" for x in nd.still_possible) + "</ul>")
+        out.append("<p><b>Must wait for next-week inputs:</b></p><ul class=\"small\">"
+                   + "".join(f"<li>{_e(x)}</li>" for x in nd.must_wait) + "</ul>")
+        out.append(f"<p><b>Week {nd.next_week} preview (schedule only):</b></p><ul class=\"small\">"
+                   + "".join(f"<li>{_e(x)}</li>" for x in nd.next_week_lines) + "</ul></div>")
+    out.append("</div>")
     out.append("<p class=\"small sub\">Nothing on this page is ever submitted to Sleeper. "
                "Every action is a move the owner makes by hand, and every deadline is "
                "read from the schedule — where the schedule could not be read, the "
@@ -1173,19 +1499,26 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     if b.abstained:
         out.append(f"<p class=\"bad\"><b>ABSTAINED:</b> {_e(b.abstained)}</p>")
     elif not b.upgrades:
-        out.append("<p class=\"ok\">No available player projects above a droppable roster "
-                   "player this week.</p>")
+        out.append("<p class=\"ok\">No available player improves this week's best legal "
+                   "lineup.</p>")
     else:
         rows = []
         for u in b.upgrades[:12]:
+            alts = ("; ".join(f"{_e(dp.name)} ({_num(g, 2, True)})" for dp, g in u.alternatives)
+                    or "none")
             rows.append([_e(u.add.name) + f" <span class=\"sub\">({_e(u.add.position)}, {_e(u.add.team)})</span>",
                          _num(u.add.value),
                          "<span class=\"badge held\">UNVERIFIED</span>",
                          _e(u.drop.name) + f" <span class=\"sub\">({_e(u.drop.position)}, {_e(u.drop.lineup)})</span>",
-                         _num(u.drop.value), _e(u.kind.upper()), _e(u.slot or "—"),
-                         _num(u.lineup_gain, 2, True), _num(u.depth_gain, 2, True)])
-        out.append(_table(["add", "proj", "addable?", "drop (the cost)", "proj", "kind",
-                           "enters", "Δ lineup", "Δ depth"], rows, numeric=(1, 4, 7, 8)))
+                         _num(u.drop.value), _e(u.slot or "—"),
+                         _e(u.displaces.name if u.displaces else "—"),
+                         _num(u.lineup_gain, 2, True), alts])
+        out.append(_table(["add", "proj", "addable?", "drop (the cost)", "proj",
+                           "enters", "displaces", "Δ lineup", "other feasible drops"],
+                          rows, numeric=(1, 4, 7)))
+        out.append("<p class=\"small sub\">Only pairs that improve THIS WEEK's best legal "
+                   "lineup are listed. A raw point difference between two players at "
+                   "different positions is not a gain and ranks nothing here.</p>")
         out.append("<p class=\"small warn\">\"Addable?\" is UNVERIFIED for every row and "
                    "cannot be anything else from this cache: the snapshot proves only that "
                    "the player is on no roster at its as-of. Whether he is a free agent or "

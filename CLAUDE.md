@@ -32,7 +32,10 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   are PUBLIC by owner decision (2026-09-21): `gridiron.publication` packages
   exactly two allowlisted HTML files for GitHub Pages under the
   `GRIDIRON_PUBLIC_PUBLICATION` opt-in — never JSON, cache or archive — and
-  artifacts, caches and logs are public too. Game Day (`scripts/weekly/gameday.py`,
+  artifacts, caches and logs are public too. A pickup is a move ONLY if it
+  improves THIS WEEK's lineup (`gridiron.waivers`): cross-position "depth"
+  ranks nothing, bench-only adds are watchlist research, an acquisition is
+  CONDITIONAL (availability UNVERIFIED). Game Day (`scripts/weekly/gameday.py`,
   scenarios A-F in `gameday_scenarios.py --screenshot --browser`): platform
   actuals only, game status OBSERVED or UNKNOWN (never inferred from the
   clock), every archived move re-judged NOW by player id against freshness,

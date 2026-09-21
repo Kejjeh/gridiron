@@ -1,18 +1,18 @@
 # HANDOFF
 
-State: **milestones 1, 2 and the cloud sync are merged to main (`8fbf468`).
-Milestone 3 — the weekly decision board — and milestone 4 — the Game Day
-screen — are on `claude/weekly-dashboard`, open as draft PR #4 based on
-main. Not merged. The head is named in the PR body and in the verification
-section below.** The per-finding history of the five review passes lives in
-`docs/DECISIONS.md` and the PR body, not here.
+State: **everything through the public Pages release is merged to main.**
+PR #4 (the weekly decision board, Game Day and the publication pass) merged
+as `3d018aa`; repair PR #6 (two HTML archive labels shown by filename, no
+runner path) merged as `b24d1f4`. The repository is PUBLIC, the Pages
+workflow is enabled with `GRIDIRON_PUBLIC_PUBLICATION=true`, and the site is
+LIVE at `https://kejjeh.github.io/gridiron/` (root redirect, both pages,
+hourly best-effort build, browser refresh). Main is the deployment source.
+The per-finding history lives in `docs/DECISIONS.md` and the PR bodies.
 
-**The repository is PUBLIC and the personalised pages are going public**, by
-explicit owner decision on 2026-09-21 (Astra flipped visibility and
-configured Pages, build type workflow, at `https://kejjeh.github.io/gridiron/`;
-no deployment has happened yet). The publication pass on this branch is
-described in "Publication — public Pages" below: its release is the owner's
-and Astra's to perform, and nothing on this branch performs it.
+**This branch** carries the next milestone — trustworthy weekly next
+decisions — described in "Next decision — trustworthy weekly advice" below.
+It is a draft for Astra's review; nothing on it merges, deploys or flips a
+variable.
 
 The desktop five-minute sync is **installed but its scheduled task is
 DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud:
@@ -551,6 +551,52 @@ that on 2026-09-21 by authorising the public repository as it stands; nothing
 was narrowed or rewritten. What the tree still never holds is a rendered
 roster page or a credential: those are gated by test, not by visibility.
 
+## Next decision — trustworthy weekly advice (2026-09-21)
+
+**What was wrong.** Astra reproduced on the released code that
+`waivers.build_board` listed a backup QB projecting 17 against a bench WR
+projecting 3 as a +14 "DEPTH" upgrade with the lineup unchanged, and the
+public board carried two ACTIONABLE "Consider claiming" cards for backup QBs
+with every starter locked and availability UNVERIFIED. The module's own
+docstring claimed such moves pay off in bye weeks. Raw points across
+positions do not measure roster utility, and nothing here can price value
+beyond this week (rule #5).
+
+**What changed** (policy only; scoring, projections, gating, locks, the
+protected-drop rules and the publication guard are untouched):
+
+| Change | Where |
+| --- | --- |
+| An upgrade requires a positive change to THIS WEEK's best legal lineup; it names the displaced starter, the drop and up to three feasible alternative drops with the gain each keeps. The raw add−drop difference is recorded for the archive and ranks nothing | `waivers.Upgrade`, `build_board` |
+| Bench-only pickups: a same-position WATCHLIST (three per position, this week's projection, lineup unchanged, future value unpriced) and a COVERAGE note for any position with nothing droppable to compare against. Cross-position comparison is never made | `waivers.Watch`, `WaiverBoard.watchlist/.coverage` |
+| Acquisition cards are CONDITIONAL (waiver gate open) or WITHHELD (stale); never ACTIONABLE. Each states benefit via slot, displaced starter, drop cost, coverage after the move, evidence date, limits, and the Sleeper check; cards sharing a drop say "either/or" and name the next feasible drop or rule the move off | `dashboard.Action`, `build_actions`, `_coverage_after` |
+| Section 1 is "Next decision — week N": dated evidence line, starter lock count with open starters, lineup cards, conditional acquisitions, watchlist/coverage, a HOLD card when nothing is supported, and a week-transition block (still possible / must wait / next-week preview from schedule rows only). The archive record gains `next`, `conditional`, `watchlist`, `coverage`, `displaces_id`, `drop_alternatives`; every old key keeps its shape | `dashboard.NextDecision`, `next_decision`, `render_html` |
+| Synthetic `slate_end` scenario: the complete cache rendered on the Tuesday after the week's last game | `dashboard_scenarios.py` |
+
+**Before / after on the cached real league** (same code paths, same cache,
+`--no-archive`, no league write; projections, lineup and alternatives were
+byte-identical before and after):
+
+| Render instant | Before | After |
+| --- | --- | --- |
+| Friday 12:00 UTC (pregame, 1 of 10 starters locked; snapshot 17h old, so gate WITHHELD) | 60 upgrades of two kinds, 40 of them DEPTH; two acquisition cards | 20 upgrades, all lineup gains with displaced starter and alternatives; the same two cards, withheld, now naming the shared drop as an either/or; three same-position watchlist rows; week-3 preview from the schedule (15 of 15 timed) |
+| Monday 12:00 UTC (10 of 10 starters locked) | 8 DEPTH "upgrades" led by two backup QBs over a bench WR; two acquisition cards for them | 0 upgrades, no acquisition card; coverage notes for QB/RB/TE (nothing droppable, nothing compared); three same-position WR watchlist rows; HOLD; "all 10 starters have kicked off", roster moves are the owner's with a waiver clock this page does not know, week-3 projections wait for week-2 box scores |
+
+**Verification** (this container, sequential):
+
+| Check | Result |
+| --- | --- |
+| `run_summary.py -- python -m pytest` | 685 passed, 0 skipped (21 new tests: 7 in `test_waivers.py`, 13 in `test_next_decision.py`, assertions updated in `test_dashboard_cli.py`) |
+| `scripts/ci/smoke.py` | PASS (`test_next_decision.py` added to its patterns) |
+| `dashboard_scenarios.py --screenshot` | five scenarios rendered; phone-width fit "fits at 375px" for each; PNGs refreshed under `docs/review/dashboard/` |
+| Browser: next-decision section at 375 px, disclosures focusable by keyboard | executed in `test_the_next_decision_section_fits_a_phone_and_its_disclosures_take_the_keyboard` (skips with reason where no Chromium) |
+| `pages_site.py build` on the two real pages rendered from the cache, then `check --width 375` on the served site | site ready (3 files); root and board viewport 375 px, overflow 0; refresh tap LIVE (three read-only GETs to Sleeper's public API from the browser; nothing written) |
+| Archive compatibility | old-shape record diffs, grades (waiver pair UNVERIFIED, not scorable) and is refused by Game Day's pickup branch before any status is read |
+
+**Not covered here:** no Windows run in this container (Astra's platform);
+no live-site deploy (the hourly workflow publishes main after merge); no
+grading of a real week (needs finals).
+
 ## Publication — public Pages (2026-09-21)
 
 Implemented on this branch from `bb49650`; the head is in the PR body. The
@@ -624,9 +670,13 @@ Nothing was deleted, no setting was changed, no history was rewritten.
 
 ## Next — the release checklist
 
-0. **Publication release** — the five commands above, in order, after
-   Astra's review of this head.
-1. **Astra review of this head.** Render both pages from the live cache
+0. **Astra review of this head (next-decision milestone).** Run the full
+   suite and smoke, `dashboard_scenarios.py --screenshot` (five scenarios,
+   `slate_end` included), and render the live cache at a pregame instant
+   and at a Monday instant to see the same before/after this branch
+   reports; then merge, and the hourly build publishes it.
+1. **Astra review of the Game Day head** (done for `2b7d373`; kept for the
+   commands). Render both pages from the live cache
    (`dashboard.py --write` then `gameday.py --write`), open
    `gameday_latest.html`, tap Refresh, and check the mode line reads LIVE
    with today's statuses and that the status line says what a refresh does
@@ -691,7 +741,11 @@ performs them.
 | Changes are transitions, not recomputation | `diff_archives` reads two frozen archives as data; a projection must move ≥ 1.5 pts to be listed | `test_a_second_render_reports_what_changed_since_the_first` |
 | It fits a phone | Narrow layout below 560 px; the scenario runner measures the rendered page in a 390 px iframe and reports the width it actually achieved | `dashboard_scenarios.py --screenshot` (executed; see below) |
 | No same-value churn | Retained starters keep their slots when equally legal | `test_same_value_churn_is_not_reported_as_a_change` |
-| Every upgrade names its drop | Add/drop pairs are scored by the change in the best LEGAL lineup; LINEUP vs DEPTH kinds kept apart; a locked starter is never the drop | `test_a_lineup_upgrade_names_the_drop_and_the_slot_it_enters`, `test_the_drop_is_never_a_locked_starter_...` |
+| Every upgrade names its drop, and is a lineup gain | An add/drop pair is an upgrade ONLY when this week's best LEGAL lineup scores more; it names the displaced starter, the drop and its feasible alternative drops; a locked starter is never the drop; a raw point difference across positions ranks nothing | `test_a_lineup_upgrade_names_the_drop_and_the_slot_it_enters`, `test_a_backup_qb_over_a_bench_wr_is_not_an_upgrade_of_any_kind`, `test_the_drop_is_never_a_locked_starter_...` |
+| A bench-only pickup is research | Same-position WATCHLIST with the lineup-unchanged and future-value-unpriced note; a position with nothing droppable is a COVERAGE note, not a cross-position comparison; the board abstains rather than pricing a backup | `test_a_same_position_gap_on_the_bench_is_research_not_a_move`, `test_with_no_droppable_qb_the_board_abstains_rather_than_pricing_a_backup` |
+| An acquisition is CONDITIONAL | Never an unqualified ACTIONABLE: endorsed only if Sleeper shows the player available; the card carries benefit, displaced starter, drop, coverage kept, evidence date, limits and the exact check; two cards wanting the same drop are an either/or | `test_an_acquisition_is_conditional_never_an_unqualified_actionable`, `test_two_pickups_that_cost_the_same_drop_are_an_either_or` |
+| The week is labelled and the transition is honest | Section 1 states the week the advice is for with dated evidence and starter locks; a locked slate says what can still be done and what waits; the next-week preview reads schedule rows only and says UNAVAILABLE otherwise; no next-week projection | `test_a_locked_slate_says_what_can_still_be_done_and_what_waits`, `test_the_next_week_preview_reads_schedule_rows_and_invents_no_bye` |
+| Old archives still read | A record with depth pairs, ACTIONABLE acquisitions and no `next` diffs, grades (UNVERIFIED, never scorable — nothing is promoted) and joins on Game Day, which refuses a pickup before it reads the status | `test_an_old_archive_still_diffs_grades_and_joins_without_being_upgraded` |
 | P(win) is never presented as calibrated | Closed form from `gridiron.winprob`, labelled UNCALIBRATED on the page and in the archive; abstains when any non-DST starter on either side is unprojected; `EvaluationReport.pwin_calibrated` is False by construction | `test_complete_...`, `test_missing_...` |
 | The archive is the page | `Dashboard.record()` is written atomically at render time; grading reads it and the week's actuals only, never re-projects; a missing actual is `ungradeable`, not zero | `test_the_archive_is_the_page_and_grading_it_leaks_nothing`, `test_decisions.py` |
 | An archive is evidence, so it is immutable | The filename carries an 8-hex content digest, so two DIFFERENT pages written in the same second get two files instead of one replacing the other; rewriting identical content is a no-op and writing different content to an existing path raises `ArchiveCollision` | `test_a_second_different_page_cannot_replace_the_first`, `test_rewriting_the_same_page_is_a_no_op_and_a_different_one_raises` |
@@ -831,6 +885,13 @@ performs them.
 ## Not done deliberately
 
 - No lineup change, waiver claim, trade or message. Ever, by construction.
+- No pricing of a backup, a bye-week fill-in or "depth" of any kind. A
+  pickup that leaves this week's lineup unchanged is research, and the page
+  says its future value is unpriced rather than inventing a number for it.
+- No next-week projection, no FAAB bid, no waiver deadline, no win
+  probability and no starting-job claim on the next-decision section: it
+  reads locks, dated sources and schedule rows, and says UNAVAILABLE where
+  they stop.
 - No projection feature beyond the baseline while the rule #5 gate is
   unmet; the baseline itself is labelled UNVALIDATED on every page. A
   guessed recommendation presented as verified is the failure mode this

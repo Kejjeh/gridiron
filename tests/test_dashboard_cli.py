@@ -80,9 +80,9 @@ def test_the_dashboard_renders_from_the_cache_with_no_network(tmp_path, no_netwo
     assert rc == 0
     assert "<title>Week 3 decision dashboard" in html
     # action-first: what to do comes before the evidence behind it
-    assert "1. This week — what to do" in html
+    assert "1. Next decision — week 3" in html
     assert "9. Decision-time archive" in html
-    assert html.index("1. This week") < html.index("2. Inputs,") < html.index("6. Roster")
+    assert html.index("1. Next decision") < html.index("2. Inputs,") < html.index("6. Roster")
 
 
 def test_every_source_the_dashboard_reads_declares_its_freshness(tmp_path):
@@ -135,8 +135,13 @@ def test_complete_projects_matches_and_recommends_with_labels(tmp_path):
     assert rec["upgrades"]
     roster_ids = {p["sleeper_id"] for p in rec["roster"]}
     for u in rec["upgrades"]:
-        assert u["drop_id"] in roster_ids and u["kind"] in ("lineup", "depth")
-    assert any(u["kind"] == "lineup" and u["lineup_gain"] > 0 for u in rec["upgrades"])
+        assert u["drop_id"] in roster_ids and u["kind"] == "lineup" and u["lineup_gain"] > 0
+        assert u["displaces_id"] in roster_ids
+        assert all(a["drop_id"] in roster_ids and a["lineup_gain"] > 0
+                   for a in u["drop_alternatives"])
+    # the bench-only QB is research, not an upgrade
+    assert any(w["add"]["position"] == "QB" for w in rec["watchlist"])
+    assert "Δ depth" not in html
     assert "Acquisitions — shortlist, with what each one costs" in html
     # evaluation ran, and does not claim calibration
     assert "evaluated chronologically" in rec["evaluation"]["verdict"]
@@ -211,7 +216,8 @@ def test_stale_inputs_withhold_every_action_but_keep_the_comparison(tmp_path):
 
     # the comparisons behind them survive, exactly as before the fix
     assert len(rec["alternatives"]) == 2
-    assert len(rec["upgrades"]) == 3
+    assert len(rec["upgrades"]) == 2                 # lineup gains; the bench QB is watchlist
+    assert len(rec["watchlist"]) == 1
     assert rec["current_points"] > 0 and rec["best_points"] >= rec["current_points"]
 
     # and the page says which of the two it is showing
@@ -224,14 +230,15 @@ def test_a_fresh_cache_still_endorses_its_actions(tmp_path):
     """The gate has to be able to open, or it is just a broken page."""
     _, html, rec = render(tmp_path, "complete")
     assert rec["withheld_actions"] == []
-    assert rec["actionable"] == len(rec["actions"]) > 0
-    assert all(a["status"] == "ACTIONABLE" for a in rec["actions"])
+    assert rec["actionable"] + rec["conditional"] == len(rec["actions"]) > 0
+    assert all(a["status"] == "CONDITIONAL" for a in rec["actions"] if a["kind"] == "acquire")
+    assert all(a["status"] == "ACTIONABLE" for a in rec["actions"] if a["kind"] != "acquire")
     assert "No action is endorsed" not in html
 
 
 def test_the_page_leads_with_actions_and_demotes_uncalibrated_win_probability(tmp_path):
     _, html, rec = render(tmp_path, "complete")
-    assert html.index("1. This week — what to do") < html.index("7. Matchup")
+    assert html.index("1. Next decision") < html.index("7. Matchup")
     # P(win) is present, labelled, and behind a disclosure rather than in the
     # headline: rule #7 denominates decisions in DP(win), and this baseline has
     # never been calibrated, so it ranks nothing.
@@ -446,21 +453,26 @@ def test_a_withheld_card_states_the_last_known_picture_not_an_instruction(tmp_pa
         assert body
 
     # and the page itself carries the neutral wording, not the imperative
-    assert "the last snapshot ranked" in html.lower()
+    assert "the last snapshot found" in html.lower()
     assert "Consider claiming" not in html
     assert "Last known picture — no action is being recommended." in html
 
 
 def test_a_fresh_page_still_gives_the_instruction(tmp_path):
     """The neutral wording is for withheld cards only. Softening endorsed
-    advice into 'the snapshot ranked X above Y' would be its own failure."""
+    advice into 'the snapshot ranked X above Y' would be its own failure.
+    An acquisition is CONDITIONAL (its availability is never established
+    here) and keeps its own, conditional, instruction."""
     _, html, rec = render(tmp_path, "complete")
-    assert rec["actionable"] == len(rec["actions"]) > 0
-    assert any(a["title"].startswith("Consider claiming") for a in rec["actions"])
-    assert "Consider claiming" in html
+    assert rec["actionable"] + rec["conditional"] == len(rec["actions"]) > 0
+    assert rec["conditional"] > 0
+    assert any(a["title"].startswith("If available, claim") for a in rec["actions"])
+    assert "If available, claim" in html
     assert "Last known picture" not in html
     for action in rec["actions"]:
         assert action["title"] == action["headline"]
+        assert action["status"] in ("ACTIONABLE", "CONDITIONAL")
+        assert (action["status"] == "CONDITIONAL") == (action["kind"] == "acquire")
 
 
 def test_the_edge_is_never_called_larger_than_the_uncertainty_it_is_smaller_than(

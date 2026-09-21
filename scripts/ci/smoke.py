@@ -81,6 +81,7 @@ PATTERNS = [
     "test_carryover.py",
     "test_workflow_inputs.py",
     "test_publication.py",
+    "test_next_decision.py",
     "test_scoring_nflverse.py",
     "test_verify_league_settings.py",
     "test_ledger*.py",
