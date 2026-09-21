@@ -1293,7 +1293,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     # ------------------------------------------------------------- 9. archive
     out.append("<h2>9. Decision-time archive</h2><div class=\"card\">")
     if d.archive:
-        out.append(f"<p>Written to <code>{_e(d.archive)}</code> — the projections, lineup, "
+        out.append(f"<p>Written to <code>{_e(d.archive.name)}</code> — the projections, lineup, "
                    "alternatives, upgrades, the freshness gate and which actions were "
                    "actually endorsed, as they were on this page. Grading reads that file "
                    "and the week\u2019s actuals only "

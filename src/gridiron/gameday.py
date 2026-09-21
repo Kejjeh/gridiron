@@ -1705,7 +1705,7 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
             out.append("<p class=\"small\"><b>Advised swaps against the box scores so far:</b></p><ul class=\"small\">"
                        + "".join(f"<li>{_e(x)}</li>" for x in p.outcomes) + "</ul>")
         out.append("</div>")
-        out.append(f"<p class=\"small sub\">Record: <code>{_e(p.path)}</code> — frozen at "
+        out.append(f"<p class=\"small sub\">Record: <code>{_e(p.path.name)}</code> — frozen at "
                    f"decision time and not modified by this page.</p>")
     out.append("</div>")
 
