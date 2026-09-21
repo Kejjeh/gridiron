@@ -59,6 +59,7 @@ IMPORTS = [
     "gridiron.carryover",
     "gridiron.dashboard",
     "gridiron.gameday",
+    "gridiron.publication",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on
@@ -79,6 +80,7 @@ PATTERNS = [
     "test_decisions.py",
     "test_carryover.py",
     "test_workflow_inputs.py",
+    "test_publication.py",
     "test_scoring_nflverse.py",
     "test_verify_league_settings.py",
     "test_ledger*.py",

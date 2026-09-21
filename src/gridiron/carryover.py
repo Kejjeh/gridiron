@@ -13,7 +13,7 @@ each run empty. Two features quietly stopped working as a result:
     when the decision was live. A record that never outlives its run cannot
     be graded next week, which is the whole point of freezing it.
 
-This module moves those records between the runner and a private store, with
+This module moves those records between the runner and a carry store, with
 one rule running through it: **a restored record is untrusted input.** It was
 written by an earlier run, but nothing about a file on disk proves that. So
 every candidate is validated before it is allowed to count as evidence, and

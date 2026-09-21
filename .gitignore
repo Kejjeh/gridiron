@@ -50,3 +50,7 @@ docs/review/gameday/pregame_stale*.png
 
 # Cloud carryover store (private decision records restored from a cache)
 .carry/
+
+# The packaged public site (two allowlisted pages plus an index), rebuilt
+# by scripts/cloud/pages_site.py from the render directory; never committed.
+.site/

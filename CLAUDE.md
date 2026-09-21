@@ -26,9 +26,13 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   --write`; scenarios + phone-fit check: `scripts/weekly/dashboard_scenarios.py
   --screenshot`. Freshness GATES actions (`gridiron.gating`), locks are
   three-valued, absence is NEVER a bye unless the schedule declares one, and
-  the board is built in the cloud as a private artifact with its records AND
+  the board is built in the cloud hourly (best effort) with its records AND
   its last-good inputs carried between runs by `gridiron.carryover` (an
-  Actions cache, not durable storage). Game Day (`scripts/weekly/gameday.py`,
+  Actions cache, not durable storage). The repo and the personalised pages
+  are PUBLIC by owner decision (2026-09-21): `gridiron.publication` packages
+  exactly two allowlisted HTML files for GitHub Pages under the
+  `GRIDIRON_PUBLIC_PUBLICATION` opt-in — never JSON, cache or archive — and
+  artifacts, caches and logs are public too. Game Day (`scripts/weekly/gameday.py`,
   scenarios A-F in `gameday_scenarios.py --screenshot --browser`): platform
   actuals only, game status OBSERVED or UNKNOWN (never inferred from the
   clock), every archived move re-judged NOW by player id against freshness,

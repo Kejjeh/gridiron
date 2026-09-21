@@ -3,7 +3,9 @@ same way the Python model does — statuses, locks, points, the lead, the
 capacity sentence, and every action's availability and reason.
 
 The script is run under Node (pre-installed on the build machine, not a
-dependency of the repo) with a stub DOM; the test is skipped, and says so,
+dependency of the repo) with a stub DOM, its stdout decoded as UTF-8
+explicitly (the page text carries typographic quotes; a Windows console
+codepage turned every case into a decode error); the test is skipped, and says so,
 when Node is absent. Both sides read one embedded payload: the page's own
 `gd-data` block, which is what the browser reads.
 """
@@ -53,7 +55,7 @@ def _js_view(day: gd.GameDay, tmp_path: Path) -> dict:
     runner = tmp_path / "run.js"
     runner.write_text(_RUNNER, "utf-8")
     proc = subprocess.run([NODE, str(runner), str(js), str(data)], capture_output=True, text=True,
-                          timeout=60)
+                          encoding="utf-8", timeout=60)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
@@ -103,6 +105,9 @@ CASES = {
     "unknown_id": {"players": {k: v for k, v in T.PLAYERS.items() if k != "5"}},
     "empty_slot": {"snap": T.snapshot(my_starters=("1", "2", "0", "4", "SEA"),
                                       my_points=(14.0, 0.0, 0.0, 7.0, -1.0))},
+    "unknown_word": {"fd": T.feed({"KC": "unrecognized_live_status", "LAR": "pre_game"})},
+    "canceled_incoming": {"fd": T.feed({"LAR": "canceled", "KC": "pre_game"})},
+    "canceled_outgoing": {"fd": T.feed({"KC": "canceled", "LAR": "pre_game"})},
 }
 
 

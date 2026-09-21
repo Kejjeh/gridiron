@@ -1,4 +1,4 @@
-"""Move frozen decision records between an ephemeral runner and a private store.
+"""Move frozen decision records between an ephemeral runner and a carry store.
 
     PYTHONPATH=src python scripts/cloud/carryover.py restore --store .carry
     PYTHONPATH=src python scripts/cloud/carryover.py publish --store .carry
@@ -27,8 +27,9 @@ no previous snapshot. `--require` turns an empty restore into a failure for
 a caller that wants to know.
 
 Nothing printed here names a player. The output is filenames, counts and
-reasons, so a public run log of a private repository's job still exposes no
-roster (rule #10).
+reasons, so the run log — public, now that the repository is — exposes no
+roster (rule #10). The store itself is an Actions cache, readable by any
+workflow run in this repository; the owner authorised that with publication.
 """
 from __future__ import annotations
 
@@ -49,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("action", choices=("restore", "publish"))
     ap.add_argument("--store", type=Path, required=True,
-                    help="the private store directory (a restored cache in CI)")
+                    help="the carry store directory (a restored cache in CI)")
     ap.add_argument("--ledger", type=Path, default=None,
                     help=f"decision ledger root (default {DEFAULT_LEDGER})")
     ap.add_argument("--season", type=int, default=SEASON_YEAR)

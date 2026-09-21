@@ -1,0 +1,66 @@
+{
+ "site": "/tmp/tmpxjhnyab5/site",
+ "width": 375,
+ "static": [],
+ "executed": true,
+ "hits": [
+  "/__harness",
+  "/__wait",
+  "/gridiron/",
+  "/gridiron/gameday_latest.html",
+  "/gridiron/dashboard_latest.html",
+  "/gridiron/gameday_latest.html",
+  "/gridiron/dashboard_latest.json",
+  "/gridiron/gameday_latest.json",
+  "/__done",
+  "/favicon.ico"
+ ],
+ "steps": [
+  {
+   "page": "root",
+   "landed": "/gridiron/gameday_latest.html",
+   "title": "Game Day \u2014 week 3",
+   "fit": {
+    "viewport": 375,
+    "clientWidth": 360,
+    "scrollWidth": 360,
+    "overflow": 0
+   },
+   "links": [
+    "dashboard_latest.html"
+   ]
+  },
+  {
+   "page": "board",
+   "landed": "/gridiron/dashboard_latest.html",
+   "title": "Week 3 decision dashboard",
+   "fit": {
+    "viewport": 375,
+    "clientWidth": 360,
+    "scrollWidth": 360,
+    "overflow": 0
+   },
+   "linkToGameday": "gameday_latest.html"
+  },
+  {
+   "page": "gameday-again",
+   "landed": "/gridiron/gameday_latest.html",
+   "title": "Game Day \u2014 week 3"
+  }
+ ],
+ "gameday": {
+  "script": true,
+  "buttonDisabledAtLoad": false,
+  "modeAtLoad": "SNAPSHOT",
+  "tap": {
+   "buttonDisabledAfter": false,
+   "waitedMs": 601,
+   "mode": "SNAPSHOT (refresh failed)",
+   "status": "Refresh failed: scores not refreshed: Failed to fetch; last good kept. Showing the last good data from 2026-09-26 11:57 UTC (cloud snapshot). NFL state could no",
+   "hasState": true
+  },
+  "linkToBoard": "dashboard_latest.html"
+ },
+ "jsonStatus": 404,
+ "jsonStatus2": 404
+}

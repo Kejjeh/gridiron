@@ -7,18 +7,29 @@ main. Not merged. The head is named in the PR body and in the verification
 section below.** The per-finding history of the five review passes lives in
 `docs/DECISIONS.md` and the PR body, not here.
 
+**The repository is PUBLIC and the personalised pages are going public**, by
+explicit owner decision on 2026-09-21 (Astra flipped visibility and
+configured Pages, build type workflow, at `https://kejjeh.github.io/gridiron/`;
+no deployment has happened yet). The publication pass on this branch is
+described in "Publication — public Pages" below: its release is the owner's
+and Astra's to perform, and nothing on this branch performs it.
+
 The desktop five-minute sync is **installed but its scheduled task is
 DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud:
-`.github/workflows/sleeper-sync.yml` (hourly, gated on the
-`GRIDIRON_CLOUD_SYNC_ENABLED` repository variable and on the repo being
-private) and `.github/workflows/dashboard-artifact.yml`, which renders the
-board AND the Game Day page and uploads both as one private artifact.
+`.github/workflows/sleeper-sync.yml` (hourly) and
+`.github/workflows/dashboard-artifact.yml` (hourly, renders the board AND
+the Game Day page, uploads both as a run artifact and, under the publication
+opt-in, deploys the two pages to GitHub Pages). Both are gated on the
+`GRIDIRON_CLOUD_SYNC_ENABLED` repository variable and, now that the repo is
+public, on `GRIDIRON_PUBLIC_PUBLICATION` being exactly `true` as well.
 Nothing depends on a PC being awake.
 
 No identifiers in this file: the league id and the owner's Sleeper handle live
 in `src/gridiron/league_config.py`, and every rendered roster artifact — the
 weekly report, the board, the Game Day page, the decision archive — is
-gitignored. Nothing here names a player the owner holds.
+gitignored. Nothing here names a player the owner holds. (Public now means
+the pages, artifacts, caches and logs are readable by anyone; the tree and
+this file still carry no roster, so a clone is not a roster export.)
 
 ## The product, in two pages
 
@@ -154,28 +165,33 @@ freshness), which is how the scenarios and tests pin a Saturday.
 
 `.github/workflows/dashboard-artifact.yml` runs on GitHub's Linux runners,
 refreshes the Sleeper snapshot and the game-status feed, pulls the week's
-nflverse frames, renders the board and then the Game Day page, and uploads
-both as a **private, repo-scoped artifact** (14-day retention). It carries
-the same two gates as the Sleeper sync: it does nothing unless the repository
-variable `GRIDIRON_CLOUD_SYNC_ENABLED` is exactly `true` (it already is), and
-it refuses if the repository ever stops being private. The Game Day step is
-`continue-on-error`, so a missing Game Day page never costs the board.
+nflverse frames, renders the board and then the Game Day page, uploads both
+(with their JSON records) as the `dashboard` run artifact (14-day retention;
+on a public repository any signed-in GitHub user can download it), and then
+— only under the publication opt-in — packages exactly two HTML files and
+deploys them to GitHub Pages. Gates: the repository variable
+`GRIDIRON_CLOUD_SYNC_ENABLED` exactly `true` (it already is) and, because the
+repository is public, `GRIDIRON_PUBLIC_PUBLICATION` exactly `true` (not yet
+set; the moment visibility flipped, both workflows stopped by design and stay
+stopped until it is). The Game Day step is `continue-on-error`, so a missing
+Game Day page never costs the board; it does cost the deploy, on purpose.
 
-Cadence is rule #8 shaped, in UTC: Wednesday 08:41, Friday 22:41 and Sunday
-14:41, plus manual dispatch with an optional week — passed through `env:`,
-never interpolated into a shell command, and refused unless it is a bare
-ASCII integer in 1-22. These are best-effort GitHub crons: runs get delayed
-and dropped under load, which is why the board gates on input age and why
-the Game Day page carries its own refresh instead of relying on a schedule.
+Cadence is hourly at :41 UTC, best effort, plus manual dispatch with an
+optional week — passed through `env:`, never interpolated into a shell
+command, and refused unless it is a bare ASCII integer in 1-22. GitHub crons
+get delayed and dropped under load, which is why the board gates on input
+age and why the Game Day page carries its own refresh: scores and game
+statuses renew on a tap in the browser; designations, positions, kickoffs
+and the pregame record renew only when a build succeeds, and the page says
+so. There is no guarantee of live advice or live injury news.
 
-**Option A — the artifact download — is the delivery**, unchanged: four taps
-on a phone, no service, no hosting, no auth, private by the repository's own
-access control. What is new is that the downloaded Game Day file can refresh
-itself from Sleeper's public read API with one tap, because Sleeper's API
-sends `Access-Control-Allow-Origin: *` and a `file://` page is allowed to
-fetch it. Committing the page to a branch or pushing it to a file host were
-both declined: each widens where roster data lives, and neither was
-authorized.
+**The public site is the delivery**: `https://kejjeh.github.io/gridiron/`
+opens Game Day, which links to the board, which links back. The page's
+refresh works from that origin because Sleeper's API sends
+`Access-Control-Allow-Origin: *` (re-checked 2026-09-21 with the site's
+origin). The artifact download still works as before. Committing a rendered
+page to a branch remains declined: the site is built from a run, never from
+the tree.
 
 ### Carrying history across runs, and what that retention is really worth
 
@@ -529,13 +545,87 @@ on main — the draft board, ADP and competition tables — are left alone. They
 are keyed by player id and expose no roster; an id column is not a roster, and
 treating it as one would ban the public files rule #10 exists to keep.
 
-One item for the owner: some of those pre-existing tracked files under
-`data/outputs/` do contain the owner's Sleeper display name in a column. That
-predates this branch and is unchanged by it. Widening was avoided; whether to
-narrow it is the owner's call.
+Those pre-existing tracked files under `data/outputs/` contain the owner's
+Sleeper display name and other members' ids in a column. The owner resolved
+that on 2026-09-21 by authorising the public repository as it stands; nothing
+was narrowed or rewritten. What the tree still never holds is a rendered
+roster page or a credential: those are gated by test, not by visibility.
+
+## Publication — public Pages (2026-09-21)
+
+Implemented on this branch from `bb49650`; the head is in the PR body. The
+owner authorised the public repository and the personalised pages;
+credentials stay forbidden; nothing here flips a setting, deletes an
+artifact, rewrites history, merges or deploys.
+
+**Correction to the 2026-09-21 audit:** GitHub Pages from a PRIVATE
+repository needs a paid plan (Pro, Team or Enterprise), not Free. On Free the
+repository must be public for Pages at all, which is what the owner chose.
+
+What changed, and where it is held:
+
+| change | where | held by |
+|---|---|---|
+| public-repository opt-in on both workflows (`GRIDIRON_PUBLIC_PUBLICATION == 'true'`, OR-ed with the old private clause, under the sync flag) | both workflow `if:` gates | `test_a_public_repository_builds_only_under_the_explicit_opt_in` |
+| schedule + dispatch only; no `pull_request`, ever | `on:` blocks | `test_the_only_triggers_are_the_schedule_and_a_manual_dispatch` |
+| a separate `publish` job holds the only `pages: write` / `id-token: write`, targets the `github-pages` environment, runs after a successful render whose package step succeeded, only under the opt-in and only on schedule/dispatch; concurrency and timeout on every job | `dashboard-artifact.yml` | `test_the_deploy_is_a_separate_job_…`, `test_the_deploy_runs_only_after_a_successful_package_…`, `test_every_job_has_a_timeout_…` |
+| every action SHA-pinned (`upload-pages-artifact` v5.0.0 `fc324d3…`, `deploy-pages` v5.0.1 `368f825…`, both node24; existing pins unchanged) | `uses:` lines | `test_every_action_is_pinned_to_a_full_commit_sha` |
+| the package is exactly `index.html` (redirect to Game Day) + the two pages, verbatim; missing/empty page, stray file or forbidden string refuses with nothing written; last good site stays up | `gridiron.publication`, `scripts/cloud/pages_site.py build` | `test_the_package_is_exactly_the_allowlist_copied_verbatim`, `test_a_missing_page_refuses_…`, `test_a_credential_or_private_path_in_a_page_refuses_…`, `test_a_stray_file_…`, `test_the_cli_refuses_with_exit_1_and_names_no_player` |
+| the Pages artifact is `.site/` and nothing else — no JSON, cache, archive or `.carry` | `upload-pages-artifact` step | `test_the_pages_artifact_is_the_packaged_directory_and_nothing_else` |
+| served under `/gridiron/` at 375 px: root lands on Game Day, script runs from the site origin, one refresh tap against an unreachable host keeps last good and re-enables the button, Game Day → board → Game Day by the pages' own anchors, no sideways scroll, JSON 404 beside the pages | `pages_site.py check`, `docs/review/gameday/pages_check_375.json` | `test_the_served_site_opens_game_day_links_both_ways_and_fits_a_phone` (skips, with reason, without Chromium) |
+| privacy claims removed; public artifacts, caches and logs stated as public | workflow comments, `docs/CLOUD_SYNC.md`, carryover docstrings, `CLAUDE.md` | `test_the_workflow_states_that_public_artifacts_and_caches_are_public` |
+| **release blocker folded in:** a move is endorsed only when every player's game is positively reported pre-game by a current feed; an unknown status word on a fresh feed, and a canceled game on either side, withhold it with the score shown — Python and inline script alike | `gameday._judge_action`, `gameday._JS` | `test_a_fresh_feed_with_an_unknown_status_word_is_not_permission`, `test_a_canceled_game_on_either_side_withholds_the_move`, parity `unknown_word` / `canceled_incoming` / `canceled_outgoing` |
+| Windows parity: Node stdout decoded as UTF-8 explicitly (no assertion weakened); the browser harness pipes already decode bytes as UTF-8 and were audited unchanged | `tests/test_gameday_parity.py` | the 18 parity cases |
+
+Measured on this head, in this container (Linux, Python 3.11, Node 22,
+headless Chromium present):
+
+| check | result |
+|---|---|
+| `run_summary.py -- python -m pytest` | **664 passed, 0 skipped, 0 failed** (631 at `bb49650`). On a machine without Chromium 3 tests skip with reason (two Game Day drives, the served-site check); without Node the 18 parity cases skip |
+| `python scripts/ci/smoke.py` | PASS — 28 imports, 31 contract files (`gridiron.publication` and `test_publication.py` added) |
+| `pytest tests/test_publication.py` | 27 passed |
+| `pytest tests/test_gameday*.py` | 103 passed (58 + 3 new model, 8 feed, 18 parity, 17 CLI) |
+| `pages_site.py build` on the synthetic pregame render | three files: `dashboard_latest.html`, `gameday_latest.html`, `index.html`; the refusal path exits 1 with `REFUSED: missing required page` and writes nothing |
+| `pages_site.py check --width 375` | PASS: root → `/gridiron/gameday_latest.html`, viewport 375 px, content 360 px beside the scrollbar, overflow 0 on both pages; refresh tap → `SNAPSHOT (refresh failed)`, "last good kept", button back after 601 ms; board and back by anchor click; both JSON records 404 |
+| `python -m compileall src/gridiron scripts` | clean |
+| Sleeper CORS from the site's origin | `curl -H "Origin: https://kejjeh.github.io"` on `/v1/state/nfl` → `access-control-allow-origin: *` |
+| official Pages requirements | `actions/deploy-pages` README (2026-09-21): dedicated job, `pages: write` + `id-token: write`, `github-pages` environment, artifact from `upload-pages-artifact`, Pages source set to GitHub Actions — all met; v5 of both actions runs on node24 |
+
+**Release commands (Astra / owner; nothing on this branch runs them):**
+
+1. Review and merge PR #4 to `main` (the schedule only fires from the
+   default branch).
+2. Set the repository variable `GRIDIRON_PUBLIC_PUBLICATION` to `true`
+   (Settings → Secrets and variables → Actions → Variables).
+   `GRIDIRON_CLOUD_SYNC_ENABLED` stays `true`. Pages source is already
+   "GitHub Actions"; the `github-pages` environment is created by the first
+   deploy — optionally restrict it to `main`.
+3. Dispatch **Sleeper cloud sync** once and confirm a `sleeper-snapshot`
+   artifact; then dispatch **Weekly dashboard artifact** once with the week
+   blank. Expected: `render` succeeds, the step summary names no player,
+   `publish` runs and reports the URL.
+4. Open `https://kejjeh.github.io/gridiron/` on a phone: it lands on Game
+   Day; tap Refresh (mode LIVE, three read-only GETs); follow "← pregame
+   board" and "Game Day →". Confirm `…/gridiron/gameday_latest.json` is 404.
+5. Leave the hourly schedule to run; the site updates only when a run
+   packages both pages. A failed hour leaves the previous site up, dated by
+   its own pages.
+
+**Exclusions, stated:** the hosted workflow still has never run, so the
+deploy job, the Pages artifact upload and the `github-pages` environment are
+verified against the actions' documented contracts and the workflow text,
+not by a run — that first dispatch is step 3 above. The 375 px check is a
+headless-browser measurement of the synthetic fixture pages under a loopback
+`/gridiron/` prefix, not the live site. The refresh tap in that check hits an
+unreachable host on purpose (the fixture drives script the responses; the
+real network path was verified at `6ca863b` and CORS re-checked today).
+Nothing was deleted, no setting was changed, no history was rewritten.
 
 ## Next — the release checklist
 
+0. **Publication release** — the five commands above, in order, after
+   Astra's review of this head.
 1. **Astra review of this head.** Render both pages from the live cache
    (`dashboard.py --write` then `gameday.py --write`), open
    `gameday_latest.html`, tap Refresh, and check the mode line reads LIVE
@@ -556,8 +646,9 @@ narrow it is the owner's call.
 5. **DST scoring** and **the rule #5 gate** for anything beyond the
    baseline, unchanged from before.
 
-Merge, deploy, workflow activation and any league write remain the owner's
-and the release's decisions; nothing in this branch performs them.
+Merge, deploy, the publication variable, workflow activation and any league
+write remain the owner's and the release's decisions; nothing in this branch
+performs them.
 
 ## Live sync: the guarantees, and where each is held
 
@@ -772,8 +863,10 @@ and the release's decisions; nothing in this branch performs them.
   projection. Game Day shows earned points and who can still earn them.
 - No inference of a game's state from the clock, from a zero, or from an
   absent row. The feed says it or the page says UNKNOWN.
-- No hosting, no auth, no tunnel, no desktop service and no second host in
-  the page's connect policy for delivery; the artifact plus one tap is it.
+- No auth, no tunnel, no desktop service and no second host in the page's
+  connect policy. Hosting is GitHub Pages, from a run, never from the tree;
+  the site is public by owner decision and the page's connect policy is
+  unchanged.
 - No fetch on load and no background polling.
 - No fetch of the player dump from the page: a refresh renews the roster,
   scores and game statuses, and says that designations, positions, kickoff

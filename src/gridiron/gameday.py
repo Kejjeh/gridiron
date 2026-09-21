@@ -1233,10 +1233,21 @@ def _judge_action(raw: Mapping[str, object], *, generated: datetime | None, now:
                       f"shown legal")
         if p.game.state in (PLAYING, FINAL, SUSPENDED):
             return no(f"{p.name}'s game is {p.game.state} per the feed")
+        if p.game.state == CANCELED:
+            # Either side of the move: a player in a canceled game cannot be
+            # started into points, and a comparison the board made assuming
+            # both games would be played is not re-modelled here.
+            return no(f"{p.name}'s game is CANCELED per the feed; the board's comparison "
+                      f"assumed it would be played, and this page does not re-model it")
         if not p.game.current:
             return no(f"{p.name}'s game status is UNCONFIRMED ({p.game.note}); the schedule "
                       f"says not started, but a kickoff time alone does not prove it, so "
                       f"the move is not shown legal")
+        if p.game.state != NOT_STARTED:
+            # A current feed whose word this page does not know: freshness is
+            # not permission. Only an observed pre-game status endorses a move.
+            return no(f"{p.name}'s game status is UNKNOWN ({p.game.note}); only an observed "
+                      f"pre-game status makes a move endorsable, so it is not shown legal")
     # ---- placement: who moves in, who moves out, and where
     incoming = by_id[ids[0]] if kind in ("swap", "inactive_starter", "empty_slot") else None
     outgoing = None
@@ -1931,7 +1942,9 @@ function judge(a,nowMs,byId,starterIds,emptySlots,blockers){
     if(p.lock==='LOCKED') return no(p.name+' is LOCKED — '+p.lock_note);
     if(p.lock!=='OPEN') return no(p.name+'’s lock state is UNKNOWN ('+p.lock_note+'); a move cannot be shown legal');
     if(p.state==='PLAYING'||p.state==='FINAL'||p.state==='SUSPENDED') return no(p.name+'’s game is '+p.state+' per the feed');
-    if(!p.game.current) return no(p.name+'’s game status is UNCONFIRMED ('+p.game.note+'); the schedule says not started, but a kickoff time alone does not prove it, so the move is not shown legal'); }
+    if(p.state==='CANCELED') return no(p.name+'’s game is CANCELED per the feed; the board’s comparison assumed it would be played, and this page does not re-model it');
+    if(!p.game.current) return no(p.name+'’s game status is UNCONFIRMED ('+p.game.note+'); the schedule says not started, but a kickoff time alone does not prove it, so the move is not shown legal');
+    if(p.state!=='NOT STARTED') return no(p.name+'’s game status is UNKNOWN ('+p.game.note+'); only an observed pre-game status makes a move endorsable, so it is not shown legal'); }
   var incoming=(a.kind==='swap'||a.kind==='inactive_starter'||a.kind==='empty_slot')?byId[ids[0]]:null, outgoing=null;
   if(a.kind==='swap'&&ids.length>=2){ outgoing=byId[ids[1]];
     if(starterIds.indexOf(outgoing.sleeper_id)<0||starterIds.indexOf(incoming.sleeper_id)>=0) return no('the lineup already differs from the one this advice was about (an observation, not proof that you acted on it)'); }
@@ -2065,7 +2078,7 @@ function renderActions(vm){ var root=clear($('gd-actions')); root.appendChild(el
   else if(!vm.actions.length) root.appendChild(el('p','sub','The pregame board listed no action for this week.'));
   else { if(live.length) live.forEach(function(a){ root.appendChild(actCard(a)); }); else root.appendChild(el('p','sub','None of the pregame board’s actions is still available.'));
     if(held.length){ var det=el('details'); det.appendChild(el('summary',null,held.length+' pregame item(s) not available now')); held.forEach(function(a){ det.appendChild(actCard(a)); }); root.appendChild(det); } }
-  root.appendChild(el('p','small sub','Legal means: both players proven unlocked by the schedule, not under way per a current feed, on the active roster, still where the advice left them, eligible for the slot, not listed out, with the roster, designations and schedule all current. Re-judged at every tick; a refresh renews the roster and scores only. Nothing is ever submitted to Sleeper.')); }
+  root.appendChild(el('p','small sub','Legal means: both players proven unlocked by the schedule, reported pre-game by a current feed (an unknown or canceled status is never permission), on the active roster, still where the advice left them, eligible for the slot, not listed out, with the roster, designations and schedule all current. Re-judged at every tick; a refresh renews the roster and scores only. Nothing is ever submitted to Sleeper.')); }
 function renderChanges(items,prevStamp,note){ var root=clear($('gd-changes'));
   if(items.length){ root.appendChild(el('p','small sub','against your last reliable snapshot of '+prevStamp)); var ul=el('ul','chg');
     items.forEach(function(c){ var l=el('li'); l.appendChild(el('span','pill',c[0])); l.appendChild(document.createTextNode(' ')); l.appendChild(el('b',null,c[1])); l.appendChild(document.createTextNode(': '+c[2])); ul.appendChild(l); }); root.appendChild(ul); }

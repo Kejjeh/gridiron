@@ -481,6 +481,30 @@ def test_an_unconfirmed_game_status_is_never_legal_advice(schedule, tmp_path):
     assert not stale.actions[0].available and "UNCONFIRMED" in stale.actions[0].why
 
 
+def test_a_fresh_feed_with_an_unknown_status_word_is_not_permission(schedule, tmp_path):
+    """The feed is current and names the game, but with a word this page does
+    not know. Freshness proved the feed, not the game: only an observed
+    pre-game status endorses a move. The score still shows."""
+    d = _actions(schedule, tmp_path, fd=feed({"KC": "unrecognized_live_status", "LAR": "pre_game"}))
+    a = d.actions[0]
+    assert not a.available and "UNKNOWN" in a.why and "unrecognized_live_status" in a.why
+    assert d.score.mine.platform_points == 20.0
+    # the unknown word is on the outgoing side too when it is the incoming's game
+    d2 = _actions(schedule, tmp_path, fd=feed({"LAR": "unrecognized_live_status", "KC": "pre_game"}))
+    assert not d2.actions[0].available and "UNKNOWN" in d2.actions[0].why
+
+
+@pytest.mark.parametrize("team, side", [("LAR", "incoming"), ("KC", "outgoing")])
+def test_a_canceled_game_on_either_side_withholds_the_move(schedule, tmp_path, team, side):
+    """Starting a player whose game is canceled is never endorsed; and a swap
+    the board priced assuming both games would be played is not re-modelled
+    when one of them is canceled. Both sides are withheld, and say so."""
+    d = _actions(schedule, tmp_path, fd=feed({team: "canceled"}))
+    a = d.actions[0]
+    assert not a.available and "CANCELED" in a.why, side
+    assert d.score.mine.platform_points == 20.0
+
+
 # ------------------------------------------------------------ pregame join
 
 def test_no_record_means_a_clear_absence_and_nothing_reconstructed(schedule, tmp_path):

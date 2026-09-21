@@ -1,29 +1,43 @@
 name: Weekly dashboard artifact
 
-# Builds the decision dashboard on GitHub-hosted Linux and uploads it as a
-# PRIVATE, repo-scoped artifact. This is the PC-independent path: the desktop
-# scheduled task is disabled and stays disabled, and nothing here depends on it.
+# Builds the decision dashboard and the Game Day page on GitHub-hosted Linux,
+# uploads both as a run artifact, and — when the owner has opted in by
+# repository variable — publishes the two HTML pages to GitHub Pages. This is
+# the PC-independent path: the desktop scheduled task is disabled and stays
+# disabled, and nothing here depends on it.
+#
+# Publication is authorised. The owner confirmed on 2026-09-21 that the
+# repository AND the personalised pages (the owner's lineup, the advice and
+# its rejected sides) are public. What stays forbidden is unchanged:
+# credentials never enter a tracked file, a log or a page (rule #9), and the
+# workflow never writes to Sleeper.
+#
+# What "public" means for every output of this file, stated so nobody has to
+# infer it later:
+#   * the Pages site is public and unauthenticated; that is its purpose.
+#   * the `dashboard` run artifact (pages AND decision records) is downloadable
+#     by any signed-in GitHub user while it is retained, because the repository
+#     is public. So is the Sleeper snapshot artifact of the sync workflow.
+#   * the Actions cache that carries records and last-good inputs between runs
+#     is readable by any workflow run in this repository, including one from a
+#     fork's pull request — neither workflow here runs on pull_request, and
+#     that must stay so. Public step logs name no player (checked below).
 #
 # What this is NOT, deliberately:
-#   * not a website. No Pages, no hosting, no auth service, no public URL. The
-#     page is a build artifact behind the repository's own access control.
-#   * not a live feed. It renders whatever the Sleeper cloud sync last managed
-#     to cache. The page states the as-of time of every input and withholds the
-#     actions its inputs cannot support, which is the only honest thing a
-#     scheduled build can do about news that breaks between runs.
-#   * not a refresh guarantee. A cron schedule says when a job is QUEUED.
-#     GitHub delays and drops scheduled runs under load, and an injury
-#     designation can change minutes before kickoff regardless. Read the
-#     freshness section on the page, never the schedule in this file.
+#   * not a live feed. The site is rebuilt hourly at best; GitHub delays and
+#     drops scheduled runs under load. The Game Day page refreshes scores and
+#     game statuses itself on one tap; designations, positions, kickoffs and
+#     the pregame record are only as fresh as the last successful build, and
+#     the page says so on every refresh. There is no guarantee of live advice
+#     or live injury news.
 #   * not durable storage. See "Carrying history" below.
 #
 # Carrying history. A hosted runner starts empty, so without the two carryover
 # steps below every run was a FIRST run: "since the last snapshot" had nothing
 # to compare against and said nothing had changed, and the frozen decision
 # record died with the container that made it, which makes grading it later
-# impossible. The steps move those records through an Actions cache, which is
-# the repository's own private storage and needs no token, no service and no
-# new dependency.
+# impossible. The steps move those records through an Actions cache, which
+# needs no token, no service and no new dependency.
 #
 # The retention that gives you is real but limited, and worth stating plainly:
 # an Actions cache entry is evicted after 7 days without a read, and evicted
@@ -32,6 +46,15 @@ name: Weekly dashboard artifact
 # has no previous snapshot; it does not invent one. The run artifact below is
 # the copy that survives independently, and it has its own finite retention.
 # Neither of these is a backup.
+#
+# Publishing. `pages_site.py build` copies exactly two files, byte for byte,
+# into .site/ with an index that opens Game Day, and refuses (exit 1, nothing
+# written) when either page is missing or carries a forbidden string. Only
+# that directory is uploaded as the Pages artifact, only when the package
+# step succeeded, and only the `publish` job below holds the permissions to
+# deploy it. A failed render or a refused package uploads no Pages artifact
+# and skips the deploy, so the last good site stays up, dated by its own
+# pages. Nothing restamps a page.
 
 on:
   workflow_dispatch:
@@ -41,13 +64,13 @@ on:
         required: false
         type: string
   schedule:
-    # Cadence-aware (rule #8), in UTC: Wednesday after waivers clear, Friday
-    # after the final practice report, and Sunday morning before the early
-    # kickoffs. Offset off the hour so it does not queue behind the top-of-hour
-    # rush. These are best-effort, like every GitHub cron.
-    - cron: '41 8 * * 3'
-    - cron: '41 22 * * 5'
-    - cron: '41 14 * * 0'
+    # Hourly, best effort, offset off the hour so it does not queue behind the
+    # top-of-hour rush, and 24 minutes after the hourly Sleeper sync so a
+    # fresh snapshot is usually there to render. Hourly is what makes a public
+    # site useful on a game day: the page's own refresh renews scores and
+    # game statuses, but designations and the pregame record only move when
+    # this job runs. A cron says when a job is QUEUED, not when it runs.
+    - cron: '41 * * * *'
 
 permissions:
   contents: read
@@ -58,12 +81,19 @@ concurrency:
 
 jobs:
   render:
-    # The same two gates the Sleeper sync uses: opt-in by repository variable,
-    # and refuse outright if the repository ever becomes public. The page names
-    # the owner's players, so a public run would be a roster export.
-    if: vars.GRIDIRON_CLOUD_SYNC_ENABLED == 'true' && github.event.repository.private == true
+    # The same two gates the Sleeper sync uses. Cloud runs are opt-in by
+    # repository variable, and a run on a PUBLIC repository additionally
+    # needs the explicit publication opt-in: the page names the owner's
+    # players, so without GRIDIRON_PUBLIC_PUBLICATION set to exactly `true`
+    # a public repository builds nothing, as before. The Pages deploy below
+    # needs that second variable too; a private repository never deploys.
+    if: >-
+      vars.GRIDIRON_CLOUD_SYNC_ENABLED == 'true' &&
+      (github.event.repository.private == true || vars.GRIDIRON_PUBLIC_PUBLICATION == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      site: ${{ steps.site.outcome }}
     env:
       PYTHONPATH: src
       CARRY_DIR: .carry
@@ -82,7 +112,7 @@ jobs:
       # entry matching the prefix and then saves a fresh one in its post step
       # — the standard rolling-cache pattern. The post step runs even when a
       # later step fails, so a bad run cannot destroy the chain.
-      - name: Restore the private decision-record store
+      - name: Restore the carried decision-record store
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.CARRY_DIR }}
@@ -185,8 +215,9 @@ jobs:
             # step's actual outcome; a summary that contradicts the job it
             # summarises is worse than no summary.
             if [ "${RENDER_OUTCOME}" = "success" ]; then
-              echo 'Built. Download **dashboard** from this run; open the HTML file'
-              echo 'on any device. It is one self-contained page with no network calls.'
+              echo 'Built. Download **dashboard** from this run, or open the public site'
+              echo 'once the publish job has deployed this run (it deploys only a run'
+              echo 'that packaged BOTH pages; otherwise the last good site stays up).'
             else
               echo "**NOT BUILT — the render step reported \`${RENDER_OUTCOME}\`.**"
               echo 'There is no page from this run. Nothing below describes a page you'
@@ -204,6 +235,7 @@ jobs:
             echo 'after 7 days unused, or sooner under the 10 GB repository limit. A'
             echo 'broken chain shows up as "no previous snapshot" on the page and, if'
             echo 'the refresh also failed, as no page at all — never as "nothing changed".'
+            echo 'This repository is public: the artifact, the cache and this log are too.'
             echo ''
           } >> "$GITHUB_STEP_SUMMARY"
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
@@ -226,18 +258,71 @@ jobs:
               print(f"  - `{line.split('  ')[0]}`")
           PY
 
-      - name: Upload the private dashboard artifact
+      - name: Upload the dashboard run artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dashboard
-          # The rendered page and its decision-time record. Both name the
+          # The rendered pages and their decision-time records. They name the
           # owner's players, which is why they are artifacts rather than
           # commits: data/outputs/dashboard/ and data/ledger/decisions/ are
-          # gitignored (rule #10) and must stay that way.
+          # gitignored (rule #10) and must stay that way. On a public
+          # repository this artifact is downloadable by any signed-in GitHub
+          # user for its retention period; the owner authorised that.
           path: |
             data/outputs/dashboard/*.html
             data/outputs/dashboard/*.json
             data/ledger/decisions/season*/*.json
           if-no-files-found: error
           retention-days: 14
+
+      # The public site is exactly two pages. The packager refuses a partial
+      # or suspect set with nothing written, so this step's outcome is the
+      # deploy's gate: no package, no Pages artifact, no deploy, last good
+      # site stays. It runs only under the publication opt-in, and it is
+      # NOT `if: always()`: a run whose render failed has no site to offer.
+      - name: Package the public site (two allowlisted pages, verbatim)
+        id: site
+        if: vars.GRIDIRON_PUBLIC_PUBLICATION == 'true'
+        run: python scripts/cloud/pages_site.py build --source data/outputs/dashboard --out .site
+
+      # The Pages artifact holds .site/ and nothing else. No JSON record, no
+      # cache, no archive: the packager wrote only the allowlist, and the
+      # path here is that directory, not the render directory.
+      - name: Upload the Pages artifact
+        if: steps.site.outcome == 'success'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: .site
+          retention-days: 1
+
+  # Deployment is its own job so that `pages: write` and `id-token: write`
+  # exist nowhere near the code that fetches, installs and renders. It runs
+  # only after a successful render, only when a Pages artifact was uploaded,
+  # only on the schedule or a manual dispatch (this workflow has no other
+  # trigger, and the check makes that explicit), and only under the
+  # publication opt-in. `actions/deploy-pages` requires exactly these two
+  # permissions, the `github-pages` environment, and the repository's Pages
+  # source set to GitHub Actions (set by the owner, not by this file).
+  publish:
+    needs: render
+    if: >-
+      needs.render.result == 'success' &&
+      needs.render.outputs.site == 'success' &&
+      vars.GRIDIRON_PUBLIC_PUBLICATION == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: gridiron-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the packaged site to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
