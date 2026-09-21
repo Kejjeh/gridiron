@@ -323,3 +323,39 @@ def test_the_served_site_opens_game_day_links_both_ways_and_fits_a_phone(tmp_pat
     assert board["page"] == "board" and board["landed"] == "/gridiron/" + pub.BOARD_PAGE
     assert result["steps"][2]["landed"] == "/gridiron/" + pub.GAMEDAY_PAGE
     assert result["jsonStatus"] == 404 and result["jsonStatus2"] == 404
+
+
+@pytest.mark.parametrize("style", ["posix", "windows"])
+def test_hosted_archive_paths_stay_out_of_both_public_pages(tmp_path, monkeypatch, style):
+    """Real hosted paths, unlike the original fixture directory, contain data/ledger.
+    Keep the immutable archive identifier, never the runner's directory tree.
+    """
+    from dataclasses import replace
+    from pathlib import PurePosixPath, PureWindowsPath
+    from gridiron import dashboard, gameday
+
+    filename = "week03_20260926T120000Z_12345678.json"
+    archive = (PurePosixPath("/home/runner/work/gridiron/gridiron/data/ledger/decisions/season2026")
+               if style == "posix" else
+               PureWindowsPath("C:/Users/Owner/gridiron/data/ledger/decisions/season2026")) / filename
+    board_render, game_render = dashboard.render_html, gameday.render_gameday_html
+
+    def board(d, **kwargs):
+        return board_render(replace(d, archive=archive), **kwargs)
+
+    def game(d, **kwargs):
+        assert d.pregame.found
+        return game_render(replace(d, pregame=replace(d.pregame, path=archive)), **kwargs)
+
+    monkeypatch.setattr(dashboard, "render_html", board)
+    monkeypatch.setattr(gameday, "render_gameday_html", game)
+    result = SCN.render("pregame", tmp_path / "render")
+    assert result["board_rc"] == result["gameday_rc"] == 0
+    source = tmp_path / "render" / "pregame"
+    for name in pub.REQUIRED_PAGES:
+        html = (source / name).read_text("utf-8")
+        assert filename in html
+        assert str(archive) not in html
+        assert "data/ledger/" not in html and "data\\ledger\\" not in html
+    built = pub.build_site(source, tmp_path / "site")
+    assert pub.verify_site(built.site) == []
