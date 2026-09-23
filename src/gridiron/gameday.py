@@ -1178,6 +1178,44 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
                    slots, embedded, state_week=state_week)
 
 
+def _lapse(deadline: object, built: datetime) -> tuple[str, str]:
+    """Attributes that let the page mark a pregame pickup OFF at its first
+    kickoff, and the words to show now when the build itself is already
+    past it (Game Day is usually built after kickoff)."""
+    try:
+        t = datetime.fromisoformat(str(deadline)) if deadline else None
+    except ValueError:
+        t = None
+    if t is None:
+        return "", ""
+    t = (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    text = (f"OFF — the first kickoff among the players involved ({t:%a %d %b %H:%M} UTC) "
+            f"has passed; this pickup can no longer help this week's lineup.")
+    attrs = (f" data-deadline=\"{_e(t.isoformat(timespec='seconds'))}\""
+             f" data-lapse-text=\"{_e(text)}\"")
+    if built >= t:
+        return attrs + " data-live=\"lapsed\"", _e(text)
+    return attrs, ""
+
+
+def _move_deadline(c: Mapping[str, object]) -> str:
+    """The first kickoff among the player coming in and the starter he
+    displaces, as the board wrote it; "" when it cannot be read. Only used
+    to mark the move OFF once it passes — never to call it on."""
+    if isinstance(c.get("deadline"), str) and c.get("deadline"):
+        return str(c["deadline"])
+    disp = c.get("displaces") if isinstance(c.get("displaces"), Mapping) else {}
+    stamps = []
+    for raw in (c.get("kickoff"), disp.get("kickoff")):
+        try:
+            t = datetime.fromisoformat(str(raw)) if raw else None
+        except ValueError:
+            t = None
+        if t is not None:
+            stamps.append(t if t.tzinfo else t.replace(tzinfo=timezone.utc))
+    return min(stamps).astimezone(timezone.utc).isoformat(timespec="seconds") if stamps else ""
+
+
 def summarise_radar(block: object) -> dict:
     """The board's radar, reduced to what Game Day shows: counts, the
     snapshot it was compared against, and the LINEUP candidates. Read as
@@ -1190,7 +1228,7 @@ def summarise_radar(block: object) -> dict:
         if not isinstance(c, Mapping) or c.get("verdict") != "LINEUP":
             continue
         drop = c.get("drop") if isinstance(c.get("drop"), Mapping) else {}
-        moves.append({"id": str(c.get("id") or ""), "name": str(c.get("name") or ""),
+        moves.append({"deadline": _move_deadline(c),"id": str(c.get("id") or ""), "name": str(c.get("name") or ""),
                       "position": str(c.get("position") or ""),
                       "lineup_gain": _num(c.get("lineup_gain")), "slot": str(c.get("slot") or ""),
                       "drop": str(drop.get("name") or ""), "drop_id": str(drop.get("id") or "")})
@@ -1692,10 +1730,13 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
             out.append(f"<p class=\"small warn\">The board abstained: {_e(r.get('abstained'))}</p>")
         if moves:
             out.append("<ul class=\"moves\">" + "".join(
-                f"<li><span class=\"pill ok\">LINEUP</span> <b>{_e(m['name'])}</b> ({_e(m['position'])}) "
-                f"into {_e(m['slot'])}: <span class=\"num lime\">{'+' if (m['lineup_gain'] or 0) > 0 else ''}{_pts(m['lineup_gain'])}</span> to the best "
-                f"legal lineup, at the cost of dropping {_e(m['drop'])} — conditional on availability, "
-                f"which the board could not verify</li>" for m in moves) + "</ul>")
+                f"<li{_lapse(m.get('deadline'), d.generated)[0]}><span class=\"pill\">PREGAME</span> "
+                f"<b>{_e(m['name'])}</b> ({_e(m['position'])}) "
+                f"into {_e(m['slot'])}: <span class=\"num\">{'+' if (m['lineup_gain'] or 0) > 0 else ''}{_pts(m['lineup_gain'])}</span> to the best "
+                f"legal lineup on the pregame numbers, at the cost of dropping {_e(m['drop'])} — "
+                f"conditional on availability, which the board could not verify"
+                f"<span class=\"vstate\">{_lapse(m.get('deadline'), d.generated)[1]}</span></li>"
+                for m in moves) + "</ul>")
         out.append("<p class=\"small sub\">A pickup is not a game-day move: Sleeper processes "
                    "claims on its own clock and this page never re-judges one. The full "
                    "comparison, with every alternative drop, is the "
@@ -1774,6 +1815,7 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
     out.append(f"<script nonce=\"{nonce}\">{_JS}</script>")
     out.append(f"<script nonce=\"{nonce}\">{theme.AGES_JS}</script>")
     out.append(f"<script nonce=\"{nonce}\">{theme.SNAPSHOT_JS}</script>")
+    out.append(f"<script nonce=\"{nonce}\">{theme.VALIDITY_JS}</script>")
     out.append("</main></body></html>")
     return "\n".join(out)
 

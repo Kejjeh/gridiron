@@ -24,10 +24,12 @@ import json
 import os
 import sys
 import urllib.request
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from gridiron import ingest as ing
+from gridiron.carryover import CARRIED_FORWARD
 from gridiron.freshness import CADENCES
 from gridiron.ids import CROSSWALK_URL
 from gridiron import livesync as ls
@@ -62,6 +64,45 @@ def _weeks(frame) -> list[int]:
     return sorted({int(w) for w in frame["week"].dropna().unique()})
 
 
+def refresh_after_hours(name: str, now: datetime) -> float:
+    """Re-pull a source once it is older than HALF the freshness limit in
+    effect now. The limit tightens on game days (injuries 48 h → 12 h, the
+    player dump 24 h → 6 h); a threshold taken from the weekday limit would
+    leave the source skipped as "cached" for hours after the gate already
+    calls it STALE, withholding every action while a run every 15 minutes
+    did nothing about it."""
+    return CADENCES[name].limit_for(now) / 2
+
+
+def _current(manifest: ing.Manifest, name: str, now: datetime) -> bool:
+    """True when `name` need not be fetched this run.
+
+    A source restored by `gridiron.carryover` arrives marked CARRIED
+    FORWARD, which `age_ok` treats as a failed refresh. Taken alone that
+    made every cloud run re-download every frame and the 16 MB player dump
+    (about 96 times a day at a 15-minute schedule) whatever its age. A
+    carried entry keeps the as-of of the pull that fetched it, so it is
+    judged exactly as a local cache is — by that age — and, when it is
+    within the threshold, the carried mark is cleared and the as-of is left
+    untouched. Nothing is restamped. A carried entry past the threshold
+    keeps its mark and is fetched; if that fetch fails the mark stays and
+    the gate withholds as before.
+    """
+    hours = refresh_after_hours(name, now)
+    if manifest.age_ok(name, now, hours):
+        return True
+    e = manifest.get(name)
+    if e is None or e.error != CARRIED_FORWARD or manifest.file(name) is None:
+        return False
+    as_of = e.as_of_dt
+    if as_of is None or (now - as_of).total_seconds() / 3600.0 > hours:
+        return False
+    manifest.entries[name] = replace(e, error="")
+    print(f"  {name}: carried from an earlier run, pulled {e.as_of} (within "
+          f"{hours:g} h) — kept, not re-fetched")
+    return True
+
+
 def pull_nflverse(manifest: ing.Manifest, season: int, now: datetime,
                   force: bool) -> None:
     import nflreadpy as nfl
@@ -77,8 +118,7 @@ def pull_nflverse(manifest: ing.Manifest, season: int, now: datetime,
                      "nflreadpy.load_injuries"),
     }
     for name, (fn, source) in jobs.items():
-        cadence = CADENCES[name]
-        if not force and manifest.age_ok(name, now, cadence.max_age_hours / 2):
+        if not force and _current(manifest, name, now):
             print(f"  {name}: cached, skipping")
             continue
         path = manifest.directory / f"{name}.parquet"
@@ -97,7 +137,7 @@ def pull_nflverse(manifest: ing.Manifest, season: int, now: datetime,
 
 def pull_crosswalk(manifest: ing.Manifest, now: datetime, force: bool) -> None:
     name = "crosswalk"
-    if not force and manifest.age_ok(name, now, CADENCES[name].max_age_hours / 2):
+    if not force and _current(manifest, name, now):
         print("  crosswalk: cached, skipping")
         return
     path = manifest.directory / "crosswalk.csv"
@@ -161,7 +201,7 @@ def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
     name = "sleeper_players"
     if not with_players:
         print("  sleeper_players: skipped (--no-players)")
-    elif not force and manifest.age_ok(name, now, 24.0):
+    elif not force and _current(manifest, name, now):
         print("  sleeper_players: cached, skipping")
     else:
         path = manifest.directory / "sleeper_players.json"

@@ -484,6 +484,11 @@ def weeks_in(ledger: Path, season: int) -> tuple[int, ...]:
 #   every action resting on it (`gridiron.gating`). A carried-forward page
 #   therefore shows the last known comparison and recommends nothing.
 #
+#   A carried entry still within its refresh threshold is not a failed
+#   refresh: `pull_week.py` judges it by the as-of of the pull that fetched
+#   it, as it would a local cache, and clears the mark without touching the
+#   as-of. Without that, the mark made every run re-download every input.
+#
 #   A successful refresh overrides it. `pull_week.py` loads the manifest from
 #   disk and `Manifest.record` clears the error for whatever it pulled, so a
 #   run where Sleeper works and nflverse does not carries exactly the entries

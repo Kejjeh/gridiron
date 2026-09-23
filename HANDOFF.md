@@ -18,7 +18,10 @@ available player verdicted against the roster, diffed by id between records,
 a shared design and navigation across both pages, a published-build check in
 the browser, and a 15-minute best-effort cloud cadence. It is a draft for
 Astra's review; nothing on it merges, deploys or flips a variable, and the
-cadence change takes effect only when main carries it.
+cadence change takes effect only when main carries it. A skeptical
+**release-review pass** (2026-09-23, "Release review — Free Agent Radar"
+below) found and fixed eight defects on top of `64dc8eb`; its evidence is
+self-tested, not yet independently reviewed.
 
 The desktop five-minute sync is **installed but its scheduled task is
 DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud:
@@ -624,7 +627,7 @@ rules and the publication allowlist are untouched):
 | One design system for both pages: charcoal/navy tokens, lime and cyan accents, tabular numerals, cards, badges, tables, controls, focus rings, reduced-motion and print rules; a sticky three-tab navigation (Game Day · Board · Free Agents) with `aria-current`; a dated header strip (league snapshot, projections evidence, designations, page built) whose ages tick in the browser without fetching | `gridiron.theme` (new), both renderers |
 | The published-build check: every five minutes while the tab is visible, a conditional GET of the page's OWN URL on the hosting origin (`connect-src 'self'`), 304 when unchanged, a banner with a Reload control when the served build stamp is newer, an "older build" note when a deploy or cache lags, backoff doubling to 30 minutes on any failure (429 named), one timer cleared before it is re-armed, an in-flight guard, Pause/Resume and Check now, filters and scroll position carried across the reload, and a plain "off" status when the file is opened from disk. It never swaps content under the reader and never claims the cloud schedule is real time | `theme.SNAPSHOT_JS`, `snapshot_html`, `build_meta` |
 | Game Day: the shared theme and navigation, the header strip, the published-build check, and a "Free agents — what the pregame board found" card read from the pregame record's radar block (counts, snapshot as-of, LINEUP candidates with gain and drop, conditional on availability). A pickup is still never a game-day move and is never re-judged there; a record without the block says so | `gameday.summarise_radar`, `PregameView.radar`, `render_gameday_html` |
-| Cadence: `dashboard-artifact.yml` runs at 7, 22, 37 and 52 minutes past each hour (best effort; GitHub queues and drops scheduled runs). The Sleeper snapshot (five small GETs) refreshes each run; the 16 MB player dump and the nflverse frames refresh only past half their cadence, as before; carried inputs keep their original observation times. One carryover cache entry per run; the rolling restore-keys pattern tolerates eviction. The hourly `sleeper-sync.yml` is unchanged | `.github/workflows/dashboard-artifact.yml` |
+| Cadence: `dashboard-artifact.yml` runs at 7, 22, 37 and 52 minutes past each hour (best effort; GitHub queues and drops scheduled runs). The Sleeper snapshot (five small GETs) refreshes each run; the 16 MB player dump and the nflverse frames refresh only past half the limit IN EFFECT (see the release review: before it, carried inputs were re-downloaded on every run); carried inputs keep their original observation times. One carryover cache entry per run; the rolling restore-keys pattern tolerates eviction. The hourly `sleeper-sync.yml` is unchanged | `.github/workflows/dashboard-artifact.yml` |
 | Scenarios: `hold` (fresh inputs, empty pool, best lineup already started → HOLD), `sparse` (week-1 box scores for a third of the players → missing evidence), two-run `taken` (one player claimed, one released → "now owned" / "newly available"), `roster_changed` (the owner dropped a player → section 3 GONE, radar re-priced), `next_week` (week 4 → "week rollover — no comparison"); captures at 375, 768 and 1440 with a fit check at each; `--browser` drives the radar controls and the published-build check against a loopback fixture (200/304, 429, dropped socket, hang, recovery, in-flight guard, newer build, pause/resume, reload) | `dashboard_scenarios.py`, `scripts/weekly/radar_drive.py` (new) |
 
 **Before / after on the cached real league** (same cache, no league write;
@@ -656,6 +659,87 @@ per-position cap (12) leaves the long tail UNRANKED and says so. Ages in
 the header trust the device clock. No FAAB, no rest-of-season value, no
 probabilities. Not covered here: no Windows run; no live deploy; no
 real-week grading.
+
+## Release review — Free Agent Radar (2026-09-23)
+
+One bounded skeptical pass over `64dc8eb` (production stays `b24d1f4`).
+Every defect below was reproduced by a failing test before its fix
+(`tests/test_radar_validity.py`, 17 tests; the browser drive in
+`scripts/weekly/radar_drive.py` gained wrong-page, garbled-stamp, online and
+validity steps). Labels: SYNTHETIC = committed fixtures; CACHED = the real
+local cache at a frozen instant; nothing here is LIVE.
+
+**Fixed.**
+
+| # | Defect (user impact) | Fix | Where |
+|---|---|---|---|
+| 1 | A board left open (or re-served by Pages after the cloud stopped) kept presenting LINEUP pickups, research rows and ACTIONABLE/CONDITIONAL cards as current after kickoff and after the evidence expired; the header ages were the only signal, and "All inputs current." stayed green | The build writes the instant its gated evidence expires (`freshness.expires_at`, `gating.valid_until`, same cadences as the gate) and every row/card's kickoff deadline; `theme.VALIDITY_JS` re-judges both on the reader's clock every 30 s and on focus: EXPIRED / OFF / LOCKED in place, verdict filter and KPI follow, a banner names the expired source. A stale build marks its LINEUP rows WITHHELD in the row itself | `freshness.py`, `gating.py`, `theme.py`, `dashboard.py` |
+| 2 | Game Day's pregame card showed a lime LINEUP pill after kickoff | PREGAME pill, "on the pregame numbers", OFF at the first kickoff (pre-filled when the build is already past it) | `gameday.py` |
+| 3 | `diff_radar` compared across seasons/baselines/slots/scoring weights | Any basis difference is "no comparison"; block v2 carries a scoring digest | `radar.py` |
+| 4 | An OLDER restored input was reported as "Refreshed"; unreadable, vanished or future-dated stamps were skipped | Stamps compared as instants; each case is an evidence item, never a refresh | `radar.py` |
+| 5 | A LINEUP move whose drop, displaced starter or gain changed on the roster side was invisible (only verdict/projection moved counted) | `lineup` change naming drop/displaced/gain and saying the player's projection did not move; a `roster` item names adds/removes | `radar.py` |
+| 6 | Every cloud run re-downloaded every nflverse frame, the crosswalk and the 16 MB player dump (the carry marks restored inputs failed, and `age_ok` never skips a failed entry): ~96 player dumps a day at 15 minutes, ~24 on production's hourly cron | A carried entry within its threshold is judged by its pull time and the mark cleared, as-of untouched | `scripts/ingest/pull_week.py` |
+| 7 | Refresh thresholds used the weekday limit, so on game days injuries sat "cached" up to 24 h against a 12 h gate | Threshold = half the limit in effect now | `pull_week.refresh_after_hours` |
+| 8 | The published-build check trusted any page's stamp (a different page at the URL could raise "newer build"), compared stamps as strings (garbage sorted "newer"), did not react to reconnecting, and said "still usable" on failure; ages read "0 s ago" for a future stamp | `data-page` must match; instants compared; `online` arms one prompt check; wording "readable as dated"; future stamps named | `theme.py` |
+
+Also: the pinned-date fix for `test_report_cli::test_a_null_stat_cell_is_not_a_missing_column`,
+which failed on the real clock after the fixture's week-2 slate ended (it fails
+the same way on `64dc8eb`); the KPI accent; strike-through on re-judged badges.
+
+**Trade-off for the owner (not silently decided).** Threshold = half the limit
+in effect means the player dump is fetched at most every 3 h on game, waiver
+and designation days (≤ 8/day) and every 12 h otherwise. DECISIONS 2026-09-18
+records Sleeper's ask to fetch it once a day. Production today fetches it on
+every hourly run (defect 6), so this is a 3–12× reduction, not an increase;
+holding it to 24 h instead would keep designations inside the gate only ~6 h
+of each game day and withhold every move for the rest.
+
+**Remaining (known, not fixed here).**
+- Dropping a bench player whose game has started: the drop list protects
+  locked STARTERS only; whether Sleeper blocks a locked bench drop is not
+  verified in this repo. The page's move deadline uses the added player and
+  the displaced starter.
+- `pull_week.py` fetches the league snapshot again after `sleeper_sync.py`
+  (10 small GETs per run instead of 5; two snapshot generations per run).
+- The Game Day pregame card carries the first kickoff; it does not re-check
+  availability (it never did; it says so).
+- Validity uses the device clock (as the ages do); a wrong clock shows wrong
+  states and the ages strip names a future stamp.
+- Board page ~329 KB on the real cache (+11 KB over `64dc8eb`).
+
+**Verification (self-tested; Astra's independent review pending).**
+
+| Check | Result | Label |
+|---|---|---|
+| Reproductions before fixes | collection error (no expiry concept), then 14 failing; after fixes 17/17 pass | synthetic |
+| Full suite `run_summary.py -- python -m pytest` | 720 passed, 0 skipped | synthetic |
+| `smoke.py` (after the suite) | PASS | synthetic |
+| Board scenarios `--screenshot --browser` | 30/30 fit (375/768/1440), radar drive PASS incl. wrong-page, garbled, online, expiry→kickoff→restore | synthetic, headless Chromium |
+| Game Day scenarios `--screenshot --browser` | 10/10 fit at 375, both drives executed | synthetic |
+| Real before/after at 2026-09-23 09:00 UTC | 36/36 non-radar keys identical; radar counts/verdicts/gains identical (pool 608, 218 projected, 218 LOCKED); gate withheld, so no expiry meta | cached |
+| Two consecutive builds (09:07, 09:22) → guard → `check` | guard PASS both; 375/768/1440 PASS, overflow 0; second build "Unchanged", stamps kept | cached |
+
+Screenshots: `docs/review/radar-validity/` (radar rows, EXPIRED, OFF/LOCKED
+after kickoff, the banner, a stale build's WITHHELD rows, 768 and 1440),
+driven through the page's own clock hook.
+
+**Deployment and rollback checklist (for whoever merges; not done here).**
+1. Astra reviews this head; re-run the suite, smoke and both scenario
+   commands; read the screenshots.
+2. Merge PR #7 to main. The dashboard cron becomes `7,22,37,52 * * * *`
+   (best effort; GitHub queues and drops). No variable changes.
+3. First scheduled run: the log should show "carried from an earlier run …
+   kept, not re-fetched" for fresh inputs and at most one player-dump pull;
+   the page's header dates must match the run's inputs.
+4. Second run: "Since the last record" says Unchanged or Refreshed, never a
+   comparison against a v1 block (v1 → "no comparison" once, by design).
+5. Watch one game day: the player dump refreshes about every 3 h; the board
+   gate stays FRESH through the slate or says which source expired.
+6. Rollback: revert the merge commit on main (or `git revert` the PR's
+   commits); the next scheduled run restores the hourly cron and the old
+   pages. Carried caches and archives stay readable (the radar block is only
+   read by the radar diff, which calls a missing/other-version block "no
+   comparison").
 
 ## Publication — public Pages (2026-09-21)
 
@@ -730,7 +814,9 @@ Nothing was deleted, no setting was changed, no history was rewritten.
 
 ## Next — the release checklist
 
-0. **Astra review of this head (next-decision + Free Agent Radar).** Run
+0. **Astra review of this head (next-decision + Free Agent Radar + the
+   2026-09-23 release review).** Use the checklist at the end of "Release
+   review — Free Agent Radar". Run
    the full suite and smoke, `dashboard_scenarios.py --screenshot --browser`
    (ten scenarios, the radar drive) and `gameday_scenarios.py --screenshot
    --browser`, build and `check` the site at 375/768/1440, and render the

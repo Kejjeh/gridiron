@@ -54,8 +54,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 
-from gridiron.freshness import SourceFreshness, Status
+from gridiron.freshness import SourceFreshness, Status, expires_at
 
 #: Actions the dashboard can emit, and the sources each one rests on.
 GATED_SOURCES: dict[str, tuple[str, ...]] = {
@@ -241,3 +242,25 @@ def build_gate(sources: Iterable[SourceFreshness],
             blockers.append((name, Status.STALE, reason))
         gates[action] = Gate(action, tuple(blockers))
     return ActionGate(gates)
+
+
+def valid_until(sources: Iterable[SourceFreshness], actions: Sequence[str],
+                now: datetime) -> tuple[datetime | None, str]:
+    """The first instant at which one of the sources gating `actions` stops
+    being FRESH on age, and that source's name; (None, "") when none of
+    them will (all already stale or missing, or none gated on age).
+
+    A gate is judged when the page is BUILT. The page is read later, and a
+    tab left open overnight would otherwise go on presenting an action as
+    supported long after its inputs aged out. The page carries this instant
+    and withdraws its moves on the reader's clock once it passes.
+    """
+    names = {n for a in actions for n in GATED_SOURCES.get(a, ())}
+    first: tuple[datetime | None, str] = (None, "")
+    for s in sources:
+        if s.name not in names:
+            continue
+        t = expires_at(s, now)
+        if t is not None and (first[0] is None or t < first[0]):
+            first = (t, s.name)
+    return first

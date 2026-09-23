@@ -233,6 +233,41 @@ def assess(
                            f"pulled {age:.0f}h ago", weeks)
 
 
+def expires_at(source: SourceFreshness, now: datetime,
+               cadence: Cadence | None = None) -> datetime | None:
+    """The first instant at or after `now` at which `assess` would call this
+    FRESH source STALE on age, or None when it is not FRESH now.
+
+    A page is built once and read for hours; "fresh at build" says nothing
+    about the moment it is read. The limit is piecewise constant (it
+    tightens at a league-timezone midnight that starts a game day) and the
+    age only grows, so the answer is the earliest of: the plain limit, the
+    game-day limit, and each midnight at which the game-day limit takes over
+    from a longer one. Coverage (forward-looking sources) does not move with
+    the clock and is not considered here.
+    """
+    if source.status is not Status.FRESH or source.as_of is None:
+        return None
+    cad = cadence or CADENCES.get(source.name) or Cadence(source.name, max_age_hours=72.0)
+    as_of = _aware(source.as_of)
+    now = _aware(now)
+    hard = as_of + timedelta(hours=cad.max_age_hours)
+    instants = {hard}
+    if cad.gameday_max_age_hours is not None:
+        instants.add(as_of + timedelta(hours=cad.gameday_max_age_hours))
+        day = now.astimezone(LEAGUE_TZ).date() + timedelta(days=1)
+        while True:
+            midnight = datetime(day.year, day.month, day.day, tzinfo=LEAGUE_TZ)
+            if midnight >= hard:
+                break
+            instants.add(midnight.astimezone(timezone.utc))
+            day += timedelta(days=1)
+    for t in sorted(instants):
+        if t >= now and (age_hours(as_of, t) or 0.0) >= cad.limit_for(t):
+            return t.astimezone(timezone.utc)
+    return hard.astimezone(timezone.utc)
+
+
 def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 

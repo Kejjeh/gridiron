@@ -21,8 +21,18 @@ time, reading the DOM back after every step:
               error, a longer backoff
   recover     the fixture answers again: 304, failures reset
   inflight    two checks at once: the second is refused, not doubled
+  wrong       the fixture serves a DIFFERENT page (newer stamp, other
+              data-page) at this address: refused, no banner
+  garbled     the fixture serves this page with an unreadable stamp: no
+              banner, nothing assumed
+  online      the device reports it is back online: one check is armed
+              within seconds, not after the backoff
   new         the fixture serves a NEWER build: the banner appears, the
               checks pause, nothing on the page is swapped
+  validity    the page's clock is moved past its evidence expiry, then past
+              kickoff: moves are marked EXPIRED, then OFF/LOCKED in place,
+              the banner says why, the LINEUP filter empties, and moving
+              the clock back restores the page as built
   pause       Pause clears the timer; Resume re-arms exactly one
   radar       position chips, search, verdict filter, sort, a disclosure
               opened, the count line, keyboard focus on the controls
@@ -78,6 +88,8 @@ class _Fixture(http.server.BaseHTTPRequestHandler):
     newer: bytes = b""
     state: dict = {"mode": "same"}
     hits: list = []
+    wrong: bytes = b""
+    garbled: bytes = b""
     harness: bytes = b""
     release = threading.Event()
 
@@ -131,7 +143,7 @@ class _Fixture(http.server.BaseHTTPRequestHandler):
             if mode == "hang":
                 cls.release.wait(4)          # longer than the page's timeout
                 return self._send(200, cls.page)
-            body = cls.newer if mode == "new" else cls.page
+            body = {"new": cls.newer, "wrong": cls.wrong, "garbled": cls.garbled}.get(mode, cls.page)
             etag = '"' + hashlib.sha1(body).hexdigest()[:20] + '"'
             if self.headers.get("If-None-Match") == etag:
                 return self._send(304, None, etag=etag)
@@ -168,7 +180,10 @@ _HARNESS = r"""<!doctype html><html><head><meta charset="utf-8"><title>drive</ti
       R.own = (d.querySelector('meta[name="gridiron-build"]')||{}).getAttribute ? d.querySelector('meta[name="gridiron-build"]').getAttribute('content') : null;
       R.fit = {clientWidth: d.documentElement.clientWidth, scrollWidth: d.documentElement.scrollWidth, overflow: d.documentElement.scrollWidth - d.documentElement.clientWidth};
       R.nav = Array.prototype.map.call(d.querySelectorAll('nav.nav a'), function(a){ return [a.textContent, a.getAttribute('href'), a.getAttribute('aria-current')]; });
-      if (!api || !radar) throw new Error('page scripts did not expose gridironSnapshot/gridironRadar');
+      if (!api || !radar || !w.gridironValidity) throw new Error('page scripts did not expose gridironSnapshot/gridironRadar/gridironValidity');
+      // The page is judged at its build instant, whatever today's date is:
+      // a drive run after the fixture's kickoff must not see it lapsed.
+      var built = Date.parse(R.own); w.gridironValidity.state().skewMs = built - Date.now(); w.gridironValidity.tick(built);
       api.tune({intervalMs: 600000, throttleMs: 0, timeoutMs: 1500, backoffMaxMs: 900000});
       snapState('initial');
       await mode('same'); snapState('same-first', {result: await api.check(true)});
@@ -182,6 +197,11 @@ _HARNESS = r"""<!doctype html><html><head><meta charset="utf-8"><title>drive</ti
       // pause / resume: the timer is cleared, then re-armed exactly once
       d.getElementById('snap-pause').click(); snapState('paused');
       d.getElementById('snap-pause').click(); await wait(1200); snapState('resumed');
+      await mode('wrong'); snapState('wrong-page', {result: await api.check(true)});
+      await mode('garbled'); snapState('garbled', {result: await api.check(true)});
+      await mode('same'); api.tune({intervalMs: 600000}); w.dispatchEvent(new Event('online')); snapState('online');
+      await wait(1600); snapState('online-checked');
+      api.tune({intervalMs: 600000});
       await mode('new'); snapState('newer', {result: await api.check(true)});
       // the page itself did not change under the reader
       R.stillOwn = (d.querySelector('meta[name="gridiron-build"]').getAttribute('content') === R.own);
@@ -214,10 +234,29 @@ _HARNESS = r"""<!doctype html><html><head><meta charset="utf-8"><title>drive</ti
       radar.set({pos: 'WR', sort: 'name', verdict: ''});
       await mode('same');
       p = loaded(); d.getElementById('snap-reload').click(); await p;
-      w = f.contentWindow; d = f.contentDocument;
+      w = f.contentWindow; d = f.contentDocument; radar = w.gridironRadar;
+      if (w.gridironValidity) { w.gridironValidity.state().skewMs = built - Date.now(); w.gridironValidity.tick(built); }
       R.afterReload = {state: w.gridironRadar ? w.gridironRadar.state() : null, visible: visibleRows(d),
         own: (d.querySelector('meta[name="gridiron-build"]')||{getAttribute:function(){return null;}}).getAttribute('content'),
         status: txt(d, '#snap-status')};
+      // validity: evidence expiry, then kickoff, then back to the build instant
+      var V = w.gridironValidity, meta = d.querySelector('meta[name="gridiron-valid-until"]');
+      var until = meta ? Date.parse(meta.getAttribute('content')) : NaN;
+      var dls = Array.prototype.map.call(d.querySelectorAll('li.rrow[data-verdict-built="LINEUP"]'), function(e){ return Date.parse(e.getAttribute('data-deadline')); });
+      var kick = dls.length ? Math.min.apply(null, dls) : NaN;
+      function vstate(label, t){ var res = V.tick(t);
+        var lin = d.querySelectorAll('li.rrow[data-verdict-built="LINEUP"]');
+        return {label: label, expired: res.expired, lapsed: res.lapsed, banner: !d.getElementById('validity').hidden,
+          head: txt(d, '#validity-head'), text: txt(d, '#validity-text'),
+          rowsLive: Array.prototype.map.call(lin, function(e){ return e.getAttribute('data-live'); }),
+          rowsVerdict: Array.prototype.map.call(lin, function(e){ return e.getAttribute('data-verdict'); }),
+          rowNote: lin.length ? txt(lin[0], '.vstate') : null,
+          cardsLive: Array.prototype.map.call(d.querySelectorAll('.act[data-deadline]'), function(e){ return e.getAttribute('data-live'); }),
+          cardNote: (function(){ var c = d.querySelector('.act[data-deadline] .vstate'); return c ? c.textContent : null; })(),
+          kpi: txt(d, '[data-live-count="LINEUP"]'), lineupFilter: radar.set({verdict: 'LINEUP'})}; }
+      R.validity = {until: until, kick: kick, steps: [vstate('built', built), vstate('expired', until + 60000),
+        vstate('kickoff', kick + 60000), vstate('back', built)]};
+      radar.set({verdict: ''});
       R.hits = await (await fetch('/__hits')).json();
     } catch (e) { R.error = String(e && e.stack || e); }
     done();
@@ -245,6 +284,9 @@ def drive_radar(page: Path) -> dict:
     # A stamp that sorts after the page's own: the same date at the end of
     # the day is enough for a string comparison of ISO-8601 UTC stamps.
     _Fixture.newer = _restamp(html, own[:11] + "23:59:59+00:00").encode("utf-8")
+    _Fixture.wrong = _restamp(html, own[:11] + "23:59:59+00:00").replace(
+        'data-page="dashboard_latest.html"', 'data-page="gameday_latest.html"', 1).encode("utf-8")
+    _Fixture.garbled = _restamp(html, "zzzz-not-a-stamp").encode("utf-8")
     _Fixture.state = {"mode": "same"}
     _Fixture.hits = []
     _Fixture.release = threading.Event()
@@ -291,6 +333,10 @@ def _lines(result: dict) -> list[str]:
                f"focusable={r.get('focusable')}")
     a = result.get("afterReload") or {}
     out.append(f"after reload: state={a.get('state')} visible={a.get('visible')}")
+    for s in (result.get("validity") or {}).get("steps", []):
+        out.append(f"validity {s['label']}: expired={s.get('expired')} lapsed={s.get('lapsed')} "
+                   f"banner={s.get('banner')} rows={s.get('rowsLive')} verdicts={s.get('rowsVerdict')} "
+                   f"cards={s.get('cardsLive')} kpi={s.get('kpi')} lineupFilter={s.get('lineupFilter')}")
     out.append(f"hits: {result.get('hits')}")
     return out
 
@@ -336,6 +382,18 @@ def verdict(result: dict) -> list[str]:
     res = _step(result, "resumed")
     if res.get("timer") is not True or res.get("paused") is not False:
         bad.append(f"Resume did not re-arm the timer: {res}")
+    wp = _step(result, "wrong-page")
+    if wp.get("result") != "wrongpage" or wp.get("bannerShown") or "wrong page" not in (wp.get("status") or ""):
+        bad.append(f"a different page at this address was not refused: {wp}")
+    gb = _step(result, "garbled")
+    if gb.get("result") != "nostamp" or gb.get("bannerShown"):
+        bad.append(f"an unreadable stamp was not refused: {gb}")
+    on = _step(result, "online")
+    if on.get("nextMs") != 1000 or "Back online" not in (on.get("status") or ""):
+        bad.append(f"coming back online did not arm a prompt check: {on}")
+    onc = _step(result, "online-checked")
+    if onc.get("lastResult") != "unchanged" or onc.get("checks") != (on.get("checks") or 0) + 1:
+        bad.append(f"the online check did not run exactly once: {onc}")
     nw = _step(result, "newer")
     if nw.get("result") != "newer" or not nw.get("bannerShown") or nw.get("timer") is not False:
         bad.append(f"a newer build did not raise the banner and pause the checks: {nw}")
@@ -365,16 +423,35 @@ def verdict(result: dict) -> list[str]:
             bad.append("the first row's disclosure did not open on a full comparison")
         if not all(r.get("focusable") or []):
             bad.append(f"a control is not keyboard-focusable: {r.get('focusable')}")
+    v = result.get("validity") or {}
+    vs = {s["label"]: s for s in v.get("steps", [])}
+    if not v or not (v.get("until") and v.get("kick")) or v["until"] >= v["kick"]:
+        bad.append(f"the page carries no evidence expiry before its kickoff: {v.get('until')} {v.get('kick')}")
+    else:
+        b0, ex, ko, back = (vs.get(k, {}) for k in ("built", "expired", "kickoff", "back"))
+        if b0.get("banner") or any(b0.get("rowsLive") or []) or (b0.get("lineupFilter") or 0) < 1:
+            bad.append(f"at the build instant the page is not as built: {b0}")
+        if not ex.get("expired") or not ex.get("banner") or set(ex.get("rowsLive") or []) != {"expired"} \
+                or "EXPIRED" not in (ex.get("rowNote") or "") or "Evidence expired" not in (ex.get("head") or "") \
+                or set(ex.get("cardsLive") or []) != {"expired"}:
+            bad.append(f"past the evidence expiry the moves still read as current: {ex}")
+        if set(ko.get("rowsLive") or []) != {"lapsed"} or set(ko.get("rowsVerdict") or []) != {"LOCKED"} \
+                or "OFF" not in (ko.get("rowNote") or "") or ko.get("lineupFilter") != 0 \
+                or ko.get("kpi") != "0" or set(ko.get("cardsLive") or []) != {"lapsed"} \
+                or "OFF" not in (ko.get("cardNote") or ""):
+            bad.append(f"past kickoff the moves were not withdrawn in place: {ko}")
+        if back.get("banner") or any(back.get("rowsLive") or []) or back.get("kpi") != b0.get("kpi"):
+            bad.append(f"moving the clock back did not restore the page: {back}")
     a = result.get("afterReload") or {}
     st = a.get("state") or {}
     if st.get("pos") != "WR" or st.get("sort") != "name":
         bad.append(f"the filters did not survive the reload: {st}")
     hits = result.get("hits") or []
     # one load, one reload, exactly one request per executed check (the
-    # refused in-flight check makes none) and the one automatic check that
-    # Resume re-arms: a duplicate timer would add hits beyond that
+    # refused in-flight check makes none) and the two automatic checks that
+    # Resume and the online event re-arm: a duplicate timer would add hits
     checks = [s for s in result.get("steps", []) if "result" in s and s.get("result") != "inflight"]
-    expected = 2 + len(checks) + 1
+    expected = 2 + len(checks) + 2
     if len(hits) != expected:
         bad.append(f"{len(hits)} requests for {expected} expected (duplicate timer?): {hits}")
     return bad

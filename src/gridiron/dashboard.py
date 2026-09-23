@@ -55,7 +55,7 @@ from gridiron.evaluate import EvaluationReport, chronological_evaluation
 from gridiron.freshness import SourceFreshness, Status, WeekContext, degradations
 from gridiron.ids import Crosswalk, is_dst_id, nflverse_team, normalize_id
 from gridiron.league_config import DEFAULT_SCORING, LEAGUE_NAME, ScoringRules
-from gridiron.gating import (ACTIONS, ActionGate, box_score_blockers,
+from gridiron.gating import (ACTIONS, ActionGate, box_score_blockers, valid_until,
                              build_gate)
 from gridiron.lineup import (
     NOISE_Z, KickoffIndex, LineupPlan, Player, eligible, kickoff_index, lock_state,
@@ -64,7 +64,7 @@ from gridiron.lineup import (
 from gridiron.projection import (
     BASELINE_LABEL, Projection, abstain, build_evidence, project,
 )
-from gridiron.radar import RadarChanges, diff_radar, radar_record
+from gridiron.radar import RadarChanges, diff_radar, move_deadline, radar_record
 from gridiron.scoring import ScoringCoverage
 from gridiron import theme
 from gridiron.waivers import (
@@ -626,6 +626,16 @@ class Action:
     #: sorting the two together once put a +15 bye-week depth add above a +6
     #: change to this week's starting lineup.
     order: int = 0
+    #: The instant after which this card describes a move that can no longer
+    #: be made this week (the first kickoff among the players involved). It
+    #: is `deadline` for a lineup move; an acquisition carries no deadline of
+    #: its own (waiver timing is unknown) but still lapses at kickoff. The
+    #: page re-judges it on the reader's clock.
+    lapses_at: datetime | None = None
+
+    @property
+    def lapse(self) -> datetime | None:
+        return self.lapses_at or self.deadline
 
     @property
     def actionable(self) -> bool:
@@ -974,7 +984,7 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                                       f"drop and that no injured or bye player is a better "
                                       f"drop — the protected list names the ones this "
                                       f"page will not rank"),
-            delta_points=u.lineup_gain, order=i,
+            delta_points=u.lineup_gain, order=i, lapses_at=kick,
             player_ids=(u.add.sleeper_id, u.drop.sleeper_id), slot=u.slot))
 
     out.sort(key=lambda a: a.rank)
@@ -1220,6 +1230,31 @@ def _player_rows(players: Sequence[Player], slots_of: Mapping[str, str] | None =
     return rows
 
 
+#: What an element says once the reader's clock passes its deadline or the
+#: page's evidence expiry. Written here, shown by theme.VALIDITY_JS.
+_LAPSE_MOVE = ("OFF — the first kickoff among the players involved ({when}) has passed "
+               "since this page was built; this move can no longer be made this week.")
+_LAPSE_ROW = ("LOCKED — his game kicked off {when}, after this page was built; he cannot "
+              "enter this week's lineup.")
+_EXPIRED = ("EXPIRED — the evidence behind this move has passed its freshness limit since "
+            "this page was built; last known picture, not advice.")
+_HELD = "WITHHELD — built on stale inputs; last known picture, not advice."
+
+
+def _live_attrs(deadline: datetime | None, *, gated: bool, move: bool,
+                held: bool = False) -> str:
+    out = ""
+    if deadline is not None:
+        when = deadline.astimezone(timezone.utc)
+        out += (f" data-deadline=\"{_e(when.isoformat(timespec='seconds'))}\""
+                f" data-lapse-text=\"{_e((_LAPSE_MOVE if move else _LAPSE_ROW).format(when=f'{when:%a %d %b %H:%M} UTC'))}\"")
+    if held:
+        out += f" data-held=\"{_e(_HELD)}\""
+    elif gated:
+        out += f" data-gated=\"\" data-expire-text=\"{_e(_EXPIRED)}\""
+    return out
+
+
 def _action_card(a: "Action") -> str:
     held = a.withheld
     bar = [f"<span class=\"badge {'now' if a.urgency == 'NOW' else 'today' if a.urgency in ('TODAY', 'UNKNOWN') else ''}\">"
@@ -1228,8 +1263,10 @@ def _action_card(a: "Action") -> str:
     label = a.status + (" — if available" if a.conditional else "")
     bar.append(f"<span class=\"badge {cls}\">{_e(label)}</span>")
     out = [f"<div class=\"act act-{_e(a.urgency.replace(' ', '-'))}"
-           f"{' withheld' if held else ' conditional' if a.conditional else ''}\">",
-           "<div class=\"bar\">" + "".join(bar) + "</div>"]
+           f"{' withheld' if held else ' conditional' if a.conditional else ''}\""
+           f"{_live_attrs(a.lapse, gated=not held, move=True)}>",
+           "<div class=\"bar\">" + "".join(bar) + "</div>",
+           "<span class=\"vstate\"></span>"]
     if held:
         # Said before the card's own wording, so the frame is set even for a
         # reader who never reaches the explanation underneath.
@@ -1338,13 +1375,21 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
                                     f"<pre>{_e(pr.explain())}</pre></details>"))
     elif pr.reasons:
         pairs.append(("Projection", _e("abstained: " + "; ".join(pr.reasons))))
+    move = c.verdict == LINEUP
+    lapses = move_deadline(c)
+    live = (_live_attrs(lapses, gated=move and waiver_ok, move=move,
+                        held=move and not waiver_ok)
+            + (f" data-verdict-built=\"{_e(c.verdict)}\" data-lapse-verdict=\"LOCKED\""
+               if lapses is not None else ""))
+    vstate = _e(_HELD) if move and not waiver_ok else ""
     attrs = (f"data-id=\"{_e(a.sleeper_id)}\" data-pos=\"{_e(a.position)}\" "
              f"data-verdict=\"{_e(c.verdict)}\" data-proj=\"{pr.mean if pr.usable else ''}\" "
              f"data-gain=\"{'' if gain is None else gain}\" data-gap=\"{'' if c.gap is None else c.gap}\" "
-             f"data-name=\"{_e(a.name.lower())}\" data-team=\"{_e(a.team.lower())}\" data-order=\"{order}\"")
+             f"data-name=\"{_e(a.name.lower())}\" data-team=\"{_e(a.team.lower())}\" data-order=\"{order}\""
+             + live)
     return (f"<li class=\"rrow\" {attrs}><details><summary>"
             f"<span><span class=\"rname\">{_e(a.name)}</span> {badge}<br>"
-            f"<span class=\"rmeta\">{meta}</span></span>"
+            f"<span class=\"rmeta\">{meta}</span><span class=\"vstate\">{vstate}</span></span>"
             f"<span class=\"rnum\">{head_num}</span></summary>"
             f"<div class=\"rbody\">{_dl(pairs)}</div></details></li>")
 
@@ -1368,7 +1413,8 @@ def _radar_html(d: Dashboard) -> str:
                f"<div>with a projection<b>{projected}</b></div>"
                f"<div>compared to lineup<b>{b.evaluated}</b></div>"
                f"<div>missing evidence<b>{b.unprojected}</b></div>"
-               f"<div>lineup gains<b class=\"{'lime' if lineup_n else ''}\">{lineup_n}</b></div></div>")
+               f"<div>lineup gains<b class=\"{'lime' if lineup_n else ''}\" "
+               f"data-live-count=\"LINEUP\">{lineup_n}</b></div></div>")
     if b.positions:
         out.append("<p class=\"small sub\">By position: " + " · ".join(
             f"<b>{_e(pc.position)}</b> {pc.pool} in pool, {pc.projected} projected, "
@@ -1513,6 +1559,27 @@ window.gridironRadar={apply:apply,state:function(){ return state; },set:function
 """
 
 
+_SOURCE_WORDS = {"sleeper_league": "league snapshot", "sleeper_players": "player dump "
+                 "(designations)", "injuries": "injury report", "schedules": "schedule"}
+
+
+def _valid_meta(d: Dashboard) -> str:
+    """The instant this page's moves stop resting on fresh evidence, by
+    the gate's own cadences; empty when nothing on it is endorsed (already
+    withheld) or nothing gated can age out."""
+    actions = [a for a in ("lineup", "waiver") if d.gate.allows(a)]
+    until, name = valid_until(d.sources, actions, d.generated)
+    if until is None:
+        return ""
+    src = next((x for x in d.sources if x.name == name), None)
+    pulled = (src.as_of.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+              if src is not None and src.as_of else "at an unknown time")
+    why = (f"The {_SOURCE_WORDS.get(name, name)} pulled {pulled} passed its freshness "
+           f"limit at {until:%a %d %b %H:%M} UTC, and every lineup move and pickup on "
+           f"this page rests on it.")
+    return theme.valid_meta(until.isoformat(timespec="seconds"), why)
+
+
 def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     ctx = d.context
     m = d.matchup
@@ -1544,6 +1611,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         f"connect-src 'self'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
         f"base-uri 'none'; form-action 'none'\">",
         theme.build_meta(generated_iso, "dashboard_latest.html"),
+        _valid_meta(d),
         f"<title>{_e(title)}</title>",
         f"<style nonce=\"{nonce}\">{_CSS}</style></head><body><main>",
         theme.nav_html("board"),
@@ -1558,6 +1626,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                          d.generated.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
         + "</div>",
         theme.snapshot_html(),
+        theme.validity_html(),
         f"<div class=\"sub small\">{_e(BASELINE_LABEL)}</div>",
     ]
     if d.degraded:
@@ -1566,7 +1635,10 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    "labelled below; nothing is filled in.<ul>"
                    + "".join(f"<li>{_e(n)}</li>" for n in d.notes) + "</ul></div>")
     else:
-        out.append("<div class=\"banner ok\"><b class=\"ok\">All inputs current.</b></div>")
+        out.append("<div class=\"banner ok\" data-gated=\"\" data-expire-text=\"No longer "
+                   "true: these inputs were current when the page was built and have since "
+                   "passed their freshness limit.\"><b class=\"ok\">All inputs current "
+                   "when built.</b><span class=\"vstate\"></span></div>")
 
     # ------------------------------------------------- 1. the next decision
     nd = d.next
@@ -1866,5 +1938,6 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     out.append(f"<script nonce=\"{nonce}\">{theme.AGES_JS}</script>")
     out.append(f"<script nonce=\"{nonce}\">{theme.SNAPSHOT_JS}</script>")
     out.append(f"<script nonce=\"{nonce}\">{_RADAR_JS}</script>")
+    out.append(f"<script nonce=\"{nonce}\">{theme.VALIDITY_JS}</script>")
     out.append("</main></body></html>")
     return "\n".join(out)

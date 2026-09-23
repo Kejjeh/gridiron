@@ -110,7 +110,7 @@ def test_every_source_the_dashboard_reads_declares_its_freshness(tmp_path):
 def test_complete_projects_matches_and_recommends_with_labels(tmp_path):
     rc, html, rec = render(tmp_path, "complete")
     assert rc == 0 and not rec["degraded"]
-    assert "All inputs current." in html
+    assert "All inputs current when built." in html
     # projections: 13 of 14 rows, the DST abstains with its reason
     projected = [p for p in rec["roster"] if p["projected"] is not None]
     assert len(projected) == 13

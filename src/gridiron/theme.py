@@ -10,7 +10,14 @@ two small inline scripts:
 
   * `AGES_JS` re-states every dated element's age at the present instant,
     so "league snapshot 12 min ago" stays true while the tab sits open. It
-    fetches nothing.
+    fetches nothing. An age is a label, not a gate — so:
+  * `VALIDITY_JS` re-judges, on the reader's clock, the two things a build
+    fixes at build time and the clock then overtakes: the instant the
+    evidence behind the page's moves expires (`gridiron-valid-until`, from
+    the gate's own cadences) and each move's kickoff deadline
+    (`data-deadline`). Past either, the element is marked and its move is
+    withdrawn in words the build wrote; nothing is recomputed and nothing
+    is fetched.
   * `SNAPSHOT_JS` asks the HOSTING server, every five minutes while the tab
     is visible, whether a newer build of THIS page has been published, by a
     conditional GET of the page's own URL against the ETag it last saw. A
@@ -44,6 +51,9 @@ NAV: tuple[tuple[str, str, str], ...] = (
 
 #: The <meta> that carries the build stamp the snapshot check compares.
 BUILD_META = "gridiron-build"
+
+#: The <meta> that carries the instant the page's gated evidence expires.
+VALID_META = "gridiron-valid-until"
 
 CSS = """
 :root{color-scheme:dark;--bg:#0b1020;--bg2:#0f1629;--card:#141d33;--card2:#182342;--line:#25314f;
@@ -132,6 +142,13 @@ font-size:13.5px;letter-spacing:.02em;border:1px solid transparent}
 border-radius:var(--radius-s);padding:10px 12px;margin:8px 0}
 .snapbar.show{display:flex}
 .hidden{display:none}
+.vstate{display:block;margin-top:3px;font-size:12.5px;font-weight:700;color:var(--warn);letter-spacing:.01em}
+.vstate:empty{display:none}
+li[data-live] .badge,[data-live] .badge.v-LINEUP,[data-held] .badge.v-LINEUP{background:transparent;color:var(--muted);border-color:var(--line2);text-decoration:line-through}
+[data-live] .stat.plus,[data-held] .stat.plus{color:var(--muted)}
+.act[data-live]{border-left-color:var(--line2);border-left-style:dashed;background:var(--bg2);box-shadow:none}
+.act[data-live] h3{color:var(--muted)}.act[data-live] .bar .badge{opacity:.6;text-decoration:line-through}
+#validity{border-left-color:var(--warn)}.banner[data-live]{border-left-color:var(--warn)}.banner[data-live] b.ok{color:var(--muted);text-decoration:line-through}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .chips button{min-height:36px;padding:6px 12px;font-size:13px}
 .chips button[aria-pressed=true]{background:var(--cyan);color:var(--lime-ink);border-color:transparent}
@@ -139,7 +156,7 @@ border-radius:var(--radius-s);padding:10px 12px;margin:8px 0}
 .controls label{font-size:12px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;display:block;margin-bottom:4px}
 .eyebrow{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:700}
 .stat{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-.stat.plus{color:var(--lime)}.stat.minus{color:var(--muted)}
+.stat.plus{color:var(--lime)}.kpi b.lime{color:var(--lime)}.stat.minus{color:var(--muted)}
 @media (min-width:700px){.controls{grid-template-columns:2fr 1fr 1fr}body{padding:0 24px 64px}h1{font-size:34px}}
 @media (min-width:1100px){body{padding:0 32px 80px}}
 @media (max-width:560px){h1{font-size:24px}.card{padding:12px 13px}.act{padding:11px 12px}.nav a{font-size:12.5px;padding:10px 2px}
@@ -177,6 +194,19 @@ def age_span(label: str, iso: str | None, text: str) -> str:
     return f"<span{stamp}><b>{_e(label)}</b> {_e(text)}<span class=\"age\"></span></span>"
 
 
+def valid_meta(until: str, why: str) -> str:
+    """The instant (ISO-8601 UTC) at which the evidence behind this page's
+    moves expires, and a sentence naming the source that expires first."""
+    return f"<meta name=\"{VALID_META}\" content=\"{_e(until)}\" data-why=\"{_e(why)}\">"
+
+
+def validity_html() -> str:
+    """The banner VALIDITY_JS fills once a deadline or the evidence passes.
+    Hidden until then; without the script it never appears."""
+    return ("<div class=\"banner\" id=\"validity\" role=\"status\" aria-live=\"polite\" hidden>"
+            "<b id=\"validity-head\"></b> <span id=\"validity-text\"></span></div>")
+
+
 def snapshot_html() -> str:
     """The snapshot-check strip: a status line, Check now, Pause, and the
     hidden banner that appears when a newer build is published."""
@@ -202,9 +232,50 @@ function ageText(ms,nowMs){ var s=Math.max(0,(nowMs-ms)/1000);
   if(s<172800) return (s/3600).toFixed(1)+' h ago'; return (s/86400).toFixed(1)+' days ago'; }
 function tick(){ var nodes=document.querySelectorAll('[data-asof]'), now=Date.now();
   for(var i=0;i<nodes.length;i++){ var t=Date.parse(nodes[i].getAttribute('data-asof')||''), a=nodes[i].querySelector('.age');
-    if(!a) continue; a.textContent=isNaN(t)?'':' · '+ageText(t,now); } }
+    if(!a) continue; a.textContent=isNaN(t)?'':(t-now>120000?' · dated AFTER this device\u2019s clock — the clock or the stamp is wrong':' · '+ageText(t,now)); } }
 tick(); if(typeof setInterval==='function') setInterval(tick,30000);
 window.gridironAges={tick:tick};
+})();
+"""
+
+#: Deadlines and evidence expiry, re-judged on the reader's clock. Every
+#: sentence it shows was written by the build into an attribute.
+VALIDITY_JS = r"""
+(function(){
+'use strict';
+var meta=document.querySelector('meta[name="gridiron-valid-until"]');
+var UNTIL=meta?Date.parse(meta.getAttribute('content')||''):NaN, WHY=meta?(meta.getAttribute('data-why')||''):'';
+var box=document.getElementById('validity'), head=document.getElementById('validity-head'), text=document.getElementById('validity-text');
+var S={skewMs:0,expired:false,lapsed:0,last:null};
+function stamp(ms){ return new Date(ms).toISOString().replace('T',' ').slice(0,16)+' UTC'; }
+function tick(nowMs){
+  var now=(typeof nowMs==='number')?nowMs:Date.now()+S.skewMs, expired=!isNaN(UNTIL)&&now>=UNTIL, lapsed=0, changed=false;
+  var nodes=document.querySelectorAll('[data-deadline],[data-gated],[data-held]');
+  for(var i=0;i<nodes.length;i++){ var el=nodes[i], dl=Date.parse(el.getAttribute('data-deadline')||'');
+    var isLapsed=!isNaN(dl)&&now>=dl, state=isLapsed?'lapsed':(expired&&el.hasAttribute('data-gated'))?'expired':'';
+    if((el.getAttribute('data-live')||'')!==state){ changed=true; if(state) el.setAttribute('data-live',state); else el.removeAttribute('data-live'); }
+    var built=el.getAttribute('data-verdict-built');
+    if(built!==null){ var v=isLapsed?(el.getAttribute('data-lapse-verdict')||built):built; if(el.getAttribute('data-verdict')!==v){ el.setAttribute('data-verdict',v); changed=true; } }
+    var note=el.querySelector('.vstate'), words=state==='lapsed'?el.getAttribute('data-lapse-text'):state==='expired'?el.getAttribute('data-expire-text'):el.getAttribute('data-held');
+    if(note&&note.textContent!==(words||'')) note.textContent=words||'';
+    if(isLapsed) lapsed+=1; }
+  var counts=document.querySelectorAll('[data-live-count]');
+  for(var j=0;j<counts.length;j++){ var want=counts[j].getAttribute('data-live-count');
+    var n=document.querySelectorAll('li.rrow[data-verdict="'+want+'"]').length;
+    if(counts[j].textContent!==String(n)) counts[j].textContent=String(n); }
+  S.expired=expired; S.lapsed=lapsed; S.last=now;
+  if(box&&head&&text){ if(expired||lapsed){ box.hidden=false;
+      head.textContent=expired?'Evidence expired '+stamp(UNTIL)+'.':'Kickoff passed for '+lapsed+' item(s) on this page.';
+      text.textContent=(expired?WHY+' Every move below is now the last known picture, not advice. ':'')
+        +(lapsed?lapsed+' item(s) are past their kickoff deadline and are marked in place. ':'')
+        +'This page cannot rebuild itself: reload once a newer build is published, or check Sleeper directly.'; }
+    else box.hidden=true; }
+  if(changed&&window.gridironRadar&&window.gridironRadar.apply) window.gridironRadar.apply();
+  return {expired:expired,lapsed:lapsed};
+}
+tick(); if(typeof setInterval==='function') setInterval(function(){ tick(); },30000);
+document.addEventListener('visibilitychange',function(){ if(!document.hidden) tick(); });
+window.gridironValidity={tick:tick,state:function(){ return S; }};
 })();
 """
 
@@ -244,20 +315,22 @@ function check(manual){
     if(r.status===304) return {ok:true,unchanged:true,status:304};
     if(!r.ok) return {ok:false,status:r.status,error:'HTTP '+r.status};
     var etag=r.headers.get('etag');
-    return r.text().then(function(t){ var m=/name="gridiron-build" content="([^"]+)"/.exec(t);
-      return {ok:true,unchanged:false,status:r.status,etag:etag,stamp:m?m[1]:''}; },function(){ return {ok:false,status:r.status,error:'unreadable body'}; });
+    return r.text().then(function(t){ var m=/<meta name="gridiron-build" content="([^"]*)" data-page="([^"]*)">/.exec(t);
+      return {ok:true,unchanged:false,status:r.status,etag:etag,stamp:m?m[1]:'',page:m?m[2]:null}; },function(){ return {ok:false,status:r.status,error:'unreadable body'}; });
   },function(e){ return {ok:false,status:0,error:(e&&e.name==='AbortError')?'timeout after '+S.timeoutMs+' ms':((e&&e.message)||'network error')}; });
   var late=new Promise(function(resolve){ timer=setTimeout(function(){ if(ctl) ctl.abort(); resolve({ok:false,status:0,error:'timeout after '+S.timeoutMs+' ms'}); },S.timeoutMs); });
   return Promise.race([work,late]).then(function(res){ clearTimeout(timer); S.inflight=false; btn.disabled=false; S.lastCheckAt=Date.now();
     if(!res.ok){ S.failures+=1; S.lastResult='failed: '+res.error; var wait=Math.min(S.backoffMaxMs,S.intervalMs*Math.pow(2,S.failures-1));
-      set('Check failed ('+res.error+'). This page is unchanged and still usable; next try in '+mins(wait)+(res.status===429?' (the server asked for a slower pace)':'')+'.');
+      set('Check failed ('+res.error+'). This page is unchanged and still readable as dated; its moves are judged on their own deadlines and evidence. Next try in '+mins(wait)+(res.status===429?' (the server asked for a slower pace)':'')+'.');
       schedule(wait); return 'failed'; }
     S.failures=0;
     if(res.unchanged){ S.lastResult='unchanged'; set('No newer build published (checked '+fmt(new Date().toISOString())+'; the server still serves the build of '+fmt(OWN)+'). Next check in '+mins(S.intervalMs)+'.'); schedule(S.intervalMs); return 'unchanged'; }
+    if(res.page!==null&&res.page!==PAGE){ S.lastResult='wrong page '+res.page; set('The server answered with a different page ('+res.page+') at this address, a wrong page for this check; nothing is assumed from it. Next check in '+mins(S.intervalMs)+'.'); schedule(S.intervalMs); return 'wrongpage'; }
+    var ts=Date.parse(res.stamp), to=Date.parse(OWN);
+    if(!res.stamp||isNaN(ts)||isNaN(to)){ S.lastResult='no stamp'; set('The server returned a page without a readable build stamp; nothing is assumed from it. Next check in '+mins(S.intervalMs)+'.'); schedule(S.intervalMs); return 'nostamp'; }
     if(res.etag) S.etag=res.etag;
-    if(!res.stamp){ S.lastResult='no stamp'; set('The server returned a page without a build stamp; nothing is assumed from it. Next check in '+mins(S.intervalMs)+'.'); schedule(S.intervalMs); return 'nostamp'; }
-    if(res.stamp>OWN){ S.lastResult='newer '+res.stamp; announce(res.stamp); return 'newer'; }
-    if(res.stamp<OWN){ S.lastResult='older '+res.stamp; set('The server serves an OLDER build ('+fmt(res.stamp)+') than this page ('+fmt(OWN)+'): a deploy may be in flight or a cache lagging. Nothing to do. Next check in '+mins(S.intervalMs)+'.'); schedule(S.intervalMs); return 'older'; }
+    if(ts>to){ S.lastResult='newer '+res.stamp; announce(res.stamp); return 'newer'; }
+    if(ts<to){ S.lastResult='older '+res.stamp; set('The server serves an OLDER build ('+fmt(res.stamp)+') than this page ('+fmt(OWN)+'): a deploy may be in flight or a cache lagging. Nothing to do. Next check in '+mins(S.intervalMs)+'.'); schedule(S.intervalMs); return 'older'; }
     S.lastResult='same'; set('This is the latest published build ('+fmt(OWN)+'; checked '+fmt(new Date().toISOString())+'). Next check in '+mins(S.intervalMs)+'.'); schedule(S.intervalMs); return 'same'; });
 }
 if(!window.fetch||!/^https?:$/.test(location.protocol)){
@@ -268,6 +341,8 @@ btn.addEventListener('click',function(){ check(true); });
 pause.addEventListener('click',function(){ S.paused=!S.paused; pause.setAttribute('aria-pressed',S.paused?'true':'false'); pause.textContent=S.paused?'Resume':'Pause';
   if(S.paused){ clearTimer(); set('Checks paused. Check now still works.'); } else { set('Checks resumed.'); schedule(1000); } });
 reload.addEventListener('click',function(){ saveScroll(); location.reload(); });
+window.addEventListener('offline',function(){ if(S.enabled&&!S.inflight) set('This device is offline. The page is unchanged and dated below; checks resume when it reconnects.'); });
+window.addEventListener('online',function(){ if(!S.enabled||S.paused||S.newer) return; set('Back online; checking for a newer build shortly.'); schedule(1000); });
 document.addEventListener('visibilitychange',function(){ if(document.hidden){ clearTimer(); return; }
   if(!S.enabled||S.paused||S.newer) return; var since=S.lastCheckAt?Date.now()-S.lastCheckAt:Infinity; schedule(since>=S.intervalMs?1000:S.intervalMs-since); });
 restoreScroll();

@@ -24,10 +24,13 @@ projection, a price or a recommendation.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import timezone
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 
+from gridiron import league_config as LC
 from gridiron.decisions import MOVE_POINTS
 from gridiron.freshness import SourceFreshness
 from gridiron.ids import normalize_id
@@ -35,18 +38,45 @@ from gridiron.lineup import Player
 from gridiron.waivers import LINEUP, Candidate, WaiverBoard
 
 #: Bumped when the block's shape changes. A reader treats an unknown
-#: version as "not comparable", never as "close enough".
-RADAR_VERSION = 1
+#: version as "not comparable", never as "close enough". Version 2 added the
+#: scoring `basis` and each candidate's `deadline`.
+RADAR_VERSION = 2
+
+
+def scoring_basis() -> str:
+    """A short digest of every constant a lineup gain is scored with: the
+    scoring weights and the roster shape. Two blocks whose digests differ
+    were scored on different rules, and their numbers are not comparable
+    even when every player id matches."""
+    rules = {"scoring": asdict(LC.DEFAULT_SCORING), "kicking": LC.KICKING_SCORING,
+             "defense": LC.DEFENSE_SCORING, "slots": LC.ROSTER_SLOTS,
+             "flex": list(LC.FLEX_ELIGIBLE)}
+    blob = json.dumps(rules, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
 
 #: How many players a change list names before it says "and N more".
 NAMED_CAP = 12
+
+
+def _iso(t: datetime | None) -> str | None:
+    return t.astimezone(timezone.utc).isoformat(timespec="seconds") if t else None
 
 
 def _player(p: Player | None) -> dict | None:
     if p is None:
         return None
     return {"id": p.sleeper_id, "name": p.name, "position": p.position, "team": p.team,
-            "projected": p.projection.mean, "lineup": p.lineup}
+            "projected": p.projection.mean, "lineup": p.lineup, "kickoff": _iso(p.kickoff)}
+
+
+def move_deadline(c: Candidate) -> datetime | None:
+    """The instant after which this row stops being true this week: the
+    earliest kickoff among the player coming in and, for a LINEUP move, the
+    starter he displaces (the first lock ends the option — the same rule the
+    page's deadline line states). None when no kickoff is known."""
+    ps = [c.add] + ([c.displaces] if c.verdict == LINEUP and c.displaces is not None else [])
+    stamps = [p.kickoff for p in ps if p.kickoff is not None and not p.locked]
+    return min(stamps) if stamps else None
 
 
 def candidate_record(c: Candidate, designation: str = "") -> dict:
@@ -64,8 +94,8 @@ def candidate_record(c: Candidate, designation: str = "") -> dict:
         "designation": designation,
         "locked": c.add.locked, "lock_known": c.add.lock_known,
         "lock_note": c.add.lock_note,
-        "kickoff": (c.add.kickoff.astimezone(timezone.utc).isoformat(timespec="seconds")
-                    if c.add.kickoff else None),
+        "kickoff": _iso(c.add.kickoff),
+        "deadline": _iso(move_deadline(c)),
         "verdict": c.verdict, "reason": c.reason,
         "lineup_gain": c.lineup_gain if c.verdict == LINEUP else None,
         "slot": c.slot, "drop": _player(c.drop), "displaces": _player(c.displaces),
@@ -88,6 +118,7 @@ def radar_record(board: WaiverBoard, *, pool: Sequence[Player],
     cands = board.candidates
     return {
         "version": RADAR_VERSION,
+        "basis": {"scoring": scoring_basis()},
         "snapshot_as_of": snapshot_as_of,
         "evidence": evidence,
         "status": status,
@@ -115,12 +146,12 @@ def radar_record(board: WaiverBoard, *, pool: Sequence[Player],
 # --------------------------------------------------------------------------
 #: Change kinds that mean a NUMBER or a VERDICT moved, as opposed to the
 #: pool's membership or a source's timestamp.
-REVISION_KINDS = frozenset({"verdict", "projection"})
+REVISION_KINDS = frozenset({"verdict", "projection", "lineup"})
 
 
 @dataclass(frozen=True)
 class RadarChange:
-    kind: str          # available | owned | gone | verdict | projection | evidence
+    kind: str          # available | owned | gone | roster | verdict | projection | lineup | evidence
     subject: str       # a player name (or a source name), display only
     detail: str
     player_id: str = ""
@@ -161,6 +192,7 @@ class RadarChanges:
         n = len(self.items)
         rev = sum(1 for c in self.items if c.kind in REVISION_KINDS)
         pool = sum(1 for c in self.items if c.kind in ("available", "owned", "gone"))
+        ros = sum(1 for c in self.items if c.kind == "roster")
         ev = sum(1 for c in self.items if c.kind == "evidence")
         if not n and not self.refreshed:
             return (f"Unchanged: the same inputs as the record of {self.previous}; "
@@ -171,6 +203,8 @@ class RadarChanges:
         bits = []
         if pool:
             bits.append(f"{pool} pool change(s)")
+        if ros:
+            bits.append("your roster changed")
         if rev:
             bits.append(f"{rev} revision(s) to a projection or verdict")
         if ev:
@@ -203,8 +237,79 @@ def _index(rows: object, key: str = "id") -> dict[str, Mapping[str, object]]:
 
 
 def _stamp(value: object) -> str:
-    text = str(value or "")
-    return text.replace("T", " ")[:16] + (" UTC" if text else "")
+    t = _when(value)
+    if t is not None:
+        return t.strftime("%Y-%m-%d %H:%M UTC")
+    return str(value or "")
+
+
+def _when(value: object) -> datetime | None:
+    """An as-of stamp as an instant: ISO-8601, or the page's own
+    "YYYY-MM-DD HH:MM UTC". Anything else is None — never guessed."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        if text.endswith(" UTC"):
+            return datetime.strptime(text, "%Y-%m-%d %H:%M UTC").replace(tzinfo=timezone.utc)
+        t = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+#: How far after the page's own build an input may claim to be from before
+#: it is called out: clocks on two machines are never identical.
+FUTURE_SLACK = timedelta(minutes=5)
+
+
+def _compare_stamp(label: str, a: object, b: object, built: datetime | None,
+                   refreshed: list[str], items: list["RadarChange"]) -> None:
+    """One input's as-of, previous against current. Newer is a refresh;
+    older, unreadable, vanished or future-dated is an evidence item, because
+    each is something the reader should know and none is a refresh."""
+    if a == b:
+        return
+    ta, tb = _when(a), _when(b)
+    if b is None or b == "":
+        items.append(RadarChange("evidence", label, f"no longer reported (was {_stamp(a)}); "
+                                 f"nothing is assumed about it"))
+        return
+    if tb is None:
+        items.append(RadarChange("evidence", label, f"as-of unreadable ({str(b)[:40]!r}); "
+                                 f"not counted as a refresh"))
+        return
+    if built is not None and tb > built + FUTURE_SLACK:
+        items.append(RadarChange("evidence", label, f"stamped {_stamp(b)}, after this page was "
+                                 f"built ({_stamp(built.isoformat())}); a clock is wrong "
+                                 f"somewhere, so it is not counted as a refresh"))
+        return
+    if ta is not None and tb < ta:
+        items.append(RadarChange("evidence", label, f"OLDER than the previous record's "
+                                 f"({_stamp(b)} < {_stamp(a)}): an earlier run's inputs were "
+                                 f"restored or a pull regressed; this is not a refresh"))
+        return
+    refreshed.append(f"{label} {_stamp(a) or 'never'} → {_stamp(b)}")
+
+
+def _roster(record: Mapping[str, object]) -> dict[str, str] | None:
+    rows = record.get("roster")
+    if not isinstance(rows, list):
+        return None
+    return {normalize_id(r.get("sleeper_id")): str(r.get("name") or r.get("sleeper_id"))
+            for r in rows if isinstance(r, Mapping) and r.get("sleeper_id") is not None}
+
+
+def _pid(p: object) -> str:
+    return normalize_id(p.get("id")) if isinstance(p, Mapping) and p.get("id") is not None else ""
+
+
+def _pname(p: object) -> str:
+    return str(p.get("name") or p.get("id")) if isinstance(p, Mapping) else "nobody"
+
+
+def _signed(v: object) -> str:
+    return f"{float(v):+.2f}" if isinstance(v, (int, float)) else "?"
 
 
 def _names(rows: Sequence[Mapping[str, object]]) -> str:
@@ -249,18 +354,30 @@ def diff_radar(previous: Mapping[str, object] | None,
         if str(previous.get(key) or "") != str(current.get(key) or ""):
             return RadarChanges(False, f"the previous record is for a different {key}",
                                 prev_stamp, prev_week)
+    # The basis: the same week of a different season, a different projection
+    # baseline, a different lineup shape or different scoring weights all
+    # produce numbers that share ids and nothing else.
+    for key in ("season", "baseline", "slots"):
+        if json.dumps(previous.get(key), sort_keys=True) != json.dumps(current.get(key),
+                                                                       sort_keys=True):
+            return RadarChanges(False, f"the previous record has a different {key} "
+                                f"({previous.get(key)!r} → {current.get(key)!r}); numbers on "
+                                f"different bases are not compared", prev_stamp, prev_week)
+    if prev.get("basis") != cur.get("basis"):
+        return RadarChanges(False, "the previous record's scoring basis differs or is not "
+                            "stated, so its lineup gains were scored on rules this page "
+                            "cannot show are the same", prev_stamp, prev_week)
 
     refreshed: list[str] = []
-    if str(prev.get("snapshot_as_of") or "") != str(cur.get("snapshot_as_of") or ""):
-        refreshed.append(f"league snapshot {prev.get('snapshot_as_of')} → "
-                         f"{cur.get('snapshot_as_of')}")
+    items: list[RadarChange] = []
+    built = _when(current.get("generated"))
+    _compare_stamp("league snapshot", prev.get("snapshot_as_of"), cur.get("snapshot_as_of"),
+                   built, refreshed, items)
     pev, cev = prev.get("evidence") or {}, cur.get("evidence") or {}
     for name in sorted(set(pev) | set(cev)):
-        a, b = pev.get(name), cev.get(name)
-        if a != b and b is not None:
-            refreshed.append(f"{name} {_stamp(a) or 'never'} → {_stamp(b)}")
+        _compare_stamp(name, pev.get(name), cev.get(name), built, refreshed, items)
+    unreported = {c.subject for c in items if c.detail.startswith("no longer reported")}
 
-    items: list[RadarChange] = []
     was_pool, now_pool = _index(prev.get("pool")), _index(cur.get("pool"))
     now_owned = {normalize_id(i) for i in (cur.get("owned") or [])}
     new_ids = sorted(now_pool.keys() - was_pool.keys())
@@ -281,6 +398,17 @@ def diff_radar(previous: Mapping[str, object] | None,
                                  "no longer eligible (inactive, no team, or position not "
                                  "projectable) and on no roster: " + _names(left)))
 
+    was_r, now_r = _roster(previous), _roster(current)
+    if was_r is not None and now_r is not None and was_r != now_r:
+        added = [now_r[i] for i in sorted(now_r.keys() - was_r.keys())]
+        removed = [was_r[i] for i in sorted(was_r.keys() - now_r.keys())]
+        items.append(RadarChange("roster", "your roster",
+                                 "since the previous record — added: "
+                                 + (", ".join(added) or "nobody") + "; removed: "
+                                 + (", ".join(removed) or "nobody")
+                                 + ". Every lineup gain is measured against the roster, "
+                                 "so gains can move without any projection moving"))
+
     was_c, now_c = _index(prev.get("candidates")), _index(cur.get("candidates"))
     for sid in sorted(now_c.keys() & was_c.keys()):
         a, b = was_c[sid], now_c[sid]
@@ -298,6 +426,26 @@ def diff_radar(previous: Mapping[str, object] | None,
             items.append(RadarChange("projection", name,
                                      "now projectable" if pb is not None else
                                      "no longer projectable", sid))
+        if a.get("verdict") == LINEUP and b.get("verdict") == LINEUP:
+            parts: list[str] = []
+            if _pid(a.get("drop")) != _pid(b.get("drop")):
+                parts.append(f"drop {_pname(a.get('drop'))} → {_pname(b.get('drop'))}")
+            if _pid(a.get("displaces")) != _pid(b.get("displaces")):
+                parts.append(f"displaces {_pname(a.get('displaces'))} → "
+                             f"{_pname(b.get('displaces'))}")
+            ga, gb = a.get("lineup_gain"), b.get("lineup_gain")
+            moved = (isinstance(ga, (int, float)) and isinstance(gb, (int, float))
+                     and abs(float(gb) - float(ga)) >= MOVE_POINTS)
+            if moved or (parts and ga != gb):
+                parts.append(f"lineup gain {_signed(ga)} → {_signed(gb)}")
+            if parts:
+                own = (isinstance(pa, (int, float)) and isinstance(pb, (int, float))
+                       and abs(float(pb) - float(pa)) >= MOVE_POINTS)
+                items.append(RadarChange(
+                    "lineup", name, "; ".join(parts) + (
+                        " — his own projection moved too (see its line)" if own else
+                        " — his own projection did not move, so the change is on your "
+                        "roster's side (a different drop, starter or roster)"), sid))
     # A LINEUP candidate that vanished from the list without leaving the
     # pool: the move is off, and the reader should not have to notice that
     # a card is simply missing.
@@ -311,6 +459,9 @@ def diff_radar(previous: Mapping[str, object] | None,
     pst, cst = prev.get("status") or {}, cur.get("status") or {}
     for name in sorted(set(pst) | set(cst)):
         a, b = pst.get(name), cst.get(name)
+        if a is not None and b is None and name not in unreported:
+            items.append(RadarChange("evidence", name, f"no longer assessed (was "
+                                     f"{str(a).upper()}); nothing is assumed about it"))
         if a != b and a is not None and b is not None:
             items.append(RadarChange("evidence", name, f"{str(a).upper()} → {str(b).upper()}"
                                      + (" — evidence expired; verdicts resting on it are "

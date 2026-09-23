@@ -427,11 +427,24 @@ def test_a_kicking_column_hole_does_not_blank_the_offense(tmp_path, capsys):
     assert _cells(out, "Derrick Henry")["pts"] != ""
 
 
-def test_a_null_stat_cell_is_not_a_missing_column(tmp_path, capsys):
+def test_a_null_stat_cell_is_not_a_missing_column(tmp_path, capsys, monkeypatch):
     """The distinction the check turns on. nflverse leaves a running back's
     `passing_interceptions` null and that null genuinely means zero picks —
-    scoring it as 0 is right. Only an absent COLUMN is a defect."""
-    m = build_cache(tmp_path)
+    scoring it as 0 is right. Only an absent COLUMN is a defect.
+
+    Pinned to a Saturday inside the fixture's week 2: this test asserts a
+    NON-degraded exit, and on the real clock the fixture's week-2 slate
+    ended on 2026-09-21, after which "box scores stop at week 1" is a true
+    degradation that has nothing to do with the column under test."""
+    frozen = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen if tz else frozen.replace(tzinfo=None)
+
+    monkeypatch.setattr(R, "datetime", _Frozen)
+    m = build_cache(tmp_path, as_of=frozen - timedelta(hours=1))
     path = m.file("weekly_stats")
     frame = pd.read_parquet(path)
     frame["passing_interceptions"] = float("nan")
