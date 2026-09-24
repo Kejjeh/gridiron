@@ -78,6 +78,8 @@ PATTERNS = [
     "test_waivers.py",
     "test_radar.py",
     "test_radar_validity.py",
+    "test_player_map_budget.py",
+    "test_drop_legality.py",
     "test_evaluate.py",
     "test_decisions.py",
     "test_carryover.py",

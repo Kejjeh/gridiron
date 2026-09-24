@@ -101,13 +101,19 @@ class Cadence:
 CADENCES: dict[str, Cadence] = {
     "sleeper_league": Cadence("sleeper_league", max_age_hours=24.0,
                               gameday_max_age_hours=6.0, forward_looking=True),
-    # The player dump carries the LIVE `injury_status` designation — the one
-    # field in the whole cache that can flip an hour before kickoff. It is not
-    # week-keyed, so nothing about the data itself says how old it is; its age
-    # is the only signal there is, which is exactly why it needs a cadence at
-    # least as tight as the injury table's. 24h matches the puller's own
-    # refresh interval; 6h on a gameday because "Questionable at Friday's
-    # practice" is not a statement about Sunday at 1pm.
+    # This cadence judges the DESIGNATIONS the player map carries, not its
+    # identity fields. The map is fetched at most once a day (Sleeper's own
+    # ask; gridiron.sleeper.player_map_budget), and ids, names, teams and
+    # positions are served from it whatever its age. `injury_status` is the
+    # one field in the cache that can flip an hour before kickoff; it is not
+    # week-keyed, so the pull time is the only date it has. 6h on a gameday
+    # because "Questionable at Friday's practice" is not a statement about
+    # Sunday at 1pm. With one request a day that means the designations are
+    # current for about six hours of each game day and the moves resting on
+    # them are WITHHELD the rest of it, with a check-in-Sleeper step. That is
+    # the honest outcome: no documented free source is fresher (nflverse's
+    # injury table updates once a day at 07:00 UTC), and widening this limit
+    # to fit the budget would present a day-old status as current.
     "sleeper_players": Cadence("sleeper_players", max_age_hours=24.0,
                                gameday_max_age_hours=6.0),
     "injuries": Cadence("injuries", max_age_hours=48.0,

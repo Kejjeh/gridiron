@@ -91,9 +91,9 @@ def test_two_pickups_that_cost_the_same_drop_are_an_either_or(tmp_path):
     drop_name = names[drops.pop()]
     for a in acq:
         assert "Either/or with" in a["backup"] and drop_name in a["backup"]
-        assert "next feasible drop" in a["backup"]
+        assert "next verified drop" in a["backup"]
         # the fallback is a different player than the shared drop
-        fallback = a["backup"].split("next feasible drop for ")[1].split(" is ")[1].split(" (")[0]
+        fallback = a["backup"].split("next verified drop for ")[1].split(" is ")[1].split(" (")[0]
         assert fallback != drop_name
     assert "are an either/or, not two moves" in html
 

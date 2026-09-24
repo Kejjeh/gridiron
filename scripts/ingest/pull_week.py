@@ -4,6 +4,10 @@
     PYTHONPATH=src python scripts/ingest/pull_week.py --force    # ignore ages
     PYTHONPATH=src python scripts/ingest/pull_week.py --no-players  # skip 16MB
 
+The Sleeper player map is requested at most once a day, whatever the flags
+(docs.sleeper.com asks for that call "once per day at most"; see
+gridiron.sleeper.player_map_budget). `--force` re-pulls everything else.
+
 Sources
   nflverse (nflreadpy) : weekly player stats, snap counts, schedules, injuries
   Sleeper (read-only)  : NFL state, league, users, rosters, matchups, players
@@ -36,7 +40,8 @@ from gridiron import livesync as ls
 from gridiron.league_config import SEASON_YEAR
 from gridiron.paths import ensure_dirs
 from gridiron.scoring import scoring_coverage
-from gridiron.sleeper import USER_AGENT, SleeperReadOnly
+from gridiron.sleeper import (USER_AGENT, SleeperReadOnly, note_player_map_request,
+                              player_map_budget, read_player_map_ledger)
 
 NFLVERSE_SOURCES = ("weekly_stats", "snap_counts", "schedules", "injuries")
 
@@ -66,8 +71,8 @@ def _weeks(frame) -> list[int]:
 
 def refresh_after_hours(name: str, now: datetime) -> float:
     """Re-pull a source once it is older than HALF the freshness limit in
-    effect now. The limit tightens on game days (injuries 48 h → 12 h, the
-    player dump 24 h → 6 h); a threshold taken from the weekday limit would
+    effect now. The limit tightens on game days (injuries 48 h → 12 h); a
+    threshold taken from the weekday limit would
     leave the source skipped as "cached" for hours after the gate already
     calls it STALE, withholding every action while a run every 15 minutes
     did nothing about it."""
@@ -79,8 +84,9 @@ def _current(manifest: ing.Manifest, name: str, now: datetime) -> bool:
 
     A source restored by `gridiron.carryover` arrives marked CARRIED
     FORWARD, which `age_ok` treats as a failed refresh. Taken alone that
-    made every cloud run re-download every frame and the 16 MB player dump
-    (about 96 times a day at a 15-minute schedule) whatever its age. A
+    made every cloud run re-download every frame (about 96 times a day at a
+    15-minute schedule) whatever its age. (The player map has its own
+    once-a-day request budget: `pull_player_map`.) A
     carried entry keeps the as-of of the pull that fetched it, so it is
     judged exactly as a local cache is — by that age — and, when it is
     within the threshold, the carried mark is cleared and the as-of is left
@@ -164,58 +170,138 @@ def _adopt(manifest: ing.Manifest, name: str) -> None:
         manifest.entries[name] = entry
 
 
-def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
-                 with_players: bool) -> int:
-    client = SleeperReadOnly()
-    week = 0
-    try:
-        snapshot = client.snapshot()
-        week = int(snapshot["week"])
-        # Published through livesync so this writer and the five-minute sync
-        # share ONE lock and ONE generation scheme. A lock only one of two
-        # writers takes is not a lock, and two writers overwriting one
-        # well-known filename is exactly how a reader ends up pairing a new
-        # snapshot with the previous pull's as_of.
-        # Validate before publishing. This writer reaches the same file the
-        # five-minute sync does, so it needs the same gate: a weekly pull that
-        # publishes a wrong-league or truncated snapshot is exactly as harmful
-        # as a scheduled one that does.
-        problems = ls.validate_snapshot(snapshot)
-        if problems:
-            raise ValueError("; ".join(str(p) for p in problems)[:300])
-        rows = len(snapshot.get("rosters") or [])
-        ls.publish_snapshot(manifest.directory, snapshot, now=now,
-                            source="api.sleeper.app (read-only)", rows=rows,
-                            week=week, season=manifest.season,
-                            holder="pull_week")
-        # publish_snapshot committed its own re-read of the manifest; adopt
-        # that entry so this run's later save() cannot write a stale one back.
-        _adopt(manifest, "sleeper_league")
-        print(f"  sleeper_league: week {week}, {rows} rosters")
-    except Exception as exc:
-        manifest.record_failure("sleeper_league",
-                                source="api.sleeper.app (read-only)",
-                                error=f"{type(exc).__name__}: {exc}")
-        print(f"  sleeper_league: FAILED {exc}", file=sys.stderr)
+def _map_evidence(manifest: ing.Manifest) -> datetime | None:
+    """When the player map was last requested, for a cache written before
+    the request ledger existed: its own pull time, or a later FAILED attempt
+    (a carried entry's `last_attempt` is the restore time, not a request)."""
+    e = manifest.get("sleeper_players")
+    if e is None:
+        return None
+    times = [e.as_of_dt] if e.path and e.as_of else []
+    if e.error and e.error != CARRIED_FORWARD and e.last_attempt:
+        try:
+            times.append(datetime.fromisoformat(e.last_attempt))
+        except ValueError:
+            pass
+    times = [t for t in times if t is not None]
+    return max(times) if times else None
 
+
+def pull_player_map(manifest: ing.Manifest, client, now: datetime, *,
+                    cold_start: bool = False) -> None:
+    """Request Sleeper's full player map only when its budget allows.
+
+    `--force` does not reach here: the budget is Sleeper's ask, not a cache
+    policy (gridiron.sleeper.player_map_budget). A request is ledgered BEFORE
+    the GET, so a crash mid-download still counts against the day. A request
+    that is not made restamps nothing; the map is aged from its own pull.
+    """
     name = "sleeper_players"
+    directory = manifest.directory
+    budget = player_map_budget(read_player_map_ledger(directory), now,
+                               fallback_last=_map_evidence(manifest),
+                               cold_start=cold_start)
+    if not budget.due:
+        print(f"  {name}: not requested — {budget.reason}")
+        e = manifest.get(name)
+        # Not refreshing it was the budget's decision, not a failure, so the
+        # carried mark is cleared — but only when the last logged request
+        # SUCCEEDED. After a failed one the mark stays and the gate withholds.
+        if (e is not None and e.error == CARRIED_FORWARD and budget.last_ok is True
+                and manifest.file(name) is not None):
+            manifest.entries[name] = replace(e, error="")
+            print(f"  {name}: carried map pulled {e.as_of} kept as-is "
+                  f"(designations are aged from that pull)")
+        return
+    note_player_map_request(directory, now, outcome="requested", note=budget.reason)
+    path = directory / "sleeper_players.json"
+    try:
+        players = client.players()
+        if not isinstance(players, dict) or not players:
+            raise ValueError(f"empty player map ({type(players).__name__}); the "
+                             f"last good map is kept")
+        atomic(path, lambda t: t.write_text(json.dumps(players), encoding="utf-8"))
+        manifest.record(name, path=path, rows=len(players),
+                        source="api.sleeper.app/v1/players/nfl (read-only)", as_of=now)
+        note_player_map_request(directory, now, outcome="ok")
+        print(f"  {name}: {len(players)} players (next request no sooner than 24 h)")
+    except Exception as exc:
+        err = f"{type(exc).__name__}: {exc}"
+        manifest.record_failure(name, source="api.sleeper.app", error=err, at=now)
+        note_player_map_request(directory, now, outcome="failed", note=err)
+        print(f"  {name}: FAILED {err} — not retried until the next day's window",
+              file=sys.stderr)
+
+
+def reusable_league_snapshot(manifest: ing.Manifest, now: datetime, minutes: float,
+                             league_id: str) -> str:
+    """Why the league snapshot already in the cache is THIS run's, or "".
+
+    The cloud run's sync step publishes a validated snapshot moments before
+    this script runs; fetching the same five endpoints again doubles the
+    requests and can pair two different league states in one build. Reused
+    only when it is recent, carries no error or carried mark (a restored or
+    failed entry is not this run's), and is for the configured league.
+    """
+    if minutes <= 0:
+        return ""
+    e = manifest.get("sleeper_league")
+    if e is None or e.error or e.as_of_dt is None:
+        return ""
+    age = (now - e.as_of_dt).total_seconds() / 60.0
+    if not (-5.0 <= age <= minutes):
+        return ""
+    snap = manifest.read_json("sleeper_league")
+    if not isinstance(snap, dict) or str(snap.get("league_id") or "") != str(league_id):
+        return ""
+    return f"published {age:.0f} min ago by this run's sync step ({e.as_of})"
+
+
+def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
+                 with_players: bool, *, client=None, reuse_league_minutes: float = 0,
+                 cold_start: bool = False) -> int:
+    client = client or SleeperReadOnly()
+    week = 0
+    reused = (reusable_league_snapshot(manifest, now, reuse_league_minutes,
+                                       client.league_id)
+              if reuse_league_minutes > 0 else "")
+    if reused:
+        print(f"  sleeper_league: reused, not fetched again — {reused}")
+    else:
+        try:
+            snapshot = client.snapshot()
+            week = int(snapshot["week"])
+            # Published through livesync so this writer and the five-minute sync
+            # share ONE lock and ONE generation scheme. A lock only one of two
+            # writers takes is not a lock, and two writers overwriting one
+            # well-known filename is exactly how a reader ends up pairing a new
+            # snapshot with the previous pull's as_of.
+            # Validate before publishing. This writer reaches the same file the
+            # five-minute sync does, so it needs the same gate: a weekly pull that
+            # publishes a wrong-league or truncated snapshot is exactly as harmful
+            # as a scheduled one that does.
+            problems = ls.validate_snapshot(snapshot)
+            if problems:
+                raise ValueError("; ".join(str(p) for p in problems)[:300])
+            rows = len(snapshot.get("rosters") or [])
+            ls.publish_snapshot(manifest.directory, snapshot, now=now,
+                                source="api.sleeper.app (read-only)", rows=rows,
+                                week=week, season=manifest.season,
+                                holder="pull_week")
+            # publish_snapshot committed its own re-read of the manifest; adopt
+            # that entry so this run's later save() cannot write a stale one back.
+            _adopt(manifest, "sleeper_league")
+            print(f"  sleeper_league: week {week}, {rows} rosters")
+        except Exception as exc:
+            manifest.record_failure("sleeper_league",
+                                    source="api.sleeper.app (read-only)",
+                                    error=f"{type(exc).__name__}: {exc}")
+            print(f"  sleeper_league: FAILED {exc}", file=sys.stderr)
+
     if not with_players:
         print("  sleeper_players: skipped (--no-players)")
-    elif not force and _current(manifest, name, now):
-        print("  sleeper_players: cached, skipping")
     else:
-        path = manifest.directory / "sleeper_players.json"
-        try:
-            players = client.players()
-            atomic(path, lambda t: t.write_text(json.dumps(players),
-                                                encoding="utf-8"))
-            manifest.record(name, path=path, rows=len(players),
-                            source="api.sleeper.app/v1/players/nfl (read-only)")
-            print(f"  sleeper_players: {len(players)} players")
-        except Exception as exc:
-            manifest.record_failure(name, source="api.sleeper.app",
-                                    error=f"{type(exc).__name__}: {exc}")
-            print(f"  sleeper_players: FAILED {exc}", file=sys.stderr)
+        pull_player_map(manifest, client, now, cold_start=cold_start)
     return week
 
 
@@ -278,6 +364,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-players", action="store_true",
                     help="skip the ~16 MB Sleeper player dump")
     ap.add_argument("--cache-root", type=Path, default=None)
+    ap.add_argument("--reuse-league-snapshot", type=float, default=0, metavar="MINUTES",
+                    help="reuse a league snapshot published (without error) in the "
+                         "last MINUTES instead of fetching it again; the cloud run "
+                         "passes this because its sync step has just fetched it")
+    ap.add_argument("--player-map-cold-start", action="store_true",
+                    help="with NO earlier player-map request on record, allow one "
+                         "outside the daily cold-start slot (a first local run); "
+                         "the once-a-day budget still applies after it")
     args = ap.parse_args(argv)
 
     ensure_dirs()
@@ -301,7 +395,9 @@ def main(argv: list[str] | None = None) -> int:
     print("[pull] crosswalk")
     pull_crosswalk(manifest, now, args.force)
     print("[pull] sleeper (read-only)")
-    pull_sleeper(manifest, now, args.force, not args.no_players)
+    pull_sleeper(manifest, now, args.force, not args.no_players,
+                 reuse_league_minutes=args.reuse_league_snapshot,
+                 cold_start=args.player_map_cold_start)
     check_scoring_inputs(manifest)
     # Save under the same lock the sync uses, merging in anything a concurrent
     # writer committed while this pull was running. Without the merge, a long

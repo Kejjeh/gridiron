@@ -63,6 +63,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from gridiron import ingest as ing
+from gridiron.sleeper import PLAYER_MAP_LEDGER, valid_player_map_ledger
 from gridiron.decisions import (ARCHIVE_RE, ARCHIVE_VERSION, archive_stamp,
                                 list_archives, record_digest)
 
@@ -715,6 +716,21 @@ def publish_inputs(cache_dir: Path, store: Path, *, season: int,
         verdicts.append(Verdict(safe, False,
                                 f"the manifest lists {name} but no such file "
                                 f"is on disk, so there is nothing to carry"))
+    # The player-map request ledger travels with the inputs: without it every
+    # fresh runner would see no request on record, and Sleeper's once-a-day
+    # budget would reset with each run (gridiron.sleeper.player_map_budget).
+    # It is not a manifest entry because it is a count of requests, not data.
+    ledger = cache_dir / PLAYER_MAP_LEDGER
+    carried_ledger = False
+    if ledger.is_file():
+        try:
+            shutil.copy2(ledger, target / PLAYER_MAP_LEDGER)
+            carried_ledger = True
+            verdicts.append(Verdict(PLAYER_MAP_LEDGER, True,
+                                    "stored; player-map request times unchanged"))
+        except OSError as exc:
+            verdicts.append(Verdict(PLAYER_MAP_LEDGER, False,
+                                    f"could not be stored ({type(exc).__name__})"))
     # The manifest goes LAST. Until it lands, the stored directory has no
     # index and a concurrent restore reads nothing rather than half a cache.
     shutil.copy2(manifest.path, target / manifest.path.name)
@@ -723,6 +739,8 @@ def publish_inputs(cache_dir: Path, store: Path, *, season: int,
     # Anything in the store the manifest no longer points at is a leftover
     # from a previous shape of the cache. Dropping it keeps the carry bounded.
     keepers = {p.name for p in files.values()} | {manifest.path.name}
+    if carried_ledger:
+        keepers.add(PLAYER_MAP_LEDGER)
     dropped = 0
     for stale in target.iterdir():
         if stale.is_file() and stale.name not in keepers:
@@ -795,6 +813,42 @@ def inspect_inputs(store: Path, *, season: int, now: datetime,
     return Verdict(index.name, True,
                    f"carried inputs verified, freshest pulled "
                    f"{newest:%Y-%m-%d %H:%M}Z"), blob
+
+
+def _restore_ledger(source: Path, cache_dir: Path, now: datetime) -> list[Verdict]:
+    """Lay the carried player-map request ledger down verbatim, or say why not.
+
+    Never over a local one (this machine's own count wins), never one that
+    does not parse line by line, and never one stamped in the future — a
+    future request time would block the map indefinitely."""
+    src = Path(source) / PLAYER_MAP_LEDGER
+    dest = Path(cache_dir) / PLAYER_MAP_LEDGER
+    if not src.is_file():
+        return []
+    if dest.exists():
+        return [Verdict(PLAYER_MAP_LEDGER, False,
+                        "this run already has its own request ledger")]
+    try:
+        blob = json.loads(src.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [Verdict(PLAYER_MAP_LEDGER, False,
+                        f"the carried request ledger is unreadable ({type(exc).__name__})")]
+    lines, why = valid_player_map_ledger(blob)
+    if why:
+        return [Verdict(PLAYER_MAP_LEDGER, False, f"the carried request ledger is {why}")]
+    cutoff = now.astimezone(timezone.utc) + STAMP_TOLERANCE
+    if any(datetime.fromisoformat(x["at"]) > cutoff for x in lines):
+        return [Verdict(PLAYER_MAP_LEDGER, False,
+                        "the carried request ledger has a request stamped in the "
+                        "future; refused rather than let it block the player map")]
+    try:
+        shutil.copy2(src, dest)
+    except OSError as exc:
+        return [Verdict(PLAYER_MAP_LEDGER, False,
+                        f"could not be laid down ({type(exc).__name__})")]
+    return [Verdict(PLAYER_MAP_LEDGER, True,
+                    f"laid down; {len(lines)} player-map request(s) on record, "
+                    f"times unchanged")]
 
 
 def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
@@ -900,6 +954,7 @@ def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
         verdicts.append(Verdict(src.name, True,
                                 f"laid down as last-good {entry.name}, pulled "
                                 f"{entry.as_of}, marked NOT REFRESHED by this run"))
+    verdicts.extend(_restore_ledger(source, cache_dir, now))
     if not carried:
         return CarryoverReport("restore-inputs", season, tuple(verdicts),
                                note="nothing was laid down")

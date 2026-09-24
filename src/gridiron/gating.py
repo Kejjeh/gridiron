@@ -71,8 +71,11 @@ ACTIONS: tuple[str, ...] = tuple(GATED_SOURCES)
 #: the withheld action so "verify first" is a task, not a mood.
 VERIFY: dict[str, str] = {
     "sleeper_league": "open Sleeper and confirm your roster and starting lineup",
-    "sleeper_players": "check the player's game status in Sleeper (the live "
-                       "designation is the field that moves last)",
+    "sleeper_players": "open each player named here in Sleeper and read the "
+                       "status tag beside the name (Q, D, O, IR or none) — this "
+                       "page's designations come from Sleeper's player map, "
+                       "which Sleeper asks to be fetched once a day at most, so "
+                       "on game days they are older than the 6 h the gate allows",
     "injuries": "check this week's practice report / game designations",
     "schedules": "confirm the kickoff time for the affected game",
     "crosswalk": "re-run the ingest so ids resolve",

@@ -140,6 +140,10 @@ class Upgrade:
     #: with, and by how much — (drop, lineup_gain), best first, excluding
     #: `drop`. Empty means the named drop is the only feasible one.
     alternatives: tuple[tuple[Player, float], ...] = field(default=())
+    #: "" when dropping `drop` is known to be allowed now; otherwise the exact
+    #: check the owner must make in Sleeper first (see `drop_rule`). A move
+    #: whose drop carries a check is conditional on it, never executable.
+    drop_check: str = ""
 
     @property
     def kind(self) -> str:
@@ -202,6 +206,7 @@ class Candidate:
     alternatives: tuple[tuple[Player, float], ...] = field(default=())
     versus: Player | None = None
     gap: float | None = None
+    drop_check: str = ""
 
     @property
     def is_move(self) -> bool:
@@ -306,6 +311,41 @@ WATCHLIST_PER_POSITION = 3
 ALTERNATIVE_DROPS = 3
 
 
+#: Sleeper's documented rule for a started starter (support.sleeper.com,
+#: "Why was someone able to drop their starter after they have played?",
+#: read 2026-09-24): he leaves a roster only through a waiver claim that was
+#: submitted before his kickoff, and even then stays locked in the lineup
+#: with his points counting. A free-agent move cannot drop him.
+STARTED_STARTER_RULE = (
+    "a starter whose game has started stays in your lineup for the week; "
+    "Sleeper only lets him go through a waiver claim submitted before his "
+    "kickoff (support.sleeper.com), so he is not offered as a drop")
+
+
+def drop_rule(p: Player) -> str:
+    """"" when dropping `p` right now is known to be allowed; otherwise the
+    exact check the owner has to make in Sleeper before relying on it.
+
+    Sleeper documents the started-STARTER case (never a drop; see
+    `protected_players`) and a commissioner lock on all moves, but not the
+    started-BENCH case: nothing official says whether a bench player can be
+    dropped once his game has kicked off. The league object's `bench_lock`
+    field is not defined in Sleeper's API docs, so it is not relied on. An
+    unknown rule is a check, never a permission.
+    """
+    if p.lineup == "START" and (p.locked or not p.lock_known):
+        return STARTED_STARTER_RULE
+    if p.locked:
+        return (f"{p.name}'s game has started; Sleeper's documentation does not "
+                f"say whether a bench player can be dropped after kickoff — try "
+                f"the drop in Sleeper before relying on it")
+    if not p.lock_known:
+        return (f"{p.name}'s kickoff could not be established, so whether his game "
+                f"has started (and whether Sleeper still lets you drop a bench "
+                f"player then) is unknown — check in Sleeper before relying on it")
+    return ""
+
+
 def protected_players(roster: Sequence[Player]) -> tuple[tuple[Player, str], ...]:
     """Roster players that must NOT be offered as an automatic drop, paired
     with the reason a human has to overrule.
@@ -327,7 +367,8 @@ def protected_players(roster: Sequence[Player]) -> tuple[tuple[Player, str], ...
     out: list[tuple[Player, str]] = []
     for p in roster:
         if p.lineup == "START" and not p.movable:
-            out.append((p, f"starting and not provably movable — {p.lock_reason}"))
+            out.append((p, f"starting and not provably movable — {p.lock_reason}; "
+                        + STARTED_STARTER_RULE))
         elif p.lineup == "IR":
             # Checked before the withheld branch: an IR player is almost always
             # withheld too, and "you would surrender the roster spot" is the
@@ -441,6 +482,7 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
         if add.sleeper_id in roster_ids:
             continue
         best_pair: Upgrade | None = None
+        best_rank: tuple = ()
         feasible: list[tuple[Player, float]] = []
         for drop in drops:
             trial = [p for p in roster if p.sleeper_id != drop.sleeper_id] + [
@@ -463,16 +505,27 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
             cand = Upgrade(add, drop, gain, depth, slot, displaced)
             if gain > 0:
                 feasible.append((drop, gain))
-            # The best pair is the largest LINEUP gain; the cheapest drop
-            # (drops are ordered cheapest-first) breaks a tie. The raw
-            # point difference between the two players never ranks.
-            if best_pair is None or cand.lineup_gain > best_pair.lineup_gain:
-                best_pair = cand
+            # The best pair is the largest LINEUP gain among drops KNOWN to be
+            # allowed now; the cheapest drop (drops are ordered cheapest-first)
+            # breaks a tie. A drop whose legality is unverified (a bench
+            # player whose game has started) is chosen only when no verified
+            # drop improves the lineup at all, and then the move carries the
+            # check. The raw point difference between the two players never
+            # ranks.
+            rank = (cand.lineup_gain > 0, not drop_rule(drop), cand.lineup_gain)
+            if best_pair is None or rank > best_rank:
+                best_pair, best_rank = cand, rank
         if best_pair is not None and best_pair.lineup_gain > 0:
-            others = tuple((d, g) for d, g in sorted(feasible, key=lambda t: -t[1])
-                           if d.sleeper_id != best_pair.drop.sleeper_id)[:ALTERNATIVE_DROPS]
+            # Verified fallbacks first, then unverified ones, each by gain:
+            # the "next feasible drop" a card names must be one that can be
+            # made, counted for THIS move on its own.
+            others = tuple((d, g) for d, g in sorted(
+                feasible, key=lambda t: (bool(drop_rule(t[0])), -t[1]))
+                if d.sleeper_id != best_pair.drop.sleeper_id)[:ALTERNATIVE_DROPS]
+            check = drop_rule(best_pair.drop)
             u = Upgrade(best_pair.add, best_pair.drop, best_pair.lineup_gain,
-                        best_pair.depth_gain, best_pair.slot, best_pair.displaces, others)
+                        best_pair.depth_gain, best_pair.slot, best_pair.displaces, others,
+                        drop_check=check)
             upgrades.append(u)
             who = (f", displacing {u.displaces.name}" if u.displaces is not None
                    and u.displaces.sleeper_id != u.drop.sleeper_id else "")
@@ -481,7 +534,7 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
                 f"best legal lineup, at the cost of dropping {u.drop.name} "
                 f"({u.drop.position}, {u.drop.value or 0.0:.2f})",
                 u.lineup_gain, u.drop, u.slot, u.displaces, others,
-                cheapest_at.get(add.position), None))
+                cheapest_at.get(add.position), None, drop_check=check))
             continue
         # Lineup unchanged. A like-for-like comparison only: the cheapest
         # droppable player at the SAME position, or nothing.

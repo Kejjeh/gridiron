@@ -69,7 +69,7 @@ from gridiron.scoring import ScoringCoverage
 from gridiron import theme
 from gridiron.waivers import (
     BELOW, COVERAGE, LINEUP, RESEARCH, Candidate, WaiverBoard, available_ids,
-    build_board, eligibility, pool_players,
+    build_board, drop_rule, eligibility, pool_players,
 )
 from gridiron.weekly import (
     BYE, NO_SCHEDULE, availability, injury_index, schedule_index,
@@ -924,24 +924,35 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                              f"(first kickoff among the players involved)."
                              if kick is not None else f" {kick_note}."))
         rivals = [o for o in shown if o is not u and o.drop.sleeper_id == u.drop.sleeper_id]
+        # Fallback drops are counted for THIS move on its own, verified ones
+        # first (`build_board` orders them so): a bench player whose game has
+        # started is named as unverified, never as "the next feasible drop".
+        legal = [(d, g) for d, g in u.alternatives if not drop_rule(d)]
+        unverified = [d for d, _ in u.alternatives if drop_rule(d)]
+        nxt = legal[0] if legal else None
+        count = (f"{len(legal)} verified fallback drop(s) for {u.add.name}"
+                 + (f"; {', '.join(d.name for d in unverified)} would also work but "
+                    f"{'has' if len(unverified) == 1 else 'have'} already played "
+                    f"(or kickoff unknown) — unverified whether Sleeper allows that drop"
+                    if unverified else ""))
         if rivals:
-            nxt = u.alternatives[0] if u.alternatives else None
             either = (f"Either/or with {', '.join(r.add.name for r in rivals)}: both cost "
                       f"the same drop, {u.drop.name}, so they are not both possible with "
                       f"it. If that one is made first, "
-                      + (f"the next feasible drop for {u.add.name} is {nxt[0].name} "
+                      + (f"the next verified drop for {u.add.name} is {nxt[0].name} "
                          f"({nxt[0].position}, {_num(nxt[0].value, 2)} pts), and the "
                          f"lineup gain with that drop is {_num(nxt[1], 2, True)}"
                          if nxt else
-                         f"there is no other feasible drop for {u.add.name}: the move "
-                         f"is off"))
+                         f"there is no other verified drop for {u.add.name}: the move "
+                         f"is off") + f". {count}.")
         else:
-            nxt = u.alternatives[0] if u.alternatives else None
-            either = (f"if {u.drop.name} cannot be dropped, the next feasible drop is "
+            either = (f"if {u.drop.name} cannot be dropped, the next verified drop is "
                       f"{nxt[0].name} ({nxt[0].position}, {_num(nxt[0].value, 2)} pts) "
-                      f"with a lineup gain of {_num(nxt[1], 2, True)}"
+                      f"with a lineup gain of {_num(nxt[1], 2, True)}. {count}"
                       if nxt else
-                      f"{u.drop.name} is the only feasible drop; without it the move is off")
+                      f"{u.drop.name} is the only verified drop; without it the move is off"
+                      + (f". {count}" if unverified else ""))
+        drop_note = (f" Drop legality UNVERIFIED: {u.drop_check}." if u.drop_check else "")
         after = _coverage_after(roster or [p for p in plan.current if p is not None]
                                 + list(plan.bench_pool), u)
         displ = (f"{u.displaces.name} leaves the lineup"
@@ -954,7 +965,7 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
             (f"Benefit: {u.add.name} enters {u.slot} ({_num(u.add.value, 2)} projected), "
              f"{displ}; best legal lineup {_num(u.lineup_gain, 2, True)} pts THIS WEEK. "
              f"Cost: drop {u.drop.name} ({u.drop.position}, {_num(u.drop.value, 2)} "
-             f"projected this week). Coverage after the move: {after}. "
+             f"projected this week).{drop_note} Coverage after the move: {after}. "
              f"Availability {elig.state}: this page cannot tell a free agent from a "
              f"player on waivers, so this is endorsed only if Sleeper shows him "
              f"available. Limits: projections are the UNVALIDATED baseline; FAAB, "
@@ -979,7 +990,8 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                       f"from box scores up to the evidence boundary stated at the top",)
                      + elig.basis,
             withheld_reasons=w_why,
-            verify=tuple(w_verify) + (elig.verify,
+            verify=tuple(w_verify) + ((u.drop_check,) if u.drop_check else ()) + (
+                                      elig.verify,
                                       f"confirm {u.drop.name} is the player you would "
                                       f"drop and that no injured or bye player is a better "
                                       f"drop — the protected list names the ones this "
@@ -1336,7 +1348,9 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
                  if c.displaces is not None and c.displaces.sleeper_id != c.drop.sleeper_id
                  else f"{_e(c.drop.name)} leaves the roster and the lineup")
         alts = ("; ".join(f"{_e(dp.name)} ({_e(dp.position)}, {_num(dp.value, 2)}) → "
-                          f"lineup {_num(g, 2, True)}" for dp, g in c.alternatives)
+                          f"lineup {_num(g, 2, True)}"
+                          + (" <span class=\"warn\">(already played — drop UNVERIFIED)</span>"
+                             if drop_rule(dp) else "") for dp, g in c.alternatives)
                 or "none — this is the only feasible drop; without it the move is off")
         deadline, note = _deadline_for([a, c.displaces], d.generated)
         pairs += [
@@ -1344,7 +1358,9 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
                         f"<b class=\"lime\">{_num(gain, 2, True)}</b> pts THIS WEEK"),
             ("Displaces", displ),
             ("Cost", f"drop <b>{_e(c.drop.name)}</b> ({_e(c.drop.position)}, "
-                     f"{_e(c.drop.lineup)}, {_num(c.drop.value, 2)} projected this week)"),
+                     f"{_e(c.drop.lineup)}, {_num(c.drop.value, 2)} projected this week)"
+                     + (f" — <span class=\"warn\">drop UNVERIFIED:</span> {_e(c.drop_check)}"
+                        if c.drop_check else "")),
             ("Alternatives", alts),
             ("Coverage after", _e(_coverage_after(d.roster, c))),
             ("Deadline", _e(note)),
@@ -1559,8 +1575,8 @@ window.gridironRadar={apply:apply,state:function(){ return state; },set:function
 """
 
 
-_SOURCE_WORDS = {"sleeper_league": "league snapshot", "sleeper_players": "player dump "
-                 "(designations)", "injuries": "injury report", "schedules": "schedule"}
+_SOURCE_WORDS = {"sleeper_league": "league snapshot", "sleeper_players": "designations "
+                 "(once-a-day player map)", "injuries": "injury report", "schedules": "schedule"}
 
 
 def _valid_meta(d: Dashboard) -> str:
@@ -1689,7 +1705,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         for a in acquire_cards:
             out.append(_action_card(a))
         out.append("<p class=\"small sub\">Each card names the ONE drop it costs and what "
-                   "the next feasible drop would be. Two cards that cost the same player "
+                   "the next verified drop would be. Two cards that cost the same player "
                    "are an either/or, not two moves.</p>")
     else:
         out.append("<div class=\"card\"><p>No available player improves this week's best "

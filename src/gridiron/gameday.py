@@ -1231,7 +1231,10 @@ def summarise_radar(block: object) -> dict:
         moves.append({"deadline": _move_deadline(c),"id": str(c.get("id") or ""), "name": str(c.get("name") or ""),
                       "position": str(c.get("position") or ""),
                       "lineup_gain": _num(c.get("lineup_gain")), "slot": str(c.get("slot") or ""),
-                      "drop": str(drop.get("name") or ""), "drop_id": str(drop.get("id") or "")})
+                      "drop": str(drop.get("name") or ""), "drop_id": str(drop.get("id") or ""),
+                      # Older records have no drop_check; they predate the
+                      # rule and are shown without one, not as verified.
+                      "drop_check": str(c.get("drop_check") or "")})
     return {"snapshot_as_of": str(block.get("snapshot_as_of") or ""),
             "pool": _num(counts.get("pool")), "projected": _num(counts.get("projected")),
             "evaluated": _num(counts.get("evaluated")),
@@ -1735,7 +1738,8 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
                 f"into {_e(m['slot'])}: <span class=\"num\">{'+' if (m['lineup_gain'] or 0) > 0 else ''}{_pts(m['lineup_gain'])}</span> to the best "
                 f"legal lineup on the pregame numbers, at the cost of dropping {_e(m['drop'])} — "
                 f"conditional on availability, which the board could not verify"
-                f"<span class=\"vstate\">{_lapse(m.get('deadline'), d.generated)[1]}</span></li>"
+                + (f"; drop UNVERIFIED — {_e(m['drop_check'])}" if m.get("drop_check") else "")
+                + f"<span class=\"vstate\">{_lapse(m.get('deadline'), d.generated)[1]}</span></li>"
                 for m in moves) + "</ul>")
         out.append("<p class=\"small sub\">A pickup is not a game-day move: Sleeper processes "
                    "claims on its own clock and this page never re-judges one. The full "

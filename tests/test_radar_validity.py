@@ -295,8 +295,6 @@ def test_the_refresh_threshold_is_half_the_limit_in_effect_now():
     saturday = datetime(2026, 9, 26, 15, tzinfo=UTC)
     assert pw.refresh_after_hours("injuries", sunday) == CADENCES["injuries"].gameday_max_age_hours / 2
     assert pw.refresh_after_hours("injuries", saturday) == CADENCES["injuries"].max_age_hours / 2
-    assert pw.refresh_after_hours("sleeper_players", sunday) == 3.0
-    assert pw.refresh_after_hours("sleeper_players", saturday) == 12.0
     assert pw.refresh_after_hours("weekly_stats", sunday) == 36.0
 
 

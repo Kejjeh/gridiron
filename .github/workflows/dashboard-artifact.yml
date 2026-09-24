@@ -35,9 +35,14 @@ name: Weekly dashboard artifact
 #     successful build, and every page dates each of them. There is no
 #     guarantee of live advice or live injury news.
 #   * not a full re-pull every run. The Sleeper league snapshot (five small
-#     GETs) is refreshed each run; the 16 MB player dump and the nflverse
-#     frames are refreshed only when older than half the freshness limit IN
-#     EFFECT (tighter on game days; scripts/ingest/pull_week.py). A carried
+#     GETs) is fetched ONCE per run, by the sync step; the pull step reuses
+#     it. Sleeper's full player map is requested at most once a day, between
+#     10:00 and 13:00 ET (docs.sleeper.com asks for that call "once per day
+#     at most"; gridiron.sleeper.player_map_budget), so on game days its
+#     designations are current for about six hours and the moves resting on
+#     them are withheld outside that, with a check-in-Sleeper step. The
+#     nflverse frames are refreshed only when older than half the freshness
+#     limit IN EFFECT (tighter on game days; scripts/ingest/pull_week.py). A carried
 #     input is judged by the time of the pull that fetched it, exactly as a
 #     local cache is; before 2026-09-23 the carried mark alone forced every
 #     run to re-download everything. A run that refreshes nothing re-renders
@@ -167,10 +172,13 @@ jobs:
         continue-on-error: true
         run: python scripts/sync/sleeper_sync.py run --quiet --interval 3600
 
+      # --reuse-league-snapshot: the sync step above has just fetched and
+      # published the league; the pull reuses that generation (only if it
+      # carries no error and is this run's) instead of fetching it again.
       - name: Pull the week's nflverse frames and the player dump
         id: nflverse
         continue-on-error: true
-        run: python scripts/ingest/pull_week.py
+        run: python scripts/ingest/pull_week.py --reuse-league-snapshot 20
 
       - name: Render the dashboard
         id: render
