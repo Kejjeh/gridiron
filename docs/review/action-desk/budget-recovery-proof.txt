@@ -138,3 +138,31 @@ run #121 Fri 25 Sep 20:15Z (16:15 ET) scheduled [--force]: budget recovery, no r
   stuck         3 GETs: 23 Sep 16:52Z, 24 Sep 17:02Z, 25 Sep 17:30Z; smallest spacing 1 day, 0:10:00
 SMALLEST spacing between two GETs in any timeline: 1 day, 0:10:00 (the rule: >= 24:00:00)
 league fetches: 0
+
+== Correction after Astra's review of 471980c: a rejected ledger's readable evidence ==
+RED at 471980c, from a real file (request 19:00Z 'requested', gap mark 19:30Z, checked_run "broken"; now 20:00Z; carried run 10, attempt 1, bootstrap):
+  old map (Sep 22 20:00Z): 1 GET, state due
+  no map: 1 GET, state due
+GREEN, this head, same file:
+  old map (Sep 22 20:00Z): problem='the request ledger is its checked run number is unreadable'; bootstrap -> GETs 0, state bootstrap-refused
+  no map: problem='the request ledger is its checked run number is unreadable'; bootstrap -> GETs 0, state bootstrap-refused
+Tests failing at 471980c and passing here (18):
+  test_the_ledger_travels_with_the_carried_inputs_and_is_validated
+  test_a_malformed_field_does_not_erase_recent_evidence[old-map-checked_run]
+  test_a_malformed_field_does_not_erase_recent_evidence[old-map-checked]
+  test_a_malformed_field_does_not_erase_recent_evidence[old-map-other-row]
+  test_a_malformed_field_does_not_erase_recent_evidence[old-map-not-a-row]
+  test_a_malformed_field_does_not_erase_recent_evidence[old-map-unknown-outcome]
+  test_a_malformed_field_does_not_erase_recent_evidence[old-map-gap-mark-only]
+  test_a_malformed_field_does_not_erase_recent_evidence[old-map-request-only]
+  test_a_malformed_field_does_not_erase_recent_evidence[no-map-checked_run]
+  test_a_malformed_field_does_not_erase_recent_evidence[no-map-checked]
+  test_a_malformed_field_does_not_erase_recent_evidence[no-map-other-row]
+  test_a_malformed_field_does_not_erase_recent_evidence[no-map-not-a-row]
+  test_a_malformed_field_does_not_erase_recent_evidence[no-map-unknown-outcome]
+  test_a_malformed_field_does_not_erase_recent_evidence[no-map-gap-mark-only]
+  test_a_malformed_field_does_not_erase_recent_evidence[no-map-request-only]
+  test_a_ledger_that_is_not_json_shows_nothing
+  test_a_rejected_carried_ledger_still_refuses_a_cloud_bootstrap
+  test_the_sequence_adapter_keeps_the_reason_in_problem
+  (test_a_ledger_that_is_not_json_shows_nothing fails at 471980c only because it reads the new 'evidence' field; test_the_ledger_travels_with_the_carried_inputs_and_is_validated fails there because the restore change is intended: a rejected carried ledger is now laid down, reported refused.)

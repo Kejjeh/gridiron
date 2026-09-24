@@ -748,6 +748,33 @@ future edit that makes a run skip the player-map step without failing.
 | Full suite, then smoke | 826 passed, 0 skipped, 0 failed (log 20260924T172440Z); smoke PASS | synthetic |
 | Cloud-shaped proof (`docs/review/action-desk/budget-recovery-proof.txt`) | 8 timelines (first deployment, delayed run, Astra's case, re-runs, force/bootstrap in a hold, every-3rd-save lost for 36 h, cache stops saving for 3 days, cache evicted): smallest spacing between two GETs in any timeline 24 h 10 min; Astra's case resumes at 09-26 17:45Z; the lossy case resumes 24 h after its last gap; 0 league fetches | synthetic |
 
+**Correction after Astra's review of `471980c` (821 passed / 5 skipped, log
+20260924T194211Z).** The bootstrap protection above did not reach real file
+input. `read_player_map_history` discarded a rejected ledger WHOLE, so a
+file with a request an hour old and a gap mark 30 minutes old, but
+`checked_run: "broken"`, read as no history, and a bootstrap with an old or
+no map requested (reproduced from disk through `pull_player_map`: 1 GET).
+In the cloud it never got that far: `carryover` refused the rejected
+ledger at restore and did not lay it down. Now:
+
+- A rejected ledger keeps its readable stamps as `evidence` — every request
+  line's time that still parses, whatever its outcome, and a readable gap
+  mark — used ONLY to refuse a bootstrap. It never authorises a request, the
+  ledger stays rejected (RECOVERY NEEDED, no automatic request), and the
+  file is never rewritten except by a bootstrap the budget allowed.
+- `carryover` lays a rejected carried ledger down verbatim, reported
+  REFUSED ("laid down only as bootstrap evidence"), instead of dropping it.
+- The sequence adapter builds `PlayerMapHistory(..., problem=why)` by
+  keyword (it had put the reason into `checked_run`).
+- Stated limit: a ledger that is not JSON at all shows nothing; then only
+  the cached map and the run logs (procedure step 1) refuse a bootstrap.
+
+Evidence: 18 new tests fail at `471980c` and pass here (from disk, seven
+malformed-field shapes × old map / no map, through `pull_player_map` with a
+counting client; the carry path; the non-JSON limit; the adapter), plus one
+that shows old evidence never blocks the existing manual recovery. Budget
+file 70 passed; full suite and smoke in the PR body.
+
 **Deployment note (adds to the checklist in the section below).** After the
 merge and the one bootstrap, a run log saying `… not shown to come from the
 previous run …` means a gap was seen; `a gap in the carried ledger was seen

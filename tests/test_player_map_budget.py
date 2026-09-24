@@ -413,7 +413,8 @@ def test_the_ledger_travels_with_the_carried_inputs_and_is_validated(tmp_path):
     carryover.restore_inputs(store, fresh, season=2026, now=IN_WINDOW)
     assert sleeper.read_player_map_ledger(fresh) == sleeper.read_player_map_ledger(cache)
 
-    # A ledger stamped in the future is refused rather than laid down.
+    # A ledger stamped in the future is refused as history: laid down only as
+    # bootstrap evidence, and the budget reads it as RECOVERY NEEDED.
     stored = store / carryover.INPUTS_DIR / "season2026" / sleeper.PLAYER_MAP_LEDGER
     stored.write_text(json.dumps({"requests": [
         {"at": (IN_WINDOW + timedelta(days=3)).isoformat(), "outcome": "ok"}]}),
@@ -422,9 +423,11 @@ def test_the_ledger_travels_with_the_carried_inputs_and_is_validated(tmp_path):
     other.mkdir(parents=True)
     Manifest(other, {}, 2026).save()
     report = carryover.restore_inputs(store, other, season=2026, now=IN_WINDOW)
-    assert not (other / sleeper.PLAYER_MAP_LEDGER).exists()
     assert any(sleeper.PLAYER_MAP_LEDGER in v.name and not v.accepted
-               for v in report.verdicts)
+               and "bootstrap evidence" in v.reason for v in report.verdicts)
+    b = sleeper.player_map_budget(sleeper.read_player_map_history(other), IN_WINDOW,
+                                  carried=True, run=5)
+    assert not b.due and b.state == "recovery"
 
 
 def test_an_unreadable_ledger_never_opens_the_budget(tmp_path):
@@ -855,3 +858,124 @@ def test_a_held_budget_that_outlasts_the_map_says_so_on_the_page(tmp_path):
                                   IN_WINDOW, carried=True, run=43)
     sleeper.write_player_map_status(cache, IN_WINDOW, b)
     assert b.state == "held" and sleeper.player_map_status_note(cache) == ""
+
+
+# --------------------------- a rejected ledger still refuses a bootstrap
+#
+# Astra's reproduction at 471980c, from a real file: a ledger with a request
+# an hour old and a gap mark 30 min old, whose checked_run is "broken", was
+# read as NO history at all, so a bootstrap with an old (or no) map
+# requested. The malformed field still makes the ledger untrustworthy (no
+# automatic request, RECOVERY NEEDED); what still parses now blocks the
+# bootstrap, and the file is left exactly as it was.
+
+NOW_E = datetime(2026, 9, 24, 20, 0, tzinfo=UTC)
+AN_HOUR_AGO = "2026-09-24T19:00:00+00:00"
+HALF_AN_HOUR_AGO = "2026-09-24T19:30:00+00:00"
+
+
+def _ledger_file(cache: Path, **fields) -> bytes:
+    blob = {"endpoint": "players/nfl", "checked": HALF_AN_HOUR_AGO, "checked_run": 9,
+            "gap_seen": HALF_AN_HOUR_AGO,
+            "requests": [{"at": AN_HOUR_AGO, "outcome": "requested"}]}
+    blob.update(fields)
+    raw = json.dumps(blob).encode()
+    (cache / sleeper.PLAYER_MAP_LEDGER).write_bytes(raw)
+    return raw
+
+
+def _with_map(cache: Path, as_of: datetime | None) -> None:
+    m = Manifest.load(cache, 2026)
+    if as_of is not None:
+        f = cache / "sleeper_players.json"
+        f.write_text(json.dumps({"1": {}}), encoding="utf-8")
+        m.record("sleeper_players", path=f, rows=1, source="t", as_of=as_of)
+    m.save()
+
+
+def _pull_from_disk(pw, cache: Path, *, bootstrap: bool) -> tuple[int, dict]:
+    client = FakeClient()
+    pw.pull_player_map(Manifest.load(cache, 2026), client, NOW_E, carried=True, run=10,
+                       attempt=1, bootstrap=bootstrap)
+    return client.player_calls, json.loads((cache / sleeper.PLAYER_MAP_STATUS).read_text())
+
+
+@pytest.mark.parametrize("fields", [
+    {"checked_run": "broken"},                                          # Astra's case
+    {"checked": "not a time"},
+    {"requests": [{"at": AN_HOUR_AGO, "outcome": "requested"},
+                  {"at": "garbage", "outcome": "ok"}]},                 # another row bad
+    {"requests": [{"at": AN_HOUR_AGO, "outcome": "failed"}, "not a row"]},
+    {"requests": [{"at": AN_HOUR_AGO, "outcome": "who knows"}], "gap_seen": None},
+    {"requests": [{"at": "garbage"}], "checked_run": "broken"},        # only the gap mark
+    {"gap_seen": "garbage"},                                            # only the request
+], ids=["checked_run", "checked", "other-row", "not-a-row", "unknown-outcome",
+        "gap-mark-only", "request-only"])
+@pytest.mark.parametrize("map_as_of", [datetime(2026, 9, 22, 20, 0, tzinfo=UTC), None],
+                         ids=["old-map", "no-map"])
+def test_a_malformed_field_does_not_erase_recent_evidence(tmp_path, fields, map_as_of):
+    pw = _pull_week()
+    cache, _ = _cache(tmp_path)
+    _with_map(cache, map_as_of)
+    raw = _ledger_file(cache, **fields)
+    h = sleeper.read_player_map_history(cache)
+    assert h.problem and not h.lines and h.evidence          # rejected, evidence kept
+    calls, st = _pull_from_disk(pw, cache, bootstrap=True)
+    assert calls == 0 and st["state"] == "bootstrap-refused"
+    assert "2026-09-2" in st["reason"] and "retry the bootstrap after" in st["reason"]
+    calls, st = _pull_from_disk(pw, cache, bootstrap=False)  # automatic: still recovery
+    assert calls == 0 and st["state"] == "recovery"
+    # Never sanitised: the rejected file is exactly what was on disk.
+    assert (cache / sleeper.PLAYER_MAP_LEDGER).read_bytes() == raw
+
+
+def test_evidence_only_blocks_it_never_authorises(tmp_path):
+    """A rejected ledger whose readable stamps are all over a day old: the
+    bootstrap proceeds as before (the existing manual-recovery policy), and
+    without one nothing requests however old the evidence."""
+    pw = _pull_week()
+    cache, _ = _cache(tmp_path)
+    _with_map(cache, datetime(2026, 9, 22, 20, 0, tzinfo=UTC))
+    _ledger_file(cache, checked_run="broken", gap_seen="2026-09-23T18:00:00+00:00",
+                 requests=[{"at": "2026-09-23T17:00:00+00:00", "outcome": "ok"}])
+    assert _pull_from_disk(pw, cache, bootstrap=False)[0] == 0
+    calls, st = _pull_from_disk(pw, cache, bootstrap=True)
+    assert calls == 1 and st["state"] == "due"
+    assert sleeper.read_player_map_history(cache).problem == ""   # the bootstrap's own ledger
+
+
+def test_a_ledger_that_is_not_json_shows_nothing(tmp_path):
+    """Stated limit: nothing parses, so only the map (and the run logs a
+    person reads first) can refuse the bootstrap."""
+    pw = _pull_week()
+    cache, _ = _cache(tmp_path)
+    _with_map(cache, datetime(2026, 9, 22, 20, 0, tzinfo=UTC))
+    (cache / sleeper.PLAYER_MAP_LEDGER).write_text('{"requests": [{"at": "2026-09-24T19', "utf-8")
+    assert sleeper.read_player_map_history(cache).evidence == ()
+    assert _pull_from_disk(pw, cache, bootstrap=True)[0] == 1
+    cache2, _ = _cache(tmp_path / "fresh-map")
+    _with_map(cache2, NOW_E - timedelta(hours=3))
+    (cache2 / sleeper.PLAYER_MAP_LEDGER).write_text("not json", "utf-8")
+    assert _pull_from_disk(pw, cache2, bootstrap=True)[0] == 0      # the map still refuses
+
+
+def test_a_rejected_carried_ledger_still_refuses_a_cloud_bootstrap(tmp_path):
+    """The cloud reads the ledger through the carry: a malformed carried
+    ledger is laid down (reported refused), so its evidence reaches the
+    budget instead of being dropped at restore."""
+    pw = _pull_week()
+    store = tmp_path / "store"
+    seed, _ = _cache(tmp_path / "seed")
+    _with_map(seed, datetime(2026, 9, 22, 20, 0, tzinfo=UTC))
+    _ledger_file(seed, checked_run="broken")
+    carryover.publish_inputs(seed, store, season=2026, now=NOW_E - timedelta(minutes=20))
+    c = FakeClient()
+    for i, (now, boot) in enumerate(((NOW_E, True), (NOW_E + timedelta(minutes=15), False))):
+        cache = _cloud_run(pw, tmp_path, store, i, now, c, run=10 + i, bootstrap=boot)
+    assert c.player_calls == 0
+    assert "RECOVERY NEEDED" in sleeper.player_map_status_note(cache)
+
+
+def test_the_sequence_adapter_keeps_the_reason_in_problem():
+    b = sleeper.player_map_budget([{"at": "garbage", "outcome": "ok"}], NOW_E)
+    assert b.state == "recovery" and "no readable time or outcome" in b.reason

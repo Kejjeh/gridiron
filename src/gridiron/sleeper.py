@@ -237,9 +237,12 @@ def season_matches(state: NflState) -> bool:
 #     agree. The cache is not durable storage: if it loses the ledger
 #     outright the state is RECOVERY NEEDED, and a person's bootstrap is
 #     their word, checked only against what the cache still shows (the map,
-#     a failed attempt, a rejected ledger's readable stamps), that no
-#     request was made in the last 24 h. A local run keeps its own ledger on its own
-#     disk and is not counted with the cloud's.
+#     a failed attempt, and every stamp of a rejected ledger that still
+#     parses: request times and a gap mark), that no request was made in the
+#     last 24 h. A ledger that is not JSON at all shows nothing; then only
+#     the map and the run logs (HANDOFF, 'Player-map bootstrap') remain.
+#     A local run keeps its own ledger on its own disk and is not counted
+#     with the cloud's.
 # ---------------------------------------------------------------------------
 
 PLAYER_MAP_LEDGER = "player_map_requests.json"
@@ -302,6 +305,22 @@ class PlayerMapHistory:
     #: Latest time a cloud run found the carried chain broken (a run between
     #: may have requested and lost its save); None when no gap was ever seen.
     gap_seen: datetime | None = None
+    #: Readable stamps salvaged from a REJECTED ledger: every request line's
+    #: time that still parses (any outcome) and a readable gap mark. Used
+    #: ONLY to refuse a bootstrap; it never authorises a request and is never
+    #: written back. Empty for a trustworthy ledger (its own lines count).
+    evidence: tuple[datetime, ...] = ()
+
+
+def _salvage(blob: object) -> tuple[datetime, ...]:
+    """What a rejected ledger still shows: one malformed field must not erase
+    a readable, recent request or gap mark. Total; nothing here raises."""
+    if not isinstance(blob, dict):
+        return ()
+    rows = blob.get("requests") if isinstance(blob.get("requests"), list) else []
+    found = [_stamp(x.get("at")) for x in rows if isinstance(x, dict)]
+    found.append(_stamp(blob.get("gap_seen")))
+    return tuple(t for t in found if t is not None)
 
 
 def read_player_map_history(directory: Path) -> PlayerMapHistory:
@@ -315,7 +334,8 @@ def read_player_map_history(directory: Path) -> PlayerMapHistory:
                                         f"({type(exc).__name__})")
     lines, why = valid_player_map_ledger(blob)
     if why:
-        return PlayerMapHistory(problem=f"the request ledger is {why}")
+        return PlayerMapHistory(problem=f"the request ledger is {why}",
+                                evidence=_salvage(blob))
     return PlayerMapHistory(tuple(lines), _stamp(blob.get("checked")),
                             blob.get("checked_run"), gap_seen=_stamp(blob.get("gap_seen")))
 
@@ -409,7 +429,7 @@ def player_map_budget(history: PlayerMapHistory | Sequence[Mapping[str, Any]],
     matter only when `carried`, where an unknown one counts as a gap."""
     if not isinstance(history, PlayerMapHistory):
         lines, why = valid_player_map_ledger({"requests": list(history)})
-        history = PlayerMapHistory(tuple(lines), None, why)
+        history = PlayerMapHistory(tuple(lines), problem=why)
     problem = history.problem or ("" if history.lines else "no request on the ledger")
     stamps = [t for t in (_stamp(x.get("at")) for x in history.lines) if t is not None]
     last = max(stamps) if stamps else None
@@ -439,9 +459,10 @@ def player_map_budget(history: PlayerMapHistory | Sequence[Mapping[str, Any]],
                        f"requested; dispatch a NEW run with the bootstrap input once the "
                        f"earlier attempt's log shows no request in the last 24 h",
                 last, last_ok, state="bootstrap-refused")
-        # Readable evidence on a rejected ledger (a gap mark, or a request
-        # before a future-dated one) blocks a bootstrap exactly as the map does.
-        seen = [t for t in (fallback_last, hold, *stamps) if t is not None
+        # Readable evidence on a rejected ledger (a request time or a gap mark
+        # that still parses beside a malformed field, or a request before a
+        # future-dated one) blocks a bootstrap exactly as the map does.
+        seen = [t for t in (fallback_last, hold, *stamps, *history.evidence) if t is not None
                 and (t is fallback_last or t <= now + _FUTURE_SLACK)]
         latest = max(seen) if seen else None
         if latest is not None and (latest > now + _FUTURE_SLACK

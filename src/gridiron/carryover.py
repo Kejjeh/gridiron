@@ -816,11 +816,16 @@ def inspect_inputs(store: Path, *, season: int, now: datetime,
 
 
 def _restore_ledger(source: Path, cache_dir: Path, now: datetime) -> list[Verdict]:
-    """Lay the carried player-map request ledger down verbatim, or say why not.
+    """Lay the carried player-map request ledger down verbatim, and say whether
+    it is trustworthy.
 
-    Never over a local one (this machine's own count wins), never one that
-    does not parse line by line, and never one stamped in the future — a
-    future request time would block the map indefinitely."""
+    Never over a local one (this machine's own count wins). A ledger that
+    fails validation (unreadable, malformed, stamped in the future) is laid
+    down all the same but reported REFUSED: the budget reads it as RECOVERY
+    NEEDED and never requests from it, while the request times and gap mark
+    that still parse keep blocking a bootstrap
+    (gridiron.sleeper.read_player_map_history). Dropping it here would erase
+    that evidence and let a bootstrap request beside a known recent one."""
     src = Path(source) / PLAYER_MAP_LEDGER
     dest = Path(cache_dir) / PLAYER_MAP_LEDGER
     if not src.is_file():
@@ -828,24 +833,29 @@ def _restore_ledger(source: Path, cache_dir: Path, now: datetime) -> list[Verdic
     if dest.exists():
         return [Verdict(PLAYER_MAP_LEDGER, False,
                         "this run already has its own request ledger")]
+    refused = ""
+    lines: list[dict] = []
     try:
         blob = json.loads(src.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        return [Verdict(PLAYER_MAP_LEDGER, False,
-                        f"the carried request ledger is unreadable ({type(exc).__name__})")]
-    lines, why = valid_player_map_ledger(blob)
-    if why:
-        return [Verdict(PLAYER_MAP_LEDGER, False, f"the carried request ledger is {why}")]
-    cutoff = now.astimezone(timezone.utc) + STAMP_TOLERANCE
-    if any(datetime.fromisoformat(x["at"]) > cutoff for x in lines):
-        return [Verdict(PLAYER_MAP_LEDGER, False,
-                        "the carried request ledger has a request stamped in the "
-                        "future; refused rather than let it block the player map")]
+        refused = f"the carried request ledger is unreadable ({type(exc).__name__})"
+    else:
+        lines, why = valid_player_map_ledger(blob)
+        cutoff = now.astimezone(timezone.utc) + STAMP_TOLERANCE
+        if why:
+            refused = f"the carried request ledger is {why}"
+        elif any(datetime.fromisoformat(x["at"]) > cutoff for x in lines):
+            refused = ("the carried request ledger has a request stamped in the "
+                       "future; not trusted, so it cannot block the player map")
     try:
         shutil.copy2(src, dest)
     except OSError as exc:
         return [Verdict(PLAYER_MAP_LEDGER, False,
                         f"could not be laid down ({type(exc).__name__})")]
+    if refused:
+        return [Verdict(PLAYER_MAP_LEDGER, False,
+                        f"{refused}; laid down only as bootstrap evidence — the "
+                        f"budget reads it as RECOVERY NEEDED")]
     return [Verdict(PLAYER_MAP_LEDGER, True,
                     f"laid down; {len(lines)} player-map request(s) on record, "
                     f"times unchanged")]
