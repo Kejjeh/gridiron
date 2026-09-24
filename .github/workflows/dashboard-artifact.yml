@@ -24,12 +24,36 @@ name: Weekly dashboard artifact
 #     that must stay so. Public step logs name no player (checked below).
 #
 # What this is NOT, deliberately:
-#   * not a live feed. The site is rebuilt hourly at best; GitHub delays and
-#     drops scheduled runs under load. The Game Day page refreshes scores and
-#     game statuses itself on one tap; designations, positions, kickoffs and
-#     the pregame record are only as fresh as the last successful build, and
-#     the page says so on every refresh. There is no guarantee of live advice
-#     or live injury news.
+#   * not a live feed. The site is rebuilt every 15 minutes AT BEST; GitHub
+#     queues, delays and drops scheduled runs under load, and a cron says
+#     when a job is QUEUED, not when it runs. The Game Day page refreshes
+#     scores and game statuses itself on one tap; both pages ask the hosting
+#     server every five minutes, while open and visible, whether a newer
+#     build was published, and offer a reload — they never swap content
+#     underneath the reader. Designations, positions, kickoffs, the pregame
+#     record and the free-agent comparison are only as fresh as the last
+#     successful build, and every page dates each of them. There is no
+#     guarantee of live advice or live injury news.
+#   * not a full re-pull every run. The Sleeper league snapshot (five small
+#     GETs) is fetched ONCE per run, by the sync step; the pull step reuses
+#     it. Sleeper's full player map is requested at most once per 24 h
+#     (docs.sleeper.com asks for that call "once per day at most";
+#     gridiron.sleeper.player_map_budget), by the first run after the 24 h
+#     mark, so on game days its designations are current for about six
+#     hours and the moves resting on them are withheld outside that, with a
+#     check-in-Sleeper step. The request ledger rides the Actions cache
+#     below, which is not durable: a lost or unreadable ledger stops requests
+#     (RECOVERY NEEDED on the page) until a person dispatches this workflow
+#     once with the player_map_bootstrap input, and a run that cannot show
+#     the previous run saved the ledger (a lost save, a cancelled queued run,
+#     a re-run) marks a gap that holds the next request for 24 h. The
+#     nflverse frames are refreshed only when older than half the freshness
+#     limit IN EFFECT (tighter on game days; scripts/ingest/pull_week.py). A carried
+#     input is judged by the time of the pull that fetched it, exactly as a
+#     local cache is; before 2026-09-23 the carried mark alone forced every
+#     run to re-download everything. A run that refreshes nothing re-renders
+#     from the carried inputs, which keep their ORIGINAL observation times.
+#     Nothing is restamped.
 #   * not durable storage. See "Carrying history" below.
 #
 # Carrying history. A hosted runner starts empty, so without the two carryover
@@ -63,14 +87,25 @@ on:
         description: 'NFL week to render (blank = the week the snapshot says)'
         required: false
         type: string
+      player_map_bootstrap:
+        # A person's one-time recovery when the carried player-map request
+        # ledger is missing or untrustworthy (HANDOFF.md, "Player-map
+        # bootstrap"). Refused by the script while the cached map shows a
+        # request under 24 h old, and ignored while the ledger is sound.
+        description: 'Player-map bootstrap: allow ONE request when the page says RECOVERY NEEDED'
+        required: false
+        type: boolean
+        default: false
   schedule:
-    # Hourly, best effort, offset off the hour so it does not queue behind the
-    # top-of-hour rush, and 24 minutes after the hourly Sleeper sync so a
-    # fresh snapshot is usually there to render. Hourly is what makes a public
-    # site useful on a game day: the page's own refresh renews scores and
-    # game statuses, but designations and the pregame record only move when
-    # this job runs. A cron says when a job is QUEUED, not when it runs.
-    - cron: '41 * * * *'
+    # Every 15 minutes, best effort, offset off the quarter-hours so it does
+    # not queue behind the top-of-hour rush. This job refreshes the Sleeper
+    # snapshot itself, so it does not wait on the hourly sync workflow. A
+    # cron says when a job is QUEUED, not when it runs; GitHub drops
+    # scheduled runs under load and the pages say what they were built from.
+    # Each run saves one carryover cache entry (~1 per 15 min); the Actions
+    # cache evicts the oldest under the 10 GB limit, which the rolling
+    # restore-keys pattern below tolerates by design.
+    - cron: '7,22,37,52 * * * *'
 
 permissions:
   contents: read
@@ -152,10 +187,25 @@ jobs:
         continue-on-error: true
         run: python scripts/sync/sleeper_sync.py run --quiet --interval 3600
 
+      # --reuse-league-snapshot: the sync step above has just fetched and
+      # published the league; the pull reuses that generation (only if it
+      # carries no error and is this run's) instead of fetching it again.
+      # --carried-history: the player-map request ledger came from the
+      # Actions cache, so a request also needs proof that the previous run's
+      # save came back (GITHUB_RUN_NUMBER, first GITHUB_RUN_ATTEMPT; a gap
+      # holds requests for 24 h); a missing or unreadable ledger requests
+      # nothing and the page says RECOVERY NEEDED
+      # (gridiron.sleeper.player_map_budget).
+      # The bootstrap input reaches the script as an environment value.
       - name: Pull the week's nflverse frames and the player dump
         id: nflverse
         continue-on-error: true
-        run: python scripts/ingest/pull_week.py
+        env:
+          PLAYER_MAP_BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && inputs.player_map_bootstrap }}
+        run: |
+          set -- --reuse-league-snapshot 20 --carried-history
+          if [ "$PLAYER_MAP_BOOTSTRAP" = "true" ]; then set -- "$@" --player-map-bootstrap; fi
+          python scripts/ingest/pull_week.py "$@"
 
       - name: Render the dashboard
         id: render

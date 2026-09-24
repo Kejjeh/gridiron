@@ -1,0 +1,24 @@
+run 1 at Sun 14:07Z force=False:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-27T14:05:00+00:00)
+     sleeper_players: 1 players (next request no sooner than 24 h)
+   -> map requests so far 1, league fetches 0; map as_of 2026-09-27T14:07:00+00:00, error=''
+run 2 at Sun 14:22Z force=False:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-27T14:20:00+00:00)
+     sleeper_players: not requested — last request 2026-09-27 14:07Z; Sleeper asks for this call once a day at most, next allowed 2026-09-28 14:07Z
+     sleeper_players: carried map pulled 2026-09-27T14:07:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 1, league fetches 0; map as_of 2026-09-27T14:07:00+00:00, error=''
+run 3 at Sun 14:47Z force=True:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-27T14:45:00+00:00)
+     sleeper_players: not requested — last request 2026-09-27 14:07Z; Sleeper asks for this call once a day at most, next allowed 2026-09-28 14:07Z
+     sleeper_players: carried map pulled 2026-09-27T14:07:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 1, league fetches 0; map as_of 2026-09-27T14:07:00+00:00, error=''
+run 4 at Mon 13:59Z force=False:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-28T13:57:00+00:00)
+     sleeper_players: not requested — last request 2026-09-27 14:07Z; Sleeper asks for this call once a day at most, next allowed 2026-09-28 14:07Z
+     sleeper_players: carried map pulled 2026-09-27T14:07:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 1, league fetches 0; map as_of 2026-09-27T14:07:00+00:00, error=''
+run 5 at Mon 14:22Z force=False:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-28T14:20:00+00:00)
+     sleeper_players: 1 players (next request no sooner than 24 h)
+   -> map requests so far 2, league fetches 0; map as_of 2026-09-28T14:22:00+00:00, error=''
+ledger: [{"at": "2026-09-27T14:07:00+00:00", "outcome": "ok", "note": ""}, {"at": "2026-09-28T14:22:00+00:00", "outcome": "ok", "note": ""}]

@@ -36,6 +36,8 @@ from pathlib import Path
 
 import pytest
 
+from gridiron.theme import page_copy
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -145,7 +147,7 @@ def test_mixed_slate_is_ahead_15_46_with_their_rb_k_dst_yet_to_play(tmp_path):
     assert me["K"]["points"] == 7.0                                           # a kicker actual
     assert me["DST"]["points"] is None and "UNKNOWN, not 0" in me["DST"]["points_note"]
     assert "cannot be reconciled" in sc["mine"]["reconciliation"]
-    assert "safe" not in html.lower()
+    assert "safe" not in page_copy(html).lower()
     score_card = html.split('id="gd-score"')[1].split("</div>\n")[0]
     assert "%" not in score_card and "P(win)" not in score_card
 

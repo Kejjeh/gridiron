@@ -38,6 +38,9 @@ docs/research/drafts/
 # mechanical is what stops a real cache being published by an out-dir typo.
 docs/review/dashboard/caches/
 docs/review/dashboard/*/
+# board captures: every scenario at 375 and 1440; the 768 capture only for `complete`
+docs/review/dashboard/*-tablet768.png
+!docs/review/dashboard/complete-tablet768.png
 docs/review/gameday/caches/
 docs/review/gameday/*/
 # committed review evidence: pregame*, stale*, mixed*, injury_after* PNGs and the two drive logs

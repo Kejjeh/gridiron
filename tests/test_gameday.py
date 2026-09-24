@@ -15,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from gridiron.theme import page_copy
 from gridiron import gameday as gd
 from gridiron.decisions import archive_path, write_archive
 from gridiron.freshness import SourceFreshness, Status
@@ -276,7 +277,20 @@ def test_a_lead_is_never_called_safe_while_they_have_players_left(schedule):
     assert d.score.lead() == "ahead by 34.86"
     s = d.score.settled()
     assert s.startswith("not settled") and "RB, K" in s and "DST" in s
-    assert "safe" not in d.to_html().lower()
+    assert "safe" not in page_copy(d.to_html()).lower()
+
+
+def test_the_wording_guard_ignores_css_but_still_catches_copy(schedule):
+    """`env(safe-area-inset-bottom)` is a CSS identifier for the iPhone home
+    bar, not a claim about a lead; the guard reads what a person sees."""
+    html_text = build(schedule, snap=snapshot(my_points=(30.0, 10.0, 5.0, 7.0, 3.0))).to_html()
+    assert "env(safe-area-inset-bottom)" in html_text          # the inset is back
+    assert "viewport-fit=cover" in html_text
+    for leak in ("<p>Your lead is safe</p>", "<b>SAFE</b>",
+                 "<script>el.textContent='a safe lead'</script>",
+                 '<span title="safe">x</span>'):
+        doctored = html_text.replace("</main>", leak + "</main>", 1)
+        assert "safe" in page_copy(doctored).lower(), leak
 
 
 def test_everything_final_on_both_sides_says_the_result_stands(schedule):
@@ -685,7 +699,10 @@ def test_upstream_names_cannot_inject_markup_or_script(schedule):
 
 def test_the_page_may_only_talk_to_sleeper(schedule):
     html = build(schedule).to_html()
-    assert "connect-src https://api.sleeper.app;" in html
+    # 'self' is the published-build check (a GET of the page's own URL);
+    # the API origin is the only other host, and there is no wildcard.
+    assert "connect-src 'self' https://api.sleeper.app;" in html
+    assert "connect-src *" not in html and "https://api.sleeper.app https://" not in html
     assert "default-src 'none'" in html and "form-action 'none'" in html
     assert "nonce-" in html
 

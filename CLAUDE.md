@@ -26,13 +26,17 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   --write`; scenarios + phone-fit check: `scripts/weekly/dashboard_scenarios.py
   --screenshot`. Freshness GATES actions (`gridiron.gating`), locks are
   three-valued, absence is NEVER a bye unless the schedule declares one, and
-  the board is built in the cloud hourly (best effort) with its records AND
-  its last-good inputs carried between runs by `gridiron.carryover` (an
-  Actions cache, not durable storage). The repo and the personalised pages
-  are PUBLIC by owner decision (2026-09-21): `gridiron.publication` packages
-  exactly two allowlisted HTML files for GitHub Pages under the
-  `GRIDIRON_PUBLIC_PUBLICATION` opt-in — never JSON, cache or archive — and
-  artifacts, caches and logs are public too. Game Day (`scripts/weekly/gameday.py`,
+  the board is built in the cloud every 15 min (best effort, never real
+  time) with its records AND last-good inputs carried between runs by
+  `gridiron.carryover` (an Actions cache, not durable storage). The repo and
+  the personalised pages are PUBLIC by owner decision (2026-09-21):
+  `gridiron.publication` packages exactly two allowlisted HTML files for
+  GitHub Pages under the `GRIDIRON_PUBLIC_PUBLICATION` opt-in — never JSON,
+  cache or archive — and artifacts, caches and logs are public too. A pickup
+  is a move ONLY if it improves THIS WEEK's lineup (`gridiron.waivers`): no
+  cross-position "depth", bench-only adds are research, an acquisition is
+  CONDITIONAL (availability UNVERIFIED); the Free Agent Radar (`gridiron.radar`,
+  under the Action Desk) verdicts every projected pool player; rollover = "no comparison". Game Day (`scripts/weekly/gameday.py`,
   scenarios A-F in `gameday_scenarios.py --screenshot --browser`): platform
   actuals only, game status OBSERVED or UNKNOWN (never inferred from the
   clock), every archived move re-judged NOW by player id against freshness,

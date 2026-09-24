@@ -17,10 +17,52 @@ stale, and when inputs are missing. Nothing here reads the real cache.
             and the league snapshot only covering week 2.
   missing   no schedule (locks unknown → start/sit and upgrades abstain),
             no box scores (every projection abstains), no injury table.
+  partial_schedule
+            the complete cache with two week-3 kickoffs damaged.
+  slate_end the complete cache rendered on the Tuesday after week 3's last
+            game: every starter locked, so the page has to say what can
+            still be done and what waits for next week's inputs.
+  hold      fresh inputs, no improvement anywhere: the free agents are all
+            rostered by the opponent (empty pool), and the owner already
+            starts his best legal lineup — HOLD, with the radar saying the
+            pool is empty rather than inventing a candidate.
+  sparse    box scores for week 1 only and for a third of the players: most
+            projections abstain, the radar counts the free agents as
+            MISSING EVIDENCE and lists no number for them.
+  taken     two runs two hours apart. In the first, one free agent is held
+            by the opponent; in the second he has been released and a
+            different one (a LINEUP candidate) has been claimed. The radar's
+            change list says "newly available" and "now owned" by id, and
+            the claimed player is no longer suggested.
+  roster_changed
+            two runs: the owner has dropped his cheapest droppable player
+            and moved another into the lineup between them. Section 3 names
+            the roster change; the radar re-prices its drops.
+  next_week two runs a week apart: the platform has moved to week 4 (with
+            week-4 schedule rows). The radar says "week rollover — no
+            comparison" instead of diffing week-3 verdicts against week 4.
+  designations  the complete cache with ONLY the once-a-day player map past
+            its limit (pulled 26 h ago): the Action Desk turns its moves into
+            CHECK IN SLEEPER items naming the players to check, and holds.
+  open_spot the complete cache with two EMPTY bench spots (the league keeps
+            five, the owner's roster fills three): a pickup that improves the
+            lineup is an add with NO drop, and two such adds are not an
+            either/or because both spots are free.
 
-`--screenshot` renders each page to PNG with the pre-installed headless
-Chromium when one is found (no Python dependency is added); it is skipped,
-and said so, when the binary is absent.
+Every scenario's rosters carry `taxi: null` like the real league object, and
+(outside open_spot) the league's bench is sized so the owner's active roster
+is exactly full: every pickup there needs a drop.
+
+`--screenshot` renders each page to PNG at 375, 768 and 1440 CSS px with the
+pre-installed headless Chromium when one is found (no Python dependency is
+added) and measures the true fit at each width; it is skipped, and said so,
+when the binary is absent. `--browser` serves the `complete` page from a
+loopback fixture that plays the hosting server and drives the page's own
+script in real time: the radar's filters, search, sort and disclosure; and
+the published-build check through an unchanged build (200 then 304), a 429,
+a dropped connection, a recovery, an in-flight guard, a newer build (banner,
+checks paused), pause/resume, and a reload that keeps the filters. Reported
+as executed or UNAVAILABLE; never as a pass it did not run.
 
 tests/test_dashboard_cli.py drives the same builders through `main()`.
 """
@@ -45,11 +87,30 @@ from gridiron.paths import REPO_ROOT
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
 UTC = timezone.utc
-SCENARIOS = ("complete", "stale", "missing", "partial_schedule")
+SCENARIOS = ("complete", "stale", "missing", "partial_schedule", "slate_end",
+             "hold", "sparse", "taken", "roster_changed", "next_week", "designations",
+             "open_spot")
 
 #: Saturday of NFL week 3 in the fixture calendar (games Sun 2026-09-27),
 #: rendered at noon UTC: pregame, nothing locked, waivers cleared.
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+#: The Tuesday after: every week-3 game has kicked off and finished.
+NOW_SLATE_END = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
+#: Two hours on: the second run of a two-run scenario.
+NOW_LATER = datetime(2026, 9, 26, 14, 0, tzinfo=UTC)
+#: A week on: the platform has rolled to week 4.
+NOW_NEXT_WEEK = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
+#: Scenarios rendered at an instant other than NOW (for a two-run scenario,
+#: the instant of the SECOND run; the first is always NOW).
+SCENARIO_NOW = {"slate_end": NOW_SLATE_END, "taken": NOW_LATER,
+                "roster_changed": NOW_LATER, "next_week": NOW_NEXT_WEEK}
+#: Scenarios that render twice against one archive, so the second page has
+#: a like-for-like previous record to diff against.
+TWO_RUN = ("taken", "roster_changed", "next_week")
+#: The synthetic scenarios that are the `complete` cache with a twist.
+_BASE = {"slate_end": "complete", "hold": "complete", "sparse": "complete",
+         "designations": "complete", "open_spot": "complete",
+         "taken": "complete", "roster_changed": "complete", "next_week": "complete"}
 
 #: Unrostered fixture players with box scores AND crosswalk rows. Two go to
 #: the opponent's lineup, three become free agents.
@@ -111,10 +172,24 @@ def _perturbed_week2(weekly: pd.DataFrame) -> pd.DataFrame:
     return wk2
 
 
-def build_scenario(root: Path, kind: str, *, now: datetime = NOW) -> ing.Manifest:
-    """Write one synthetic season-2026 cache under `root`."""
+def _week4_schedule(sched: pd.DataFrame) -> pd.DataFrame:
+    wk3 = sched.loc[sched["week"] == 3].copy()
+    wk4 = wk3.copy()
+    wk4["week"] = 4
+    wk4["gameday"] = [(pd.Timestamp(d) + pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+                      for d in wk3["gameday"]]
+    wk4["game_id"] = [g.replace("2026_03_", "2026_04_") for g in wk3["game_id"]]
+    return pd.concat([sched, wk4], ignore_index=True)
+
+
+def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) -> ing.Manifest:
+    """Write one synthetic season-2026 cache under `root`. `run` is 1 or 2
+    for the two-run scenarios (see TWO_RUN); the second run's cache differs
+    from the first in exactly the way the docstring describes."""
     if kind not in SCENARIOS:
         raise ValueError(f"unknown scenario {kind!r}; choose from {SCENARIOS}")
+    twist = kind if kind in _BASE else ""
+    kind = _BASE.get(kind, kind)               # the cache to start from
     season = 2026
     fresh = now - timedelta(hours=1)
     old = now - timedelta(days=5)
@@ -130,12 +205,21 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW) -> ing.Manifes
     weekly = pd.concat([weekly1, _perturbed_week2(weekly1)], ignore_index=True)
     snaps1 = pd.read_csv(FIXTURES / "snaps_wk1.csv")
     snaps = pd.concat([snaps1, snaps1.assign(week=2)], ignore_index=True)
+    if twist == "sparse":
+        # week 1 only, and only every third player: most projections abstain
+        weekly = weekly1.iloc[::3].reset_index(drop=True)
+        snaps = snaps1
     schedules = _week3_schedule(pd.read_csv(FIXTURES / "schedules_wk1_2.csv"))
+    if twist == "next_week":
+        schedules = _week4_schedule(schedules)
     if kind == "partial_schedule":
         schedules = _break_some_kickoffs(schedules)
     injuries = pd.read_csv(FIXTURES / "injuries_wk1_2.csv")
     injuries = pd.concat([injuries, injuries.loc[injuries["week"] == 2].assign(week=3)],
                          ignore_index=True)
+    if twist == "next_week" and run == 2:
+        injuries = pd.concat([injuries, injuries.loc[injuries["week"] == 3].assign(week=4)],
+                             ignore_index=True)
 
     frames = [("schedules", schedules, "nflreadpy.load_schedules"),
               ("injuries", injuries, "nflreadpy.load_injuries"),
@@ -155,18 +239,49 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW) -> ing.Manifes
                                 error="HTTP 503 from upstream", at=now)
 
     snapshot = json.loads((FIXTURES / "sleeper_league.json").read_text("utf-8"))
-    snapshot["state"] = {**snapshot["state"], "week": 3, "display_week": 3}
-    snapshot["week"] = 3
+    week = 4 if (twist == "next_week" and run == 2) else 3
+    snapshot["state"] = {**snapshot["state"], "week": week, "display_week": week}
+    snapshot["week"] = week
+    mine = snapshot["rosters"][0]
     opp = snapshot["rosters"][1]
     opp["starters"] = ["9228", "9221", "0", "0", "0", "0", "0", "0", "0", "0"]
     opp["players"] = ["9228", "9221"]
+    if twist == "hold":
+        # every free agent is rostered by the opponent, and the owner already
+        # starts his best legal lineup (the bench TE takes the TE slot)
+        opp["players"] += list(_FREE_AGENTS)
+        mine["starters"] = ["5022" if s == "3271" else s for s in mine["starters"]]
+    if twist == "taken":
+        # run 1: the WR is held by the opponent; run 2: he is released and
+        # the LINEUP-candidate QB has been claimed instead
+        opp["players"].append("11646" if run == 1 else "11560")
+    if twist == "roster_changed" and run == 2:
+        # the owner dropped his cheapest droppable TE and starts the other
+        mine["players"] = [s for s in mine["players"] if s != "3271"]
+        mine["starters"] = ["5022" if s == "3271" else s for s in mine["starters"]]
+    # The real league object sends `taxi: null` on every roster; the fixture
+    # predates that field. Bench spots: the owner's active roster (players
+    # minus IR) fills the league exactly, except in open_spot, which keeps
+    # the fixture's five bench spots and so leaves two of them empty.
+    for r in snapshot["rosters"]:
+        r.setdefault("taxi", None)
+    if twist != "open_spot":
+        active = len(set(mine["players"]) - set(mine.get("reserve") or []))
+        if twist == "roster_changed" and run == 2:
+            active += 1          # the same league as run 1: one spot now open
+        lineup = [x for x in snapshot["league"]["roster_positions"] if x != "BN"]
+        snapshot["league"]["roster_positions"] = lineup + ["BN"] * (active - len(lineup))
+    for m in snapshot["matchups"]:
+        if str(m.get("roster_id")) == str(mine.get("roster_id")):
+            m["starters"] = list(mine["starters"])
+            m["players"] = list(mine["players"])
     snapshot["matchups"][1]["starters"] = list(opp["starters"])
     snapshot["matchups"][1]["players"] = list(opp["players"])
     league_path = directory / "sleeper_league.json"
     league_path.write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
     manifest.record("sleeper_league", path=league_path, rows=len(snapshot["rosters"]),
                     as_of=stamp, source="api.sleeper.app (read-only)",
-                    weeks=[2 if kind == "stale" else 3])
+                    weeks=[2 if kind == "stale" else week])
 
     players = json.loads((FIXTURES / "sleeper_players_small.json").read_text("utf-8"))
     for sid, (name, pos, team) in {**_OPPONENT, **_FREE_AGENTS}.items():
@@ -176,8 +291,11 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW) -> ing.Manifes
         players["3198"]["injury_status"] = "Questionable"     # a designation that will read STALE
     players_path = directory / "sleeper_players.json"
     players_path.write_text(json.dumps(players, indent=1), encoding="utf-8")
+    # designations: everything current except the once-a-day player map,
+    # pulled 26 h ago — past its 24 h limit, as it is for most of a game day.
     manifest.record("sleeper_players", path=players_path, rows=len(players),
-                    as_of=stamp, source="api.sleeper.app (read-only)")
+                    as_of=now - timedelta(hours=26) if twist == "designations" else stamp,
+                    source="api.sleeper.app (read-only)")
     if kind == "stale":
         manifest.record_failure("sleeper_players", source="api.sleeper.app (read-only)",
                                 error="timed out after 60s", at=now)
@@ -220,11 +338,16 @@ PHONE_WIDTH = 390
 
 #: (label, css width). Heights are MEASURED, never guessed: a fixed capture
 #: height silently truncates the page, which is the one thing a review
-#: screenshot must not do.
+#: screenshot must not do. A width under the browser's 500 px floor is
+#: captured through the same fixed-width iframe the fit check uses, so the
+#: PNG shows a true phone layout (the frame sits at the left of the image).
 VIEWPORTS: tuple[tuple[str, int], ...] = (
-    ("desktop", 1280),
-    (f"narrow{NARROW_CAPTURE_WIDTH}", NARROW_CAPTURE_WIDTH),
+    ("desktop", 1440),
+    ("tablet768", 768),
+    ("phone375", 375),
 )
+#: The widths the fit check measures.
+FIT_WIDTHS: tuple[int, ...] = (375, 768, 1440)
 #: Captured at less than 1 device pixel per CSS pixel: these pages run to
 #: several thousand CSS pixels and a 1:1 capture of the full set costs several
 #: megabytes in the repository. Still legible as an overview; read the HTML
@@ -248,11 +371,25 @@ def screenshot(html_path: Path, png_path: Path, *, width: int = 1280,
     if height is None:
         height = content_height(html_path, width) or 4000
     height = min(int(height) + 24, MAX_CAPTURE_HEIGHT)
+    target = html_path.resolve().as_uri()
+    frame = None
+    if width < NARROW_CAPTURE_WIDTH:
+        frame = html_path.with_name(html_path.stem + f".frame{width}.html")
+        frame.write_text(
+            "<!doctype html><html><body style=\"margin:0;background:#0b1020\">"
+            f"<iframe src=\"{target}\" style=\"width:{width}px;height:{height}px;border:0;"
+            "display:block\"></iframe></body></html>", encoding="utf-8")
+        target = frame.resolve().as_uri()
     cmd = [binary, "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
+           "--allow-file-access-from-files",
            f"--force-device-scale-factor={CAPTURE_SCALE}",
-           f"--window-size={width},{height}", f"--screenshot={png_path}",
-           html_path.resolve().as_uri()]
-    subprocess.run(cmd, capture_output=True, timeout=180)
+           f"--window-size={max(width, NARROW_CAPTURE_WIDTH)},{height}", f"--screenshot={png_path}",
+           target]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=180)
+    finally:
+        if frame is not None:
+            frame.unlink(missing_ok=True)
     return png_path.exists()
 
 
@@ -368,12 +505,22 @@ def horizontal_overflow(html_path: Path, width: int = PHONE_WIDTH) -> FitCheck |
 
 def render(kind: str, out: Path, *, take_screenshot: bool, now: datetime = NOW) -> int:
     root = out / "caches" / kind
-    build_scenario(root, kind, now=now)
     cli = _cli()
-    rc = cli.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
-                   "--anonymous", "--out-dir", str(out / kind),
-                   "--archive-root", str(out / kind / "archive"),
-                   "--now", now.isoformat()])
+    archive = out / kind / "archive"
+    rc = 0
+    if kind in TWO_RUN:
+        # the first run at NOW, into its own page directory; its archive is
+        # what the second run diffs against
+        build_scenario(root, kind, now=NOW, run=1)
+        rc = cli.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
+                       "--anonymous", "--out-dir", str(out / kind / "run1"),
+                       "--archive-root", str(archive), "--now", NOW.isoformat()])
+        build_scenario(root, kind, now=now, run=2)
+    else:
+        build_scenario(root, kind, now=now)
+    rc = max(rc, cli.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
+                           "--anonymous", "--out-dir", str(out / kind),
+                           "--archive-root", str(archive), "--now", now.isoformat()]))
     html_path = out / kind / "dashboard_latest.html"
     if take_screenshot:
         for label, width in VIEWPORTS:
@@ -383,13 +530,16 @@ def render(kind: str, out: Path, *, take_screenshot: bool, now: datetime = NOW) 
             else:
                 print(f"[scenario] {kind}: no headless Chromium found; {label} "
                       f"screenshot skipped", file=sys.stderr)
-        fit = horizontal_overflow(html_path)
-        if fit is None:
-            print(f"[scenario] {kind}: phone-width fit check UNAVAILABLE "
-                  f"(no headless browser on this machine) — NOT a pass",
-                  file=sys.stderr)
-        else:
-            print(f"[scenario] {kind}: phone-width fit: {fit.line()}", file=sys.stderr)
+        for width in FIT_WIDTHS:
+            fit = horizontal_overflow(html_path, width)
+            if fit is None:
+                print(f"[scenario] {kind}: {width}px fit check UNAVAILABLE "
+                      f"(no headless browser on this machine) — NOT a pass",
+                      file=sys.stderr)
+            else:
+                print(f"[scenario] {kind}: {width}px fit: {fit.line()}", file=sys.stderr)
+                if not fit.fits:
+                    rc = max(rc, 1)
     return rc
 
 
@@ -398,12 +548,39 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=REPO_ROOT / ".cache" / "dashboard-scenarios")
     ap.add_argument("--only", choices=SCENARIOS, default=None)
     ap.add_argument("--screenshot", action="store_true")
+    ap.add_argument("--browser", action="store_true",
+                    help="drive the complete page's radar and published-build check "
+                         "against a loopback fixture (needs the complete scenario)")
     args = ap.parse_args(argv)
     worst = 0
-    for kind in SCENARIOS if args.only is None else (args.only,):
+    kinds = SCENARIOS if args.only is None else (args.only,)
+    for kind in kinds:
         print(f"=== scenario: {kind} ===")
-        rc = render(kind, args.out, take_screenshot=args.screenshot)
+        rc = render(kind, args.out, take_screenshot=args.screenshot,
+                    now=SCENARIO_NOW.get(kind, NOW))
         worst = max(worst, rc)
+    if args.browser:
+        spec = importlib.util.spec_from_file_location(
+            "weekly_radar_drive", Path(__file__).resolve().parent / "radar_drive.py")
+        drive = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = drive
+        spec.loader.exec_module(drive)
+        drive_radar, drive_verdict = drive.drive_radar, drive.verdict
+        page = args.out / "complete" / "dashboard_latest.html"
+        if not page.exists():
+            render("complete", args.out, take_screenshot=False)
+        result = drive_radar(page)
+        (args.out / "browser_drive_radar.json").write_text(
+            json.dumps(result, indent=1), encoding="utf-8")
+        bad = drive_verdict(result)
+        for line in result.get("lines", []):
+            print(f"[drive] {line}")
+        for line in bad:
+            print(f"[drive] FAIL: {line}")
+        print("[drive] " + ("PASS" if result.get("executed") and not bad else
+                            "UNAVAILABLE" if not result.get("executed") else "FAIL"))
+        if not result.get("executed") or bad:
+            worst = max(worst, 1)
     return worst
 
 

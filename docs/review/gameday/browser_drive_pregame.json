@@ -1,7 +1,7 @@
 {
  "executed": true,
  "kind": "pregame",
- "base": "http://127.0.0.1:38397",
+ "base": "http://127.0.0.1:40715",
  "steps": [
   {
    "label": "initial",
@@ -18,8 +18,7 @@
    "available": 1,
    "actionText": [
     "AVAILABLE swapOptional: Dallas Goedert over Tyler Higbee at TE1.63 projected points, z=0.16. That edge is inside the noise of the two projections \u2014 either choice is defensible and doing nothing is fine.act before Sun 27 Sep 17:00 UTC (first kickoff among the players involved)Backup \u2014 no other legal body for this slot on the roster \u2014 leaving the current starter in place is the only legal optionever",
-    "NOT NOW acquireConsider claiming Caleb Williams (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate.",
-    "NOT NOW acquireConsider claiming Drake Maye (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
+    "NOT NOW acquireIf available, claim Caleb Williams (QB) \u2014 this week's lineup +6.14 via QBa pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
    ],
    "states": [
     "NOT STARTED",
@@ -68,8 +67,7 @@
    "available": 1,
    "actionText": [
     "AVAILABLE swapOptional: Dallas Goedert over Tyler Higbee at TE1.63 projected points, z=0.16. That edge is inside the noise of the two projections \u2014 either choice is defensible and doing nothing is fine.act before Sun 27 Sep 17:00 UTC (first kickoff among the players involved)Backup \u2014 no other legal body for this slot on the roster \u2014 leaving the current starter in place is the only legal optionever",
-    "NOT NOW acquireConsider claiming Caleb Williams (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate.",
-    "NOT NOW acquireConsider claiming Drake Maye (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
+    "NOT NOW acquireIf available, claim Caleb Williams (QB) \u2014 this week's lineup +6.14 via QBa pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
    ],
    "states": [
     "NOT STARTED",
@@ -118,8 +116,7 @@
    "available": 0,
    "actionText": [
     "NOT NOW swapOptional: Dallas Goedert over Tyler Higbee at TEDallas Goedert\u2019s current designation is Out (designation from the player dump of 2026-09-26 11:10 UTC); a player the platform lists Out is not offered as a start.",
-    "NOT NOW acquireConsider claiming Caleb Williams (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate.",
-    "NOT NOW acquireConsider claiming Drake Maye (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
+    "NOT NOW acquireIf available, claim Caleb Williams (QB) \u2014 this week's lineup +6.14 via QBa pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
    ],
    "states": [
     "NOT STARTED",
@@ -169,8 +166,7 @@
    "available": 0,
    "actionText": [
     "NOT NOW swapOptional: Dallas Goedert over Tyler Higbee at TEDallas Goedert (QB) is not eligible for the TE slot the move would fill.",
-    "NOT NOW acquireConsider claiming Caleb Williams (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate.",
-    "NOT NOW acquireConsider claiming Drake Maye (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
+    "NOT NOW acquireIf available, claim Caleb Williams (QB) \u2014 this week's lineup +6.14 via QBa pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
    ],
    "states": [
     "NOT STARTED",
@@ -220,8 +216,7 @@
    "available": 1,
    "actionText": [
     "AVAILABLE swapOptional: Dallas Goedert over Tyler Higbee at TE1.63 projected points, z=0.16. That edge is inside the noise of the two projections \u2014 either choice is defensible and doing nothing is fine.act before Sun 27 Sep 17:00 UTC (first kickoff among the players involved)Backup \u2014 no other legal body for this slot on the roster \u2014 leaving the current starter in place is the only legal optionever",
-    "NOT NOW acquireConsider claiming Caleb Williams (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate.",
-    "NOT NOW acquireConsider claiming Drake Maye (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
+    "NOT NOW acquireIf available, claim Caleb Williams (QB) \u2014 this week's lineup +6.14 via QBa pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
    ],
    "states": [
     "NOT STARTED",
@@ -271,8 +266,7 @@
    "available": 0,
    "actionText": [
     "NOT NOW swapOptional: Dallas Goedert over Tyler Higbee at TEthe inputs legality rests on are not current \u2014 sleeper_league is STALE (22.0 h old against a 6 h limit); sleeper_players is STALE (22.8 h old against a 6 h limit; not renewed by a browser refresh). The score above stands on its own; the advice does not.",
-    "NOT NOW acquireConsider claiming Caleb Williams (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate.",
-    "NOT NOW acquireConsider claiming Drake Maye (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
+    "NOT NOW acquireIf available, claim Caleb Williams (QB) \u2014 this week's lineup +6.14 via QBa pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
    ],
    "states": [
     "UNKNOWN",
@@ -325,8 +319,7 @@
    "available": 0,
    "actionText": [
     "NOT NOW swapOptional: Dallas Goedert over Tyler Higbee at TEthe inputs legality rests on are not current \u2014 sleeper_players is STALE (22.8 h old against a 6 h limit; not renewed by a browser refresh). The score above stands on its own; the advice does not.",
-    "NOT NOW acquireConsider claiming Caleb Williams (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate.",
-    "NOT NOW acquireConsider claiming Drake Maye (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
+    "NOT NOW acquireIf available, claim Caleb Williams (QB) \u2014 this week's lineup +6.14 via QBa pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
    ],
    "states": [
     "NOT STARTED",
@@ -375,8 +368,7 @@
    "available": 0,
    "actionText": [
     "NOT NOW swapOptional: Dallas Goedert over Tyler Higbee at TEdeadline passed (2026-09-27 17:00 UTC).",
-    "NOT NOW acquireConsider claiming Caleb Williams (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate.",
-    "NOT NOW acquireConsider claiming Drake Maye (QB)a pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
+    "NOT NOW acquireIf available, claim Caleb Williams (QB) \u2014 this week's lineup +6.14 via QBa pickup is not a game-day move: eligibility was UNVERIFIED pregame and waivers do not process during the slate."
    ],
    "states": [
     "UNKNOWN",
@@ -419,8 +411,8 @@
    "activeIsRefresh": true,
    "tag": "BUTTON",
    "disabled": false,
-   "focusableCount": 28,
-   "firstFocusable": "A:\u2190 pregame board",
+   "focusableCount": 34,
+   "firstFocusable": "A:Game Day",
    "outline": "solid"
   }
  ],
