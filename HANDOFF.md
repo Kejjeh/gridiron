@@ -20,8 +20,13 @@ the browser, and a 15-minute best-effort cloud cadence. It is a draft for
 Astra's review; nothing on it merges, deploys or flips a variable, and the
 cadence change takes effect only when main carries it. A skeptical
 **release-review pass** (2026-09-23, "Release review — Free Agent Radar"
-below) found and fixed eight defects on top of `64dc8eb`; its evidence is
-self-tested, not yet independently reviewed.
+below) found and fixed eight defects on top of `64dc8eb`. Astra then ran
+715 passed / 5 skipped on Windows (not full release approval), and a second
+pass (2026-09-24, "Release blockers and the Action Desk" below) closed the
+two release blockers she named — Sleeper's once-a-day player-map budget and
+drop legality after kickoff — then built the Action Desk and one visual
+system across Board, Radar and Game Day. Its evidence is self-tested; Astra's
+independent review is pending. The exact head is in the PR body.
 
 The desktop five-minute sync is **installed but its scheduled task is
 DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud:
@@ -527,7 +532,7 @@ its own synthetic cache from the committed fixtures.
 | injuries | `nflreadpy.load_injuries` | wk1–2 | designation + practice status |
 | id crosswalk | dynastyprocess `db_playerids.csv` | — | Sleeper's own `gsis_id` overlays gaps only |
 | league / rosters / matchups | Sleeper public read API | wk2 | no auth, no writes |
-| player dump (`sleeper_players`) | Sleeper public read API | live | live `injury_status`, team, position, gsis overlay; 24h cadence, 6h on gameday/waiver/designation days |
+| player dump (`sleeper_players`) | Sleeper public read API | live | ids, team, position, gsis overlay (identity, any age) and `injury_status` (designations: 24h, 6h on gameday/waiver/designation days); requested at most once per 24 h (Sleeper's ask), 10:00–13:00 ET |
 
 **Missing sources, named rather than worked around:** no DST scoring (nflverse
 weekly data is player-level; a DST row carries blank points and an explicit
@@ -627,7 +632,7 @@ rules and the publication allowlist are untouched):
 | One design system for both pages: charcoal/navy tokens, lime and cyan accents, tabular numerals, cards, badges, tables, controls, focus rings, reduced-motion and print rules; a sticky three-tab navigation (Game Day · Board · Free Agents) with `aria-current`; a dated header strip (league snapshot, projections evidence, designations, page built) whose ages tick in the browser without fetching | `gridiron.theme` (new), both renderers |
 | The published-build check: every five minutes while the tab is visible, a conditional GET of the page's OWN URL on the hosting origin (`connect-src 'self'`), 304 when unchanged, a banner with a Reload control when the served build stamp is newer, an "older build" note when a deploy or cache lags, backoff doubling to 30 minutes on any failure (429 named), one timer cleared before it is re-armed, an in-flight guard, Pause/Resume and Check now, filters and scroll position carried across the reload, and a plain "off" status when the file is opened from disk. It never swaps content under the reader and never claims the cloud schedule is real time | `theme.SNAPSHOT_JS`, `snapshot_html`, `build_meta` |
 | Game Day: the shared theme and navigation, the header strip, the published-build check, and a "Free agents — what the pregame board found" card read from the pregame record's radar block (counts, snapshot as-of, LINEUP candidates with gain and drop, conditional on availability). A pickup is still never a game-day move and is never re-judged there; a record without the block says so | `gameday.summarise_radar`, `PregameView.radar`, `render_gameday_html` |
-| Cadence: `dashboard-artifact.yml` runs at 7, 22, 37 and 52 minutes past each hour (best effort; GitHub queues and drops scheduled runs). The Sleeper snapshot (five small GETs) refreshes each run; the 16 MB player dump and the nflverse frames refresh only past half the limit IN EFFECT (see the release review: before it, carried inputs were re-downloaded on every run); carried inputs keep their original observation times. One carryover cache entry per run; the rolling restore-keys pattern tolerates eviction. The hourly `sleeper-sync.yml` is unchanged | `.github/workflows/dashboard-artifact.yml` |
+| Cadence: `dashboard-artifact.yml` runs at 7, 22, 37 and 52 minutes past each hour (best effort; GitHub queues and drops scheduled runs). The Sleeper snapshot (five small GETs) is fetched once per run by the sync step and reused by the pull; the player map is requested at most once per 24 h (see "Release blockers and the Action Desk"); the nflverse frames refresh only past half the limit IN EFFECT; carried inputs keep their original observation times. One carryover cache entry per run; the rolling restore-keys pattern tolerates eviction. The hourly `sleeper-sync.yml` is unchanged | `.github/workflows/dashboard-artifact.yml` |
 | Scenarios: `hold` (fresh inputs, empty pool, best lineup already started → HOLD), `sparse` (week-1 box scores for a third of the players → missing evidence), two-run `taken` (one player claimed, one released → "now owned" / "newly available"), `roster_changed` (the owner dropped a player → section 3 GONE, radar re-priced), `next_week` (week 4 → "week rollover — no comparison"); captures at 375, 768 and 1440 with a fit check at each; `--browser` drives the radar controls and the published-build check against a loopback fixture (200/304, 429, dropped socket, hang, recovery, in-flight guard, newer build, pause/resume, reload) | `dashboard_scenarios.py`, `scripts/weekly/radar_drive.py` (new) |
 
 **Before / after on the cached real league** (same cache, no league write;
@@ -660,6 +665,144 @@ the header trust the device clock. No FAAB, no rest-of-season value, no
 probabilities. Not covered here: no Windows run; no live deploy; no
 real-week grading.
 
+## Release blockers and the Action Desk (2026-09-24)
+
+Starting head `7509af6`; production stays `b24d1f4`. Labels: SYNTHETIC =
+committed fixtures; CACHED = the real local cache at a frozen instant
+(outputs kept in scratch, never committed); nothing here is LIVE and nothing
+wrote to the league. Self-tested; Astra's independent review pending.
+
+**1. Data contract (blocker).** docs.sleeper.com, "Fetch all players" (read
+2026-09-24): "Please use this call sparingly, as it is intended only to be
+used once per day at most to keep your player IDs updated." The 2026-09-23
+half-limit refresh (3 h on game days) broke that. Now
+(`gridiron.sleeper.player_map_budget`, `scripts/ingest/pull_week.py`):
+
+- ≥ 24 h between REQUESTS, success or failure. Each request is logged in
+  `player_map_requests.json` *before* the GET (a crash still counts), and
+  the log travels with the carried inputs (`gridiron.carryover`: validated,
+  never over a local one, a future-dated line refused).
+- Requests only inside 10:00–13:00 ET; with no history at all only inside
+  10:00–10:20 ET, or on an explicit `--player-map-cold-start` (manual first
+  run). Worst cases: an unsaved carry costs the runs in one window a day
+  (≤ 12); a lost cache ≤ 2 a day. Not every 15 minutes.
+- One attempt per request (the client's 3× retry no longer applies to this
+  call); an empty or 404 map is a FAILURE that keeps the last good map.
+  `--force` re-pulls everything else, never the map.
+- Identity vs designation: ids, names, teams and positions are served from
+  the map whatever its age; `injury_status` keeps the UNCHANGED 24 h / 6 h
+  designation cadence. Checked for a compliant fresher source: nflverse
+  injuries update once a day at 07:00 UTC (nflreadr data schedule) — no
+  fresher; a filtered `?position=` query is the same endpoint. So on game,
+  waiver and designation days designation-dependent moves are current for
+  ~6 h after the day's request and are otherwise CHECK IN SLEEPER items that
+  name the players and the status tag to read. That is the honest cost of
+  the budget and the owner should expect it on Sunday afternoons.
+- No restamping: a map not requested is aged from its own pull; a carried
+  map's mark is cleared only when the last logged request SUCCEEDED.
+- The league snapshot is fetched once per run: the pull step reuses the
+  generation the sync step published (`--reuse-league-snapshot 20`; only an
+  error-free, uncarried, same-league entry ≤ 20 min old).
+
+**2. Legality (blocker).** Sources: support.sleeper.com 3473234 (a started
+STARTER leaves a roster only through a waiver claim submitted before his
+kickoff, stays locked, points count) and 4037431 (the commissioner's "Lock
+Free Agent and Waiver Moves" blocks adds and drops). Nothing official covers
+dropping a BENCH player whose game has started (a user forum post says it is
+blocked). The league object carries `bench_lock: 0`, `disable_adds: 0`,
+`daily_waivers: 0`, but Sleeper's API docs do not define those fields, so
+they are recorded, not relied on. Now (`gridiron.waivers.drop_rule`):
+started starter → never a drop (rule cited); started or unknown-kickoff
+bench player → UNVERIFIED drop; a verified drop is always preferred; a move
+that can only use an unverified drop is CHECK IN SLEEPER with the exact
+check; fallback drops are counted per move, verified first, and the
+either/or card names the next VERIFIED drop. Already-owned targets and
+players on other rosters never enter the pool; waiver eligibility stays
+UNVERIFIED on every pickup.
+
+**3. Action Desk and visual system.** Inspected first: the deployed site
+(`b24d1f4`, light theme) and the PR #7 draft (dark theme, unshipped). What
+the screenshots showed: no decision on the first phone screen (Board:
+header ages, build check, model label and banner before "Next decision";
+Game Day: no score at 375 px), diagnostics at headline weight, nine
+equal-weight numbered sections, action cards as six-sentence paragraphs,
+an inside-the-noise swap leading the deployed page, 150+ character lines at
+1440, glows and gradient cards, 12.5–13 px muted text, a top-only nav.
+Changed:
+
+- **Hierarchy.** The page headline is the desk's verdict ("1 pickup if
+  available", "Check Sleeper before acting", "Hold — inputs are stale",
+  "Hold — no change needed"). Under it, a status bar (all current / DEGRADED,
+  moves valid until, designations and their age), then the desk. Provenance
+  (ages, build check, model label) is one tap away in "Data & freshness";
+  warnings are not: the DEGRADED banner names the stale inputs, and the
+  expiry strikes the headline and the "all current" chip.
+- **Action Desk** (`dashboard.action_desk`, `_desk_card`): ≤ 3 supported
+  cards, best first; each answers why now, benefit, cost, if not, the exact
+  check, and valid until (UNKNOWN when it cannot be established); pickups
+  sharing a drop are one "pick one" card (a withheld group gets a neutral
+  title); CHECK IN SLEEPER items; HOLD only when nothing is supported and
+  nothing waits on a check; within-noise swaps and overflow under "More";
+  withheld items under "Last known picture". Each card links into the radar
+  row, which opens even when the saved filters hide it (then the hash is
+  dropped so a reload keeps the filters). The full original wording is under
+  "Full reasoning". Nothing is re-judged; no model, ROS or probability change.
+- **One system** (`gridiron.theme`): flat navy/charcoal, lime only for the
+  primary state, a 13.5 px floor, hairline headings, 44–48 px targets, a
+  bottom tab bar on phones, times in the reader's zone, diagnostics folded
+  after the decision sections (radar → start/sit → roster → matchup →
+  inputs · since last · baseline · archive). Game Day opens on the score with
+  Refresh beside it. No dependency, font, CDN or telemetry.
+
+**Remaining (known, not fixed).**
+- Designations are stale for most of each game day by design (above); the
+  desk says so and asks for the check, but it cannot make the status live.
+- nflverse injuries are aged by fetch time, while their content is as of
+  that day's 07:00 UTC upstream update; the Sleeper designation gate still
+  bounds game-day moves.
+- `bench_lock`, `disable_adds` and `daily_waivers` are read by nobody; if
+  Sleeper documents them, a truthy `disable_adds` should withhold pickups.
+- An add with an open roster spot still names a drop (overstates the cost,
+  never unsafe).
+- Validity and ages trust the device clock; the board is 344 KB on the real
+  cache (+15 KB).
+
+**Verification (self-tested).**
+
+| Check | Result | Label |
+|---|---|---|
+| Reproductions first | budget: every new test failed before the code existed (no budget API); drops: the old board printed a started bench player as the proposed drop, then the new tests failed at import (no `drop_rule`); desk: unit tests written before `action_desk` existed. One defect found in self-review after that (a HOLD card beside pending checks) got its regression with the fix | synthetic |
+| New tests | `test_player_map_budget.py` 24, `test_drop_legality.py` 14, `test_action_desk.py` 13 | synthetic |
+| Full suite `run_summary.py -- python -m pytest` | 771 passed, 0 skipped | synthetic |
+| `smoke.py` (after the suite) | PASS | synthetic |
+| Board `--screenshot --browser` | 33/33 fit (11 scenarios × 375/768/1440); drive PASS, 14 hits for 14 expected, incl. desk deep link to a filtered-out row, keyboard reach of desk link + disclosures, cards expired/lapsed in place | synthetic, headless Chromium |
+| Game Day `--screenshot --browser` | 10/10 fit at 375 (plus 768/1440 on mixed, pregame, stale); drives executed incl. 429, timeout, older/malformed/partial/duplicate payloads, rollover, keyboard to Refresh | synthetic |
+| Real before/after, `7509af6` vs this head at 2026-09-23 09:00 UTC | actions identical; radar counts, all 218 verdicts and gains identical; only `gate.verify` wording and `protected_from_drop` reasons (same 10 ids) differ; radar rows gain `drop_check` | cached |
+| Two builds 04:07 / 04:22 → guard → `check` | guard PASS both; second build "Unchanged"; 375/768/1440 PASS | cached |
+| Two cloud runners + manual `--force` + next day | 1 map request for runs 1–4, the second in the next day's window; 0 extra league fetches; original pull time kept (`docs/review/action-desk/budget-two-run.txt`) | synthetic |
+
+Screenshots (`docs/review/action-desk/`, synthetic, clock pinned to each
+page's build instant): `board-{deployed,draft,after}-{375,768,1440}-first`,
+`board-{deployed,after}-{375,1440}-full` (the journey), `gameday-{deployed,
+draft,after}-*-first`, and `state-{designations,stale,hold,slate_end}-375-first`.
+
+**Deployment and rollback checklist (for whoever merges; not done here).**
+1. Astra reviews this head; re-run the suite, smoke, both scenario commands
+   with `--screenshot --browser`; read the screenshots and the budget log.
+2. Merge PR #7. Cron becomes `7,22,37,52 * * * *` (best effort). No
+   variable changes.
+3. First scheduled run: the pull log shows `sleeper_league: reused` and
+   either one `sleeper_players` request (inside 10:00–13:00 ET, or 10:00–10:20
+   ET on a runner with no carried history) or `not requested — last request
+   …`; never two map requests within 24 h across runs.
+4. The page header dates the designations; outside ~6 h after the day's
+   request on game days, expect "Check Sleeper before acting" and CHECK IN
+   SLEEPER cards, not moves.
+5. Rollback: revert the merge on main; the next run restores the hourly cron,
+   the old player-dump behaviour and the old pages. The request ledger is an
+   extra file the old code ignores; archives and carried caches stay
+   readable (older records have no `drop_check` and are shown without one).
+
 ## Release review — Free Agent Radar (2026-09-23)
 
 One bounded skeptical pass over `64dc8eb` (production stays `b24d1f4`).
@@ -686,7 +829,9 @@ Also: the pinned-date fix for `test_report_cli::test_a_null_stat_cell_is_not_a_m
 which failed on the real clock after the fixture's week-2 slate ended (it fails
 the same way on `64dc8eb`); the KPI accent; strike-through on re-judged badges.
 
-**Trade-off for the owner (not silently decided).** Threshold = half the limit
+**Trade-off for the owner (not silently decided) — SUPERSEDED 2026-09-24:
+the player map now has a once-a-day request budget; see the section above.**
+Threshold = half the limit
 in effect means the player dump is fetched at most every 3 h on game, waiver
 and designation days (≤ 8/day) and every 12 h otherwise. DECISIONS 2026-09-18
 records Sleeper's ask to fetch it once a day. Production today fetches it on
@@ -695,11 +840,11 @@ holding it to 24 h instead would keep designations inside the gate only ~6 h
 of each game day and withhold every move for the rest.
 
 **Remaining (known, not fixed here).**
-- Dropping a bench player whose game has started: the drop list protects
+- (Fixed 2026-09-24, see above.) Dropping a bench player whose game has started: the drop list protects
   locked STARTERS only; whether Sleeper blocks a locked bench drop is not
   verified in this repo. The page's move deadline uses the added player and
   the displaced starter.
-- `pull_week.py` fetches the league snapshot again after `sleeper_sync.py`
+- (Fixed 2026-09-24, see above.) `pull_week.py` fetches the league snapshot again after `sleeper_sync.py`
   (10 small GETs per run instead of 5; two snapshot generations per run).
 - The Game Day pregame card carries the first kickoff; it does not re-check
   availability (it never did; it says so).
@@ -733,7 +878,7 @@ driven through the page's own clock hook.
    the page's header dates must match the run's inputs.
 4. Second run: "Since the last record" says Unchanged or Refreshed, never a
    comparison against a v1 block (v1 → "no comparison" once, by design).
-5. Watch one game day: the player dump refreshes about every 3 h; the board
+5. (Superseded 2026-09-24: once a day, see above.) Watch one game day: the player dump refreshes about every 3 h; the board
    gate stays FRESH through the slate or says which source expired.
 6. Rollback: revert the merge commit on main (or `git revert` the PR's
    commits); the next scheduled run restores the hourly cron and the old

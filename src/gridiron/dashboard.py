@@ -2078,8 +2078,10 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         out.append("<h3 class=\"deskh\">Check in Sleeper first</h3>")
         for item in desk.checks:
             out.append(_desk_card(item, None))
-    if desk.hold:
-        if d.actions and all(a.withheld for a in d.actions) and not desk.checks:
+    if desk.hold and not desk.checks:
+        # With checks pending, the checks ARE the answer; a HOLD card here
+        # would claim the lineup is settled while moves wait on Sleeper.
+        if d.actions and all(a.withheld for a in d.actions):
             why = "the inputs behind every comparison are stale or unreadable (see Inputs)"
         elif nd is not None and nd.all_locked:
             why = ("Every starter has kicked off. No lineup change this week is possible, "

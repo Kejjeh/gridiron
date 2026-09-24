@@ -200,3 +200,4 @@ def test_only_stale_designations_render_check_in_sleeper_cards(tmp_path):
     assert "Check in Sleeper first" in desk and "CHECK IN SLEEPER" in desk
     assert "status tag beside each name" in desk
     assert "If available, claim" not in desk.split("Full reasoning")[0]   # face never imperative
+    assert "Hold — no supported change" not in desk      # the checks are the answer
