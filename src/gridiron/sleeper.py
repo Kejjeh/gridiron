@@ -217,16 +217,29 @@ def season_matches(state: NflState) -> bool:
 #     failed attempt less than 24 h old.
 #   * In the cloud (`carried=True`) the ledger lives in an Actions cache,
 #     which can silently fail to save or be evicted. Every run stamps the
-#     ledger with its workflow run number, and a request there also needs
-#     the carried stamp to come from the IMMEDIATELY previous run: proof that
-#     no run in between did something whose save was lost. A cache that
-#     stops saving therefore stops requests (the gap never closes) rather
-#     than turning each 15-minute run into one; a single run whose save was
-#     lost delays the request by one run. What this cannot rule out: a save
-#     lost right after a REQUEST followed by a save that works lets a later
-#     run request again (one extra request per such lost save). The cache is
-#     not durable storage, so the 24 h rule is only as strong as it; nothing
-#     here claims a strict guarantee.
+#     ledger with its workflow run number. A run whose carried stamp is not
+#     from the IMMEDIATELY previous run (run N-1), or that is a re-run
+#     (GITHUB_RUN_ATTEMPT > 1: the same run number again, whose earlier
+#     attempt may have requested and lost its save), cannot see what the
+#     missing run did. It requests nothing and stamps a GAP MARK at its own
+#     time: every missing run started before it, so any request one made is
+#     no later than the mark. The mark is carried like the request lines and
+#     only ever moves later; the next request waits for 24 h after the LATER
+#     of the last logged request and the mark. A later run stamping its
+#     number re-proves the chain from here on; it never erases the mark.
+#     A lost save after a request therefore costs a day's delay, not a second
+#     request, and a cache that keeps losing saves keeps moving the mark and
+#     stops requests (the page says PAUSED once the map is 30 h old) until
+#     saves work for a whole day.
+#   * What the cloud rule rests on: run numbers of this workflow only
+#     increase; its runs do not overlap (the workflow's concurrency group);
+#     a restore returns the newest saved entry or nothing; runner clocks
+#     agree. The cache is not durable storage: if it loses the ledger
+#     outright the state is RECOVERY NEEDED, and a person's bootstrap is
+#     their word, checked only against what the cache still shows (the map,
+#     a failed attempt, a rejected ledger's readable stamps), that no
+#     request was made in the last 24 h. A local run keeps its own ledger on its own
+#     disk and is not counted with the cloud's.
 # ---------------------------------------------------------------------------
 
 PLAYER_MAP_LEDGER = "player_map_requests.json"
@@ -268,6 +281,8 @@ def valid_player_map_ledger(blob: object) -> tuple[list[dict], str]:
                     "outcome": outcome, "note": str(line.get("note") or "")[:200]})
     if blob.get("checked") is not None and _stamp(blob.get("checked")) is None:
         return [], "its checked stamp is unreadable"
+    if blob.get("gap_seen") is not None and _stamp(blob.get("gap_seen")) is None:
+        return [], "its gap mark is unreadable"
     run = blob.get("checked_run")
     if run is not None and (isinstance(run, bool) or not isinstance(run, int) or run < 1):
         return [], "its checked run number is unreadable"
@@ -284,6 +299,9 @@ class PlayerMapHistory:
     checked_run: int | None = None
     #: "" when the ledger is present and readable; otherwise why it is not.
     problem: str = ""
+    #: Latest time a cloud run found the carried chain broken (a run between
+    #: may have requested and lost its save); None when no gap was ever seen.
+    gap_seen: datetime | None = None
 
 
 def read_player_map_history(directory: Path) -> PlayerMapHistory:
@@ -299,7 +317,7 @@ def read_player_map_history(directory: Path) -> PlayerMapHistory:
     if why:
         return PlayerMapHistory(problem=f"the request ledger is {why}")
     return PlayerMapHistory(tuple(lines), _stamp(blob.get("checked")),
-                            blob.get("checked_run"))
+                            blob.get("checked_run"), gap_seen=_stamp(blob.get("gap_seen")))
 
 
 def read_player_map_ledger(directory: Path) -> list[dict]:
@@ -309,13 +327,15 @@ def read_player_map_ledger(directory: Path) -> list[dict]:
 
 
 def _write_ledger(directory: Path, lines: Sequence[dict], checked: datetime,
-                  run: int | None) -> None:
+                  run: int | None, gap_seen: datetime | None = None) -> None:
     path = Path(directory) / PLAYER_MAP_LEDGER
     tmp = path.with_name(path.name + ".part")
     tmp.write_text(json.dumps({"endpoint": "players/nfl",
                                "checked": checked.astimezone(timezone.utc)
                                .isoformat(timespec="seconds"),
                                "checked_run": run,
+                               "gap_seen": gap_seen.astimezone(timezone.utc)
+                               .isoformat(timespec="seconds") if gap_seen else None,
                                "requests": list(lines)[-PLAYER_MAP_LEDGER_KEEP:]}, indent=1),
                    encoding="utf-8")
     os.replace(tmp, path)
@@ -326,24 +346,31 @@ def note_player_map_request(directory: Path, now: datetime, *, outcome: str,
     """Append a request line, or settle the last `requested` line to its
     outcome. Written through a temp file so a crash leaves the old ledger.
     An unreadable ledger is replaced only here, by a request a budget (or a
-    person's bootstrap) allowed; request times already on it are kept."""
-    lines = read_player_map_ledger(directory)
+    person's bootstrap) allowed; request times and the gap mark already on it
+    are kept."""
+    history = read_player_map_history(directory)
+    lines = list(history.lines)
     iso = now.astimezone(timezone.utc).isoformat(timespec="seconds")
     if outcome != "requested" and lines and lines[-1]["outcome"] == "requested":
         lines[-1] = {**lines[-1], "outcome": outcome, "note": note[:200]}
     else:
         lines.append({"at": iso, "outcome": outcome, "note": note[:200]})
-    _write_ledger(directory, lines, now, run)
+    _write_ledger(directory, lines, now, run, history.gap_seen)
 
 
-def note_player_map_check(directory: Path, now: datetime, run: int | None = None) -> bool:
+def note_player_map_check(directory: Path, now: datetime, run: int | None = None,
+                          gap: datetime | None = None) -> bool:
     """Stamp a trustworthy ledger as read by this run (its request lines and
-    their times untouched). Never CREATES a ledger: an empty one written here
-    would read as trustworthy history and let a lost cache request freely."""
+    their times untouched), and record `gap` (PlayerMapBudget.gap_at) when
+    this run found the carried chain broken. The gap mark only moves later;
+    the run number stamped here never clears it. Never CREATES a ledger: an
+    empty one written here would read as trustworthy history and let a lost
+    cache request freely."""
     h = read_player_map_history(directory)
     if h.problem or not h.lines:
         return False
-    _write_ledger(directory, h.lines, now, run)
+    marks = [t for t in (h.gap_seen, gap) if t is not None]
+    _write_ledger(directory, h.lines, now, run, max(marks) if marks else None)
     return True
 
 
@@ -355,10 +382,14 @@ class PlayerMapBudget:
     #: True/False for the last logged request's outcome; None when unknown.
     last_ok: bool | None = None
     next_allowed: datetime | None = None
-    #: "due", "wait" (inside the 24 h), "unconfirmed" (cloud carry not yet
-    #: shown to work), "recovery" (no trustworthy history: a person must act)
-    #: or "bootstrap-refused".
+    #: "due", "wait" (inside the 24 h), "unconfirmed" (this cloud run found
+    #: the carried chain broken), "held" (inside the 24 h after a gap mark),
+    #: "recovery" (no trustworthy history: a person must act) or
+    #: "bootstrap-refused".
     state: str = "wait"
+    #: Set when this run found the carried chain broken: the gap mark the
+    #: run must carry forward (note_player_map_check). None otherwise.
+    gap_at: datetime | None = None
 
     @property
     def needs_person(self) -> bool:
@@ -367,13 +398,15 @@ class PlayerMapBudget:
 
 def player_map_budget(history: PlayerMapHistory | Sequence[Mapping[str, Any]],
                       now: datetime, *, carried: bool = False, run: int | None = None,
-                      bootstrap: bool = False,
+                      attempt: int | None = 1, bootstrap: bool = False,
                       fallback_last: datetime | None = None) -> PlayerMapBudget:
     """May the full player map be requested now? Never bypassed by --force.
 
     `fallback_last` is the cache's own evidence of the last request (the map's
     pull time, or a later failed attempt); it only ever blocks a bootstrap,
-    it never authorises a request."""
+    it never authorises a request. `run` and `attempt` are the workflow's
+    run number and attempt (GITHUB_RUN_NUMBER, GITHUB_RUN_ATTEMPT); they
+    matter only when `carried`, where an unknown one counts as a gap."""
     if not isinstance(history, PlayerMapHistory):
         lines, why = valid_player_map_ledger({"requests": list(history)})
         history = PlayerMapHistory(tuple(lines), None, why)
@@ -387,6 +420,10 @@ def player_map_budget(history: PlayerMapHistory | Sequence[Mapping[str, Any]],
         if last > now + _FUTURE_SLACK:
             problem = (f"a request is stamped {last.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}, "
                        f"after this machine's clock")
+    hold = history.gap_seen
+    if not problem and hold is not None and hold > now + _FUTURE_SLACK:
+        problem = (f"its gap mark is stamped {hold.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}, "
+                   f"after this machine's clock")
     if problem:
         if not bootstrap:
             return PlayerMapBudget(
@@ -395,33 +432,61 @@ def player_map_budget(history: PlayerMapHistory | Sequence[Mapping[str, Any]],
                        f"automatically; a person runs the one-time bootstrap "
                        f"(HANDOFF.md, 'Player-map bootstrap')", last, last_ok,
                 state="recovery")
-        if fallback_last is not None and (fallback_last > now + _FUTURE_SLACK
-                                          or now < fallback_last + PLAYER_MAP_MIN_INTERVAL):
-            nxt = fallback_last + PLAYER_MAP_MIN_INTERVAL
+        if carried and attempt != 1:
             return PlayerMapBudget(
-                False, f"bootstrap refused — {problem}, and the cached map shows a "
-                       f"request at {fallback_last.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}; "
+                False, f"bootstrap refused — {problem}, and this is a re-run (attempt "
+                       f"{attempt}) of a run whose earlier attempt may already have "
+                       f"requested; dispatch a NEW run with the bootstrap input once the "
+                       f"earlier attempt's log shows no request in the last 24 h",
+                last, last_ok, state="bootstrap-refused")
+        # Readable evidence on a rejected ledger (a gap mark, or a request
+        # before a future-dated one) blocks a bootstrap exactly as the map does.
+        seen = [t for t in (fallback_last, hold, *stamps) if t is not None
+                and (t is fallback_last or t <= now + _FUTURE_SLACK)]
+        latest = max(seen) if seen else None
+        if latest is not None and (latest > now + _FUTURE_SLACK
+                                   or now < latest + PLAYER_MAP_MIN_INTERVAL):
+            nxt = latest + PLAYER_MAP_MIN_INTERVAL
+            return PlayerMapBudget(
+                False, f"bootstrap refused — {problem}, and the cache shows a "
+                       f"request (or a gap that may hide one) at "
+                       f"{latest.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}; "
                        f"retry the bootstrap after {nxt.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}",
-                fallback_last, None, nxt, state="bootstrap-refused")
+                latest, None, nxt, state="bootstrap-refused")
         return PlayerMapBudget(True, f"bootstrap by a person — {problem}", last, last_ok,
                                state="due")
-    nxt = last + PLAYER_MAP_MIN_INTERVAL
+    # A broken carried chain is checked BEFORE the 24 h, not only once the
+    # day has passed: a gap seen while waiting still hides a possible request.
+    gap = carried and (run is None or attempt != 1 or history.checked_run is None
+                       or history.checked_run != run - 1)
+    if gap:
+        hold = now if hold is None else max(hold, now)
+    held = hold is not None and hold > last
+    nxt = (hold if held else last) + PLAYER_MAP_MIN_INTERVAL
     when = f"last request {last.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}"
-    if now < nxt:
-        return PlayerMapBudget(False, f"{when}; Sleeper asks for this call once a day at "
-                                      f"most, next allowed {nxt.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}",
-                               last, last_ok, nxt, state="wait")
-    if carried and (run is None or history.checked_run is None
-                    or history.checked_run != run - 1):
+    until = f"{nxt.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}"
+    if gap:
         seen = (f"it was last saved by run {history.checked_run}"
                 if history.checked_run is not None else "no run has stamped it")
+        this = f"this is run {run}" + (f", attempt {attempt}" if attempt != 1 else "")
         return PlayerMapBudget(
-            False, f"{when}; a day has passed, but the carried ledger is not shown to "
-                   f"come from the previous run ({seen}; this is run {run}), so a "
-                   f"request may have been lost with a save; this run stamps it and the "
-                   f"next one can request", last, last_ok, nxt, state="unconfirmed")
-    return PlayerMapBudget(True, f"{when}; a day has passed", last, last_ok, nxt,
-                           state="due")
+            False, f"{when}; the carried ledger is not shown to come from the previous "
+                   f"run ({seen}; {this}), so a run in between may have requested and "
+                   f"lost its save; no request before {until}, 24 h after this run",
+            last, last_ok, nxt, state="unconfirmed", gap_at=now)
+    if now < nxt:
+        if held:
+            return PlayerMapBudget(
+                False, f"{when}; a gap in the carried ledger was seen at "
+                       f"{hold.astimezone(timezone.utc):%Y-%m-%d %H:%MZ} (a run whose save was "
+                       f"lost may have requested), so the next request waits until {until}",
+                last, last_ok, nxt, state="held")
+        return PlayerMapBudget(False, f"{when}; Sleeper asks for this call once a day at "
+                                      f"most, next allowed {until}",
+                               last, last_ok, nxt, state="wait")
+    return PlayerMapBudget(True, f"{when}; a day has passed" + (
+        f" since it and since the gap seen {hold.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}"
+        if held else ""), last, last_ok, nxt, state="due")
 
 
 def write_player_map_status(directory: Path, now: datetime, budget: PlayerMapBudget) -> None:
@@ -445,9 +510,10 @@ def player_map_status_note(directory: Path) -> str:
     if not isinstance(blob, dict):
         return ""
     at, last = _stamp(blob.get("at")), _stamp(blob.get("last_request"))
-    # "unconfirmed" is routine for one run after a gap; it is said on the page
-    # only once it has held the map back six hours past its due time.
-    stuck = (blob.get("state") == "unconfirmed" and at is not None and last is not None
+    # A gap ("unconfirmed", then "held") is routine after one lost save; it is
+    # said on the page only once the map is six hours past a day old.
+    stuck = (blob.get("state") in ("unconfirmed", "held") and at is not None
+             and last is not None
              and at - last >= PLAYER_MAP_MIN_INTERVAL + timedelta(hours=6))
     if blob.get("state") not in ("recovery", "bootstrap-refused") and not stuck:
         return ""

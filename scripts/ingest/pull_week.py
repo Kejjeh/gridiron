@@ -190,7 +190,7 @@ def _map_evidence(manifest: ing.Manifest) -> datetime | None:
 
 def pull_player_map(manifest: ing.Manifest, client, now: datetime, *,
                     carried: bool = False, run: int | None = None,
-                    bootstrap: bool = False) -> None:
+                    attempt: int | None = 1, bootstrap: bool = False) -> None:
     """Request Sleeper's full player map only when its budget allows.
 
     `--force` does not reach here: the budget is Sleeper's ask, not a cache
@@ -198,17 +198,19 @@ def pull_player_map(manifest: ing.Manifest, client, now: datetime, *,
     the GET, so a crash mid-download still counts against the day. A request
     that is not made restamps nothing; the map is aged from its own pull.
     Every run stamps a trustworthy ledger as checked (request times kept), so
-    the next cloud run can tell the carry is being saved, and writes its
-    decision to PLAYER_MAP_STATUS for the page.
+    the next cloud run can tell the carry is being saved; a run that found
+    the carried chain broken also stamps the gap mark, which holds the next
+    request for 24 h. Each run writes its decision to PLAYER_MAP_STATUS for
+    the page.
     """
     name = "sleeper_players"
     directory = manifest.directory
     history = read_player_map_history(directory)
-    budget = player_map_budget(history, now, carried=carried, run=run,
+    budget = player_map_budget(history, now, carried=carried, run=run, attempt=attempt,
                                bootstrap=bootstrap, fallback_last=_map_evidence(manifest))
     write_player_map_status(directory, now, budget)
     if not budget.due:
-        note_player_map_check(directory, now, run)
+        note_player_map_check(directory, now, run, gap=budget.gap_at)
         print(f"  {name}: not requested — {budget.reason}",
               file=sys.stderr if budget.needs_person else sys.stdout)
         e = manifest.get(name)
@@ -245,7 +247,8 @@ def pull_player_map(manifest: ing.Manifest, client, now: datetime, *,
 def run_number(text: str | None) -> int | None:
     """GitHub's per-workflow run counter, or None. Not a credential: it is the
     number every run page shows. It only increases, so a carried ledger
-    stamped by run N-1 proves no run in between lost its save."""
+    stamped by run N-1 proves no run in between lost its save. Also reads
+    GITHUB_RUN_ATTEMPT, which is > 1 on a re-run of the same number."""
     text = (text or "").strip()
     return int(text) if text.isdigit() and int(text) > 0 else None
 
@@ -277,7 +280,7 @@ def reusable_league_snapshot(manifest: ing.Manifest, now: datetime, minutes: flo
 def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
                  with_players: bool, *, client=None, reuse_league_minutes: float = 0,
                  carried: bool = False, run: int | None = None,
-                 bootstrap: bool = False) -> int:
+                 attempt: int | None = 1, bootstrap: bool = False) -> int:
     client = client or SleeperReadOnly()
     week = 0
     reused = (reusable_league_snapshot(manifest, now, reuse_league_minutes,
@@ -320,7 +323,7 @@ def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
         print("  sleeper_players: skipped (--no-players)")
     else:
         pull_player_map(manifest, client, now, carried=carried, run=run,
-                        bootstrap=bootstrap)
+                        attempt=attempt, bootstrap=bootstrap)
     return week
 
 
@@ -396,7 +399,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--carried-history", action="store_true",
                     help="the ledger is carried between runs by a disposable "
                          "cache (the cloud run): request only when the carried "
-                         "ledger was saved by the previous run (GITHUB_RUN_NUMBER)")
+                         "ledger was saved by the previous run (GITHUB_RUN_NUMBER) "
+                         "and this is not a re-run (GITHUB_RUN_ATTEMPT); a gap "
+                         "holds requests for 24 h")
     args = ap.parse_args(argv)
 
     ensure_dirs()
@@ -423,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
     pull_sleeper(manifest, now, args.force, not args.no_players,
                  reuse_league_minutes=args.reuse_league_snapshot,
                  carried=args.carried_history, run=run_number(os.environ.get("GITHUB_RUN_NUMBER")),
+                 attempt=run_number(os.environ.get("GITHUB_RUN_ATTEMPT")),
                  bootstrap=args.player_map_bootstrap)
     check_scoring_inputs(manifest)
     # Save under the same lock the sync uses, merging in anything a concurrent

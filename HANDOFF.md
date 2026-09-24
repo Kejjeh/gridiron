@@ -29,7 +29,12 @@ system across Board, Radar and Game Day. Astra reviewed that head (`4b63520`;
 Windows 766 passed / 5 skipped, log 20260924T153745Z; not release approval)
 and a third pass ("Astra review of 4b63520" below) fixed player-map
 recovery, pickups that named a drop despite an open roster spot, and the
-first phone screen. Its evidence is self-tested; Astra's review of it is
+first phone screen. Astra verified that head (`7d335ab`; 810 passed / 5
+browser-related skips, log 20260924T170720Z; smoke PASS; first screens and
+the iPhone inset accepted) and reproduced one remaining release blocker: a
+cache save lost right after a player-map request let a later run request
+again 30 minutes on. A fourth pass ("PR7 release blocker — lost-save hold"
+below) closes it. Its evidence is self-tested; Astra's review of it is
 pending. The exact head is in the PR body.
 
 The desktop five-minute sync is **installed but its scheduled task is
@@ -669,6 +674,88 @@ the header trust the device clock. No FAAB, no rest-of-season value, no
 probabilities. Not covered here: no Windows run; no live deploy; no
 real-week grading.
 
+## PR7 release blocker — lost-save hold (2026-09-24)
+
+Starting head `7d335ab`; production stays `b24d1f4`. SYNTHETIC evidence
+only (fakes and fixtures; no player-map or league request was made).
+Self-tested; Astra's review pending. Scope: the player-map budget only — no
+feature, UI or model change.
+
+**The defect.** Astra's reproduction on `7d335ab`: last request 2026-09-24
+17:02Z, ledger stamped by run 106. Run 107 (09-25 17:30Z) is due, requests,
+and its cache save is lost. Run 108 (17:45Z) restores 106's ledger, sees the
+chain broken and requests nothing — but then stamped its own number and
+saved, so run 109 (18:00Z) saw an unbroken chain and requested again: two
+requests 30 minutes apart. Reproduced here through the real puller and
+carry before the fix (3 GETs), plus a second route to the same result:
+GitHub's re-run keeps the run number and the per-run-id cache key, so
+attempt 2 of run 107 restored 106's ledger, passed the `N-1` check and
+requested 20 minutes after attempt 1 (3 GETs). `7d335ab` also checked the
+24 h wait BEFORE the chain, so a gap found inside the day was never looked
+at and the run's stamp closed it silently. The test that accepted this
+(`test_one_lost_save_after_a_request_costs_at_most_one_extra`, 3 calls) is
+replaced.
+
+**The rule now** (`gridiron.sleeper.player_map_budget`,
+`note_player_map_check`, `scripts/ingest/pull_week.py`). Acceptance: no
+second ACTUAL request within 24 h, whatever the pattern of lost saves.
+
+- A cloud run (`--carried-history`) whose carried ledger was not stamped by
+  run N-1, has no stamp, has no run number, or that is a re-run
+  (`GITHUB_RUN_ATTEMPT` ≠ 1, or unknown) requests nothing and writes a
+  **gap mark** (`gap_seen`) at its own time into the ledger. Every missing
+  run started before it, so any request one made is no later than the mark.
+- The mark travels with the ledger, is validated like its other stamps (an
+  unreadable one rejects the ledger; one after this machine's clock is
+  RECOVERY NEEDED), and only ever moves LATER. Stamping a run number never
+  clears it. Request times are never rewritten.
+- The next request waits for 24 h after the LATER of the last logged request
+  and the gap mark (state `held` in between; `unconfirmed` on the run that
+  found the gap). The chain is checked before the wait, so a gap found
+  inside the day moves the mark too.
+- `--force` never reaches the budget. The bootstrap is ignored while the
+  ledger is sound (a hold is not recovery). A re-run cannot bootstrap
+  (attempt 1 may have requested, and its map went with the lost save).
+  Readable evidence on a rejected ledger (a gap mark, or a request before a
+  future-dated line) refuses a bootstrap exactly as the cached map does.
+- The page says "Player map requests are PAUSED …" once a `held` or
+  `unconfirmed` budget has kept the map 30 h past its last request.
+
+**What it costs, stated.** Any gap — a lost save, a queued run that the
+concurrency group cancelled, a run that failed before the player-map step,
+a re-run — delays the next request to 24 h after the run that saw it,
+whether or not a request was really lost. Astra's case: the map is next
+requested at 09-26 17:45Z (24 h 15 min after #107), not 17:02Z. A cache that
+keeps losing saves keeps moving the mark and stops requests until saves
+work for a whole day; the last good map is kept and the designation gates
+withhold moves as it ages (unchanged). Normal delayed or dropped schedules
+are not gaps: GitHub never creates a run for a dropped schedule, so the
+numbers stay contiguous and the first run after the 24 h mark still requests.
+
+**Guarantee boundary.** No second request within 24 h holds when: this
+workflow's run numbers only increase; its runs do not overlap (its
+concurrency group); a restore returns the newest saved entry or nothing;
+runner clocks agree. It does NOT cover: the cache losing the ledger
+outright (RECOVERY NEEDED; the bootstrap is a person's word, checked only
+against the cached map and the ledger's own evidence — see step 1 of the
+procedure); a local `pull_week.py` run, which keeps its own ledger; and a
+future edit that makes a run skip the player-map step without failing.
+
+| Check | Result | Data |
+|---|---|---|
+| Reproduction at `7d335ab` | Astra's timeline: 3 GETs (106, 107, 109 at +30 min); re-run of 107: 3 GETs (+20 min) | synthetic, real puller + carry |
+| `tests/test_player_map_budget.py` | 52 passed (41 − 1 replaced + 12 new: lost save after an ok / failed / crashed GET, the stamp never erasing the mark, a gap while waiting, bursty + random loss then recovery, re-runs, `--force` and bootstrap during a hold, re-run bootstrap refused, evidence on a rejected ledger, the mark's validation, the page note) | synthetic |
+| Full suite, then smoke | 826 passed, 0 skipped, 0 failed (log 20260924T172440Z); smoke PASS | synthetic |
+| Cloud-shaped proof (`docs/review/action-desk/budget-recovery-proof.txt`) | 8 timelines (first deployment, delayed run, Astra's case, re-runs, force/bootstrap in a hold, every-3rd-save lost for 36 h, cache stops saving for 3 days, cache evicted): smallest spacing between two GETs in any timeline 24 h 10 min; Astra's case resumes at 09-26 17:45Z; the lossy case resumes 24 h after its last gap; 0 league fetches | synthetic |
+
+**Deployment note (adds to the checklist in the section below).** After the
+merge and the one bootstrap, a run log saying `… not shown to come from the
+previous run …` means a gap was seen; `a gap in the carried ledger was seen
+at …, so the next request waits until …` follows for up to 24 h. Both are
+expected after a lost save and need no action. A re-run of a dispatch with
+the bootstrap box ticked is refused; dispatch a new run instead. Rollback:
+the old code ignores the ledger's `gap_seen` key.
+
 ## Astra review of 4b63520 — budget recovery, open roster spots, first screen (2026-09-24)
 
 Starting head `4b63520`; production stays `b24d1f4`. Labels as below:
@@ -701,6 +788,8 @@ Now (`gridiron.sleeper.player_map_budget`):
   was lost delays the request by one run. **Not claimed:** a strict 24 h
   guarantee. The ledger rides a disposable Actions cache; a save lost right
   after a request, followed by one that works, costs one extra request.
+  *(Superseded by "PR7 release blocker — lost-save hold" above: a gap now
+  writes a gap mark and holds the next request 24 h; no extra request.)*
   The local cache and the cloud each keep their own ledger, so running
   `pull_week.py` on a PC as well as in the cloud is two requests a day.
 
@@ -711,10 +800,15 @@ once after merging this work (main's carried cache has no request ledger).
 
 1. Look at the board's Designations date (the map's last pull). The script
    refuses the bootstrap anyway while the cached map shows a pull or a failed
-   attempt under 24 h old, and says when to retry.
+   attempt under 24 h old, and says when to retry. In the cloud, also open
+   the logs of the runs of the last 24 h: if any shows a
+   `sleeper_players: N players` or `sleeper_players: FAILED` line, its save
+   may have been lost with the ledger — wait until 24 h after it.
 2. Cloud: Actions → "Weekly dashboard artifact" → Run workflow → tick
    `player_map_bootstrap` → Run. Local: `PYTHONPATH=src python
-   scripts/ingest/pull_week.py --player-map-bootstrap`.
+   scripts/ingest/pull_week.py --player-map-bootstrap`. Never use "Re-run"
+   on a bootstrap dispatch: a re-run is refused (its first attempt may have
+   requested); dispatch a new run.
 3. The run log shows exactly one `sleeper_players: N players` line. The next
    scheduled run shows `not requested — last request …`; the one after that
    continues normally.
@@ -795,7 +889,8 @@ this pass): `board-v2-{375,768,1440}-first`, `board-v2-{375,1440}-full`,
 `state-v2-{designations,open_spot,stale,hold}-375-first`.
 
 **Remaining (known, not fixed).** The request drifts later each day (above);
-a lost save after a request can cost one extra request; local and cloud
+a lost save after a request can cost one extra request (*fixed since: see
+"PR7 release blocker — lost-save hold"*); local and cloud
 ledgers are separate; designations stay stale for most of each game day by
 design; nflverse injuries are aged by fetch time; `bench_lock`,
 `disable_adds` and `daily_waivers` are still unread; an IR-slot player who
@@ -807,7 +902,9 @@ After merging, the first scheduled run says RECOVERY NEEDED (no carried
 ledger) — expected. Run the bootstrap once (above). From then on each run
 logs `not requested — last request …`, a request once 24 h have passed, or
 `… not shown to come from the previous run …` for one run after a gap.
-Never two requests within 24 h unless a save was lost right after one.
+Never two requests within 24 h unless a save was lost right after one
+(*since the lost-save hold: never two within 24 h in the cloud, within the
+boundary stated there*).
 Rollback is unchanged: revert the merge; the ledger's new `checked` and
 `checked_run` fields and a null `drop` are ignored or read as before by the
 old code (`_player(None)` was already handled).

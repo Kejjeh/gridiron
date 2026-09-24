@@ -44,7 +44,9 @@ name: Weekly dashboard artifact
 #     check-in-Sleeper step. The request ledger rides the Actions cache
 #     below, which is not durable: a lost or unreadable ledger stops requests
 #     (RECOVERY NEEDED on the page) until a person dispatches this workflow
-#     once with the player_map_bootstrap input. The
+#     once with the player_map_bootstrap input, and a run that cannot show
+#     the previous run saved the ledger (a lost save, a cancelled queued run,
+#     a re-run) marks a gap that holds the next request for 24 h. The
 #     nflverse frames are refreshed only when older than half the freshness
 #     limit IN EFFECT (tighter on game days; scripts/ingest/pull_week.py). A carried
 #     input is judged by the time of the pull that fetched it, exactly as a
@@ -190,8 +192,10 @@ jobs:
       # carries no error and is this run's) instead of fetching it again.
       # --carried-history: the player-map request ledger came from the
       # Actions cache, so a request also needs proof that the previous run's
-      # save came back; a missing or unreadable ledger requests nothing and
-      # the page says RECOVERY NEEDED (gridiron.sleeper.player_map_budget).
+      # save came back (GITHUB_RUN_NUMBER, first GITHUB_RUN_ATTEMPT; a gap
+      # holds requests for 24 h); a missing or unreadable ledger requests
+      # nothing and the page says RECOVERY NEEDED
+      # (gridiron.sleeper.player_map_budget).
       # The bootstrap input reaches the script as an environment value.
       - name: Pull the week's nflverse frames and the player dump
         id: nflverse
