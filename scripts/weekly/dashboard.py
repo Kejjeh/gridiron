@@ -34,6 +34,7 @@ from gridiron.livesync import current_snapshot
 from gridiron.paths import OUTPUTS, ensure_dirs
 from gridiron.scoring import ScoringCoverage, scoring_coverage
 from gridiron.usage import player_weeks, weeks_present
+from gridiron.sleeper import player_map_status_note
 
 #: Every source this dashboard READS (same rule as report.py: if a value
 #: from a source reaches the page, its as-of line is on the page).
@@ -202,7 +203,10 @@ def main(argv: list[str] | None = None) -> int:
         context=ctx, sources=sources, snapshot=snapshot, sleeper_players=players,
         crosswalk=crosswalk, weeks=weeks, schedule=schedule, injuries=injuries,
         scoring=coverage, owner_id=owner_id, now=now,
-        archive_root=args.archive_root, write_archive_file=not args.no_archive)
+        archive_root=args.archive_root, write_archive_file=not args.no_archive,
+        # A player-map budget that needs a person (RECOVERY NEEDED) is said on
+        # the page, not only in the pull step's log.
+        extra_notes=(player_map_status_note(directory),))
 
     # Summary to stdout: no player names, so a log of this run exposes nothing.
     print(f"{ctx.headline()} | evidence boundary wk{ctx.evidence_boundary}")

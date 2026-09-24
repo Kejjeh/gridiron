@@ -194,7 +194,7 @@ def test_game_day_carries_the_drop_check_and_reads_old_records_without_one():
     from gridiron.gameday import summarise_radar
     block = {"counts": {}, "candidates": [
         {"verdict": "LINEUP", "id": "1", "name": "A", "drop": {"name": "B", "id": "2"},
-         "drop_check": "B's game has started; try the drop in Sleeper"},
+         "drop_check": "B's game has started; open B in Sleeper and see whether it offers a drop"},
         {"verdict": "LINEUP", "id": "3", "name": "C", "drop": {"name": "D", "id": "4"}}]}
     moves = summarise_radar(block)["moves"]
     assert moves[0]["drop_check"] and moves[1]["drop_check"] == ""

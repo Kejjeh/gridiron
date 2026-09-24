@@ -25,8 +25,12 @@ below) found and fixed eight defects on top of `64dc8eb`. Astra then ran
 pass (2026-09-24, "Release blockers and the Action Desk" below) closed the
 two release blockers she named — Sleeper's once-a-day player-map budget and
 drop legality after kickoff — then built the Action Desk and one visual
-system across Board, Radar and Game Day. Its evidence is self-tested; Astra's
-independent review is pending. The exact head is in the PR body.
+system across Board, Radar and Game Day. Astra reviewed that head (`4b63520`;
+Windows 766 passed / 5 skipped, log 20260924T153745Z; not release approval)
+and a third pass ("Astra review of 4b63520" below) fixed player-map
+recovery, pickups that named a drop despite an open roster spot, and the
+first phone screen. Its evidence is self-tested; Astra's review of it is
+pending. The exact head is in the PR body.
 
 The desktop five-minute sync is **installed but its scheduled task is
 DISABLED**, by the owner, and must stay disabled. Refresh runs in the cloud:
@@ -532,7 +536,7 @@ its own synthetic cache from the committed fixtures.
 | injuries | `nflreadpy.load_injuries` | wk1–2 | designation + practice status |
 | id crosswalk | dynastyprocess `db_playerids.csv` | — | Sleeper's own `gsis_id` overlays gaps only |
 | league / rosters / matchups | Sleeper public read API | wk2 | no auth, no writes |
-| player dump (`sleeper_players`) | Sleeper public read API | live | ids, team, position, gsis overlay (identity, any age) and `injury_status` (designations: 24h, 6h on gameday/waiver/designation days); requested at most once per 24 h (Sleeper's ask), 10:00–13:00 ET |
+| player dump (`sleeper_players`) | Sleeper public read API | live | ids, team, position, gsis overlay (identity, any age) and `injury_status` (designations: 24h, 6h on gameday/waiver/designation days); requested at most once per 24 h (Sleeper's ask), by the first run after the 24 h mark; no trustworthy ledger = RECOVERY NEEDED + bootstrap |
 
 **Missing sources, named rather than worked around:** no DST scoring (nflverse
 weekly data is player-level; a DST row carries blank points and an explicit
@@ -665,6 +669,149 @@ the header trust the device clock. No FAAB, no rest-of-season value, no
 probabilities. Not covered here: no Windows run; no live deploy; no
 real-week grading.
 
+## Astra review of 4b63520 — budget recovery, open roster spots, first screen (2026-09-24)
+
+Starting head `4b63520`; production stays `b24d1f4`. Labels as below:
+SYNTHETIC = committed fixtures, CACHED = the real local cache at a frozen
+instant (outputs in scratch only). Self-tested; Astra's review pending.
+
+**P1 — player-map budget and recovery.** Reproduced on `4b63520` first:
+with the last success at 2026-09-23 16:52Z, `player_map_budget` said due at
+16:52Z the next day but NOT at 17:02Z or 20:00Z, only because they fell
+after 13:00 ET; and with no ledger it said due in the 10:00–10:20 ET slot on
+every day (a lost cache = a request a day, a manual cold start repeatable).
+Now (`gridiron.sleeper.player_map_budget`):
+
+- Once 24 h have passed since the last request on a TRUSTWORTHY ledger
+  (readable line by line, at least one request, none after this machine's
+  clock), the first run requests, at any hour. Request times are never
+  rewritten. The day's request drifts later by up to one run interval a
+  day; nothing re-anchors it (so "the Sunday 1 pm games are covered" is no
+  longer promised — designations age from wherever the request landed).
+- No trustworthy ledger never requests, at any hour, with or without
+  `--force`: the pull log and the board say **RECOVERY NEEDED** ("Player map
+  requests are PAUSED …", DEGRADED) until a person bootstraps. The cold slot
+  and the automatic cold start are gone. The last good map is kept, and the
+  designation gates are unchanged, so moves resting on designations become
+  CHECK IN SLEEPER items as the map ages.
+- In the cloud (`--carried-history`, set by the workflow) a request also
+  needs the carried ledger to have been saved by the immediately previous
+  workflow run (`checked_run == GITHUB_RUN_NUMBER - 1`; every run stamps
+  it). A carry that stops saving therefore stops requests; a run whose save
+  was lost delays the request by one run. **Not claimed:** a strict 24 h
+  guarantee. The ledger rides a disposable Actions cache; a save lost right
+  after a request, followed by one that works, costs one extra request.
+  The local cache and the cloud each keep their own ledger, so running
+  `pull_week.py` on a PC as well as in the cloud is two requests a day.
+
+### Player-map bootstrap
+
+When: the board says "Player map requests are PAUSED … RECOVERY NEEDED", and
+once after merging this work (main's carried cache has no request ledger).
+
+1. Look at the board's Designations date (the map's last pull). The script
+   refuses the bootstrap anyway while the cached map shows a pull or a failed
+   attempt under 24 h old, and says when to retry.
+2. Cloud: Actions → "Weekly dashboard artifact" → Run workflow → tick
+   `player_map_bootstrap` → Run. Local: `PYTHONPATH=src python
+   scripts/ingest/pull_week.py --player-map-bootstrap`.
+3. The run log shows exactly one `sleeper_players: N players` line. The next
+   scheduled run shows `not requested — last request …`; the one after that
+   continues normally.
+4. Do not repeat it: with a sound ledger the flag is ignored and the 24 h
+   rule governs. If the cache is lost again, the page says so again.
+
+**P2 — a pickup never gives up a player it does not have to.** Reproduced
+on `4b63520`: with 6 of 7 active spots used, the board proposed dropping
+the cheapest bench player for an 8-point add. Now
+(`gridiron.waivers.roster_capacity`, `build_board(capacity=)`): open
+active spots = `roster_positions` minus any IR/taxi entries, against the
+roster's players minus its `reserve` and `taxi` lists — never a raw count,
+and IR/taxi spots are never free active spots. With a verified open spot a
+pickup is an add with NO drop, judged by the same gain > 0 rule with the
+same lineup and lock evaluation; two adds competing for the LAST open spot
+are one either/or. Unknown capacity (no `roster_positions`, no `reserve` or
+`taxi` field, inconsistent counts) keeps the drop and puts the capacity
+check on the card ("— or none, if Sleeper shows an open spot"). Records
+carry `drop: null` / `drop_id: null` for an add-only move and a
+`capacity_check` per radar row; Game Day reads a null drop as "no drop" and
+an older record (which always named one) as before. `drop_rule` now says to
+open the player in Sleeper and see whether it offers a drop, without
+submitting anything — never to "try the drop". The real league carries
+`taxi: null` on every roster and all 12 rosters are full, so the real board
+is unchanged (CACHED, below). The synthetic fixture lacked `taxi`; the
+scenarios now add it and size the bench so the owner's roster is full,
+plus a new `open_spot` scenario.
+
+**Visual — the first phone screen.** Astra read the committed
+`board-after-375-first.png` (the first card's benefit and cost below the
+fold under conditional prose, why-now and metadata) and
+`gameday-after-375-first.png` (a paragraph about refresh under the score).
+Changed, without hiding a warning:
+
+- Board card face: rank, label, a short exact move ("Pick one: A or B",
+  "Add A if available", "Start B over S"; a check or withheld card names the
+  players without a verb), ONE condition line in plain view, then key facts
+  — Gain, Drop (or "none — open roster spot"), Check, Until — and the
+  compare control ("Compare A →" into the radar row, or start/sit). Why-now,
+  the six full answers and the full reasoning are under "Why & details".
+- Board header: the section title is visually hidden (the h1 is the
+  verdict), the status line is plain text on phones, and "Data & freshness"
+  moved below the desk. The DEGRADED banner names every non-current input
+  and its status in view ("… STALE (refresh FAILED)"); each input's reason
+  folds with the notes. The chip's count now matches the banner. With
+  checks pending, the duplicate "No action is endorsed" box is dropped (the
+  headline and the check cards say it).
+- Game Day: the as-of and Refresh sit inside the score card, the status is
+  one line ("Snapshot: the cloud build's scores. Tap Refresh for live scores
+  (read-only)."), and how refresh works is under "About refresh". Refresh
+  failures (429, timeout, malformed, older) still read in the status line,
+  and the mode pill still says STALE. "What you can still do" is on the
+  first 375 × 812 screen.
+- iPhone inset restored: `env(safe-area-inset-bottom)` on the tab bar and
+  the body, with `viewport-fit=cover`. The wording guard now reads page copy
+  (`theme.page_copy`: stylesheets and style attributes removed, script
+  strings kept) and still fails on "safe" in body text, bold text, a title
+  attribute or a script-written string.
+
+**Verification (self-tested).**
+
+| Check | Result | Label |
+|---|---|---|
+| Reproductions on `4b63520` | budget: due False at 17:02Z and 20:00Z after a 16:52Z success; lost cache due in the cold slot three days running. Open spot: drop proposed with 6 of 7 spots used | synthetic |
+| New / changed tests | `test_player_map_budget.py` 41 (rewritten to the new contract), `test_open_roster_spot.py` 26 (new), guard test in `test_gameday.py`; smoke list includes the new file | synthetic |
+| Full suite `run_summary.py -- python -m pytest` | 815 passed, 0 skipped, 0 failed | synthetic |
+| `smoke.py` (after the suite) | PASS | synthetic |
+| Board `--screenshot --browser` | 36/36 fit (12 scenarios incl. `open_spot` × 375/768/1440); drive PASS, 14 hits for 14 expected | synthetic, headless Chromium |
+| Game Day `--screenshot --browser` | 10/10 fit at 375; drives executed (initial, correction, 429, recovery, older, malformed, state/feed failures, timeout, partial, duplicate, rollover, keyboard to Refresh) | synthetic |
+| Cloud-shaped budget proof | 3 map requests in total: the bootstrap, Astra's delayed 13:02 ET run, and the one run whose save was lost; 0 when the carry stops saving (7 runs) or is evicted (2 runs, one with `--force`); 0 league fetches (`docs/review/action-desk/budget-recovery-proof.txt`) | synthetic |
+| Real before/after, `4b63520` vs this head at 2026-09-23 09:00 UTC | actions and upgrades identical; radar counts and all 218 verdicts, gains and drops identical; the only record difference is the new empty `capacity_check` key (capacity known: 0 open) | cached |
+| Two builds 09:00 / 09:15 → guard → `check` | guard PASS both; `check` PASS at 375, 768 and 1440 | cached |
+
+Screenshots (`docs/review/action-desk/`, synthetic, clock pinned to each
+page's build instant; the `*-after-*` files are `4b63520`, the "before" for
+this pass): `board-v2-{375,768,1440}-first`, `board-v2-{375,1440}-full`,
+`gameday-v2-{375,768,1440}-first`, `gameday-v2-{375,1440}-full`,
+`state-v2-{designations,open_spot,stale,hold}-375-first`.
+
+**Remaining (known, not fixed).** The request drifts later each day (above);
+a lost save after a request can cost one extra request; local and cloud
+ledgers are separate; designations stay stale for most of each game day by
+design; nflverse injuries are aged by fetch time; `bench_lock`,
+`disable_adds` and `daily_waivers` are still unread; an IR-slot player who
+is no longer IR-eligible (which Sleeper may treat as blocking moves) is not
+checked; validity trusts the device clock.
+
+**Deployment and rollback (supersedes step 3 of the checklist below).**
+After merging, the first scheduled run says RECOVERY NEEDED (no carried
+ledger) — expected. Run the bootstrap once (above). From then on each run
+logs `not requested — last request …`, a request once 24 h have passed, or
+`… not shown to come from the previous run …` for one run after a gap.
+Never two requests within 24 h unless a save was lost right after one.
+Rollback is unchanged: revert the merge; the ledger's new `checked` and
+`checked_run` fields and a null `drop` are ignored or read as before by the
+old code (`_player(None)` was already handled).
+
 ## Release blockers and the Action Desk (2026-09-24)
 
 Starting head `7509af6`; production stays `b24d1f4`. Labels: SYNTHETIC =
@@ -682,10 +829,10 @@ half-limit refresh (3 h on game days) broke that. Now
   `player_map_requests.json` *before* the GET (a crash still counts), and
   the log travels with the carried inputs (`gridiron.carryover`: validated,
   never over a local one, a future-dated line refused).
-- Requests only inside 10:00–13:00 ET; with no history at all only inside
-  10:00–10:20 ET, or on an explicit `--player-map-cold-start` (manual first
-  run). Worst cases: an unsaved carry costs the runs in one window a day
-  (≤ 12); a lost cache ≤ 2 a day. Not every 15 minutes.
+- *(Superseded by the Astra-review pass above: no window, no cold slot;
+  RECOVERY NEEDED + bootstrap; run-number carry check.)* Requests only
+  inside 10:00–13:00 ET; with no history at all only inside 10:00–10:20 ET,
+  or on an explicit `--player-map-cold-start` (manual first run).
 - One attempt per request (the client's 3× retry no longer applies to this
   call); an empty or 404 map is a FAILURE that keeps the last good map.
   `--force` re-pulls everything else, never the map.
@@ -762,8 +909,8 @@ Changed:
   bounds game-day moves.
 - `bench_lock`, `disable_adds` and `daily_waivers` are read by nobody; if
   Sleeper documents them, a truthy `disable_adds` should withhold pickups.
-- An add with an open roster spot still names a drop (overstates the cost,
-  never unsafe).
+- *(Fixed in the Astra-review pass above.)* An add with an open roster
+  spot still named a drop — which does cost the owner a player for nothing.
 - Validity and ages trust the device clock; the board is 344 KB on the real
   cache (+15 KB).
 
@@ -792,7 +939,7 @@ draft,after}-*-first`, and `state-{designations,stale,hold,slate_end}-375-first`
 2. Merge PR #7. Cron becomes `7,22,37,52 * * * *` (best effort). No
    variable changes.
 3. First scheduled run: the pull log shows `sleeper_league: reused` and
-   either one `sleeper_players` request (inside 10:00–13:00 ET, or 10:00–10:20
+   *(superseded: see the Astra-review deployment note above)* either one `sleeper_players` request (inside 10:00–13:00 ET, or 10:00–10:20
    ET on a runner with no carried history) or `not requested — last request
    …`; never two map requests within 24 h across runs.
 4. The page header dates the designations; outside ~6 h after the day's

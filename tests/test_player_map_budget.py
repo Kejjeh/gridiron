@@ -9,9 +9,13 @@ designation clock. These tests pin:
 
   1. the budget: >= 24 h between REQUESTS (success or failure), counted from
      a ledger that is written before the GET, carried between cloud runs and
-     not bypassed by `--force`; requests only inside a fixed daily window, and
-     a narrower slot when no history exists at all, so a lost or unsaved
-     cache cannot turn into a request every 15 minutes;
+     not bypassed by `--force`. Once a day has passed the first run may
+     request at ANY hour (a delayed run does not skip the day). History that
+     is missing, unreadable, malformed, empty or future-dated never
+     authorises a request: RECOVERY NEEDED, shown on the page, until a
+     person's one-time bootstrap. In the cloud a request also needs proof the
+     carried ledger is being saved (a recent `checked` stamp), so a cache
+     that stops saving stops requests instead of making one every run;
   2. one attempt per request (no 3x retry of a 5-16 MB body), and an empty
      or 404 map is a failure that never overwrites the last good map;
   3. no fake freshness: designation limits are unchanged, a skipped request
@@ -38,11 +42,28 @@ from gridiron.ingest import Manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 UTC = timezone.utc
-#: Sunday 2026-09-27. ET is UTC-4, so the 10:00-13:00 ET window is 14-17 UTC.
+#: Sunday 2026-09-27. ET is UTC-4.
 IN_WINDOW = datetime(2026, 9, 27, 14, 7, tzinfo=UTC)
-COLD_SLOT = datetime(2026, 9, 27, 14, 7, tzinfo=UTC)
 LATE_WINDOW = datetime(2026, 9, 27, 16, 22, tzinfo=UTC)
 EVENING = datetime(2026, 9, 27, 23, 0, tzinfo=UTC)
+
+
+def _hist(*lines, checked=None, run=None, problem=""):
+    return sleeper.PlayerMapHistory(tuple({"at": t.isoformat(), "outcome": o, "note": ""}
+                                          for t, o in lines), checked, run, problem)
+
+
+def _seed(cache: Path, at: datetime, outcome: str = "ok") -> None:
+    """A trustworthy ledger with one request on it (the steady state)."""
+    sleeper.note_player_map_request(cache, at, outcome=outcome)
+
+
+def _load_script(name: str, rel: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _pull_week():
@@ -94,61 +115,138 @@ def _run(pw, manifest, now, client, **kw):
 
 # ------------------------------------------------------------ 1. the budget
 
-def test_the_budget_is_a_day_between_requests_inside_the_window():
+def test_the_budget_is_a_day_between_requests():
     last = IN_WINDOW - timedelta(hours=23, minutes=50)
-    assert not sleeper.player_map_budget([{"at": last.isoformat(), "outcome": "ok"}],
-                                         IN_WINDOW).due
+    assert not sleeper.player_map_budget(_hist((last, "ok")), IN_WINDOW).due
     last = IN_WINDOW - timedelta(hours=24)
-    b = sleeper.player_map_budget([{"at": last.isoformat(), "outcome": "ok"}], IN_WINDOW)
-    assert b.due
-    # Past 24 h but outside the window: waits for the window, never fetches at 7 pm.
-    b = sleeper.player_map_budget([{"at": last.isoformat(), "outcome": "ok"}], EVENING)
-    assert not b.due and "window" in b.reason
+    b = sleeper.player_map_budget(_hist((last, "ok")), IN_WINDOW)
+    assert b.due and b.state == "due"
+
+
+def test_a_delayed_run_catches_up_after_24h_at_any_hour():
+    """Astra's reproduction: last success 2026-09-23 16:52Z (12:52 ET). The
+    run at 16:52Z the next day was due; runs at 17:02Z and 20:00Z were not,
+    only because they fell after 13:00 ET. A day has passed either way."""
+    last = datetime(2026, 9, 23, 16, 52, tzinfo=UTC)
+    for now in (datetime(2026, 9, 24, 16, 52, tzinfo=UTC),
+                datetime(2026, 9, 24, 17, 2, tzinfo=UTC),
+                datetime(2026, 9, 24, 20, 0, tzinfo=UTC),
+                datetime(2026, 9, 25, 3, 30, tzinfo=UTC)):
+        b = sleeper.player_map_budget(_hist((last, "ok")), now)
+        assert b.due, now
+        # the original timestamp is what the decision cites
+        assert b.last_request == last and "2026-09-23 16:52Z" in b.reason
+    # ...and still never inside the 24 h
+    assert not sleeper.player_map_budget(
+        _hist((last, "ok")), datetime(2026, 9, 24, 16, 51, tzinfo=UTC)).due
 
 
 def test_a_failed_request_counts_against_the_budget():
     last = IN_WINDOW - timedelta(minutes=15)
-    b = sleeper.player_map_budget([{"at": last.isoformat(), "outcome": "failed"}], IN_WINDOW)
+    b = sleeper.player_map_budget(_hist((last, "failed")), IN_WINDOW)
     assert not b.due and b.last_ok is False
     assert b.next_allowed == last + timedelta(hours=24)
 
 
-def test_no_history_at_all_is_bounded_to_a_narrow_daily_slot():
-    assert sleeper.player_map_budget([], COLD_SLOT).due
-    assert not sleeper.player_map_budget([], LATE_WINDOW).due
-    assert not sleeper.player_map_budget([], EVENING).due
-    # An explicit manual cold start is allowed once; the ledger then governs.
-    assert sleeper.player_map_budget([], EVENING, cold_start=True).due
+@pytest.mark.parametrize("history", [
+    sleeper.PlayerMapHistory(problem="no request ledger"),
+    sleeper.PlayerMapHistory(problem="the request ledger is unreadable (JSONDecodeError)"),
+    sleeper.PlayerMapHistory(problem="the request ledger is a ledger line has no readable "
+                                     "time or outcome"),
+    sleeper.PlayerMapHistory(),                                       # readable, empty
+], ids=["lost", "unreadable", "malformed", "empty"])
+def test_no_trustworthy_history_never_requests_at_any_hour(history):
+    """The old cold slot (10:00-10:20 ET) let a lost cache request once a
+    day, every day, and a manual cold start could repeat. Now nothing
+    automatic requests: RECOVERY NEEDED until a person bootstraps."""
+    for now in (IN_WINDOW, LATE_WINDOW, EVENING):
+        for carried in (False, True):
+            b = sleeper.player_map_budget(history, now, carried=carried)
+            assert not b.due and b.state == "recovery" and b.needs_person
+            assert "RECOVERY NEEDED" in b.reason and "bootstrap" in b.reason
 
 
-def test_manifest_evidence_governs_when_there_is_no_ledger_yet():
-    """A cache written before the ledger existed still has a budget: the
-    map's own pull time (and a later failed attempt) counts as a request."""
-    pulled = IN_WINDOW - timedelta(hours=5)
-    assert not sleeper.player_map_budget([], IN_WINDOW, fallback_last=pulled).due
-    assert sleeper.player_map_budget([], IN_WINDOW,
-                                     fallback_last=IN_WINDOW - timedelta(hours=25)).due
+def test_a_future_dated_ledger_is_recovery_not_a_block_forever():
+    b = sleeper.player_map_budget(_hist((IN_WINDOW + timedelta(days=3), "ok")), IN_WINDOW)
+    assert not b.due and b.state == "recovery" and "after this machine's clock" in b.reason
+
+
+def test_the_bootstrap_is_one_request_and_refused_inside_the_maps_own_day():
+    lost = sleeper.PlayerMapHistory(problem="no request ledger")
+    b = sleeper.player_map_budget(lost, EVENING, bootstrap=True)
+    assert b.due and "bootstrap" in b.reason
+    # The cached map (or a failed attempt) shows a request 5 h ago: refused.
+    b = sleeper.player_map_budget(lost, EVENING, bootstrap=True,
+                                  fallback_last=EVENING - timedelta(hours=5))
+    assert not b.due and b.state == "bootstrap-refused" and b.needs_person
+    assert b.next_allowed == EVENING + timedelta(hours=19)
+    # A cached map pulled 25 h ago does not block it.
+    assert sleeper.player_map_budget(lost, EVENING, bootstrap=True,
+                                     fallback_last=EVENING - timedelta(hours=25)).due
+    # With a sound ledger the bootstrap is ignored and the 24 h governs.
+    b = sleeper.player_map_budget(_hist((EVENING - timedelta(hours=2), "ok")), EVENING,
+                                  bootstrap=True)
+    assert not b.due and b.state == "wait"
+
+
+def test_map_evidence_alone_never_authorises_a_request():
+    """A cache written before the ledger existed: the map's pull time is a
+    lower bound on the last request, not a count. It can block a bootstrap;
+    it cannot open the budget."""
+    lost = sleeper.PlayerMapHistory(problem="no request ledger")
+    assert not sleeper.player_map_budget(
+        lost, IN_WINDOW, fallback_last=IN_WINDOW - timedelta(hours=40)).due
+
+
+def test_in_the_cloud_a_request_needs_the_ledger_saved_by_the_previous_run():
+    last = IN_WINDOW - timedelta(hours=30)
+    ok = _hist((last, "ok"), run=41)
+    assert sleeper.player_map_budget(ok, IN_WINDOW, carried=True, run=42).due
+    # run 42 did not save its ledger: run 43 cannot tell whether it requested
+    b = sleeper.player_map_budget(ok, IN_WINDOW, carried=True, run=43)
+    assert not b.due and b.state == "unconfirmed" and not b.needs_person
+    # a ledger never stamped by a run, a run number unknown, or a stamp from
+    # a LATER run (a rolled-back cache) all wait
+    for hist, run in ((_hist((last, "ok")), 42), (ok, None), (_hist((last, "ok"), run=50), 42)):
+        assert sleeper.player_map_budget(hist, IN_WINDOW, carried=True, run=run).state \
+            == "unconfirmed"
+    # locally the disk is the ledger's home; no run number needed
+    assert sleeper.player_map_budget(_hist((last, "ok")), IN_WINDOW).due
+
+
+def test_a_malformed_run_stamp_rejects_the_ledger():
+    for bad in ("41", True, 0, -3, 4.5):
+        lines, why = sleeper.valid_player_map_ledger(
+            {"requests": [{"at": IN_WINDOW.isoformat(), "outcome": "ok"}], "checked_run": bad})
+        assert lines == [] and why, bad
 
 
 def test_force_does_not_bypass_the_budget(tmp_path):
     pw = _pull_week()
     cache, m = _cache(tmp_path)
-    sleeper.note_player_map_request(cache, IN_WINDOW - timedelta(hours=2), outcome="ok")
+    _seed(cache, IN_WINDOW - timedelta(hours=2))
     client = _run(pw, m, IN_WINDOW, FakeClient(), force=True)
     assert client.player_calls == 0
+    # ...nor with no ledger at all: --force is not a bootstrap
+    cache2, m2 = _cache(tmp_path / "lost")
+    assert _run(pw, m2, IN_WINDOW, FakeClient(), force=True).player_calls == 0
+    assert json.loads((cache2 / sleeper.PLAYER_MAP_STATUS).read_text())["state"] == "recovery"
+    assert not (cache2 / sleeper.PLAYER_MAP_LEDGER).exists()     # nothing invented
 
 
 def test_the_request_is_ledgered_before_the_get_and_a_failure_does_not_loop(tmp_path):
     pw = _pull_week()
     cache, m = _cache(tmp_path)
+    _seed(cache, IN_WINDOW - timedelta(hours=25))
     client = FakeClient(fail=True)
     now = IN_WINDOW
-    for _ in range(8):                         # two hours of 15-minute runs
+    for _ in range(40):                        # ten hours of 15-minute runs
         _run(pw, Manifest.load(cache, 2026), now, client)
         now += timedelta(minutes=15)
     assert client.player_calls == 1
     ledger = sleeper.read_player_map_ledger(cache)
     assert ledger[-1]["outcome"] == "failed"
+    assert ledger[-1]["at"] == IN_WINDOW.isoformat(timespec="seconds")   # not restamped
     # And it retries the next day, not before.
     _run(pw, Manifest.load(cache, 2026), IN_WINDOW + timedelta(hours=24), client)
     assert client.player_calls == 2
@@ -157,6 +255,7 @@ def test_the_request_is_ledgered_before_the_get_and_a_failure_does_not_loop(tmp_
 def test_a_crash_mid_request_still_counts(tmp_path, monkeypatch):
     pw = _pull_week()
     cache, m = _cache(tmp_path)
+    _seed(cache, IN_WINDOW - timedelta(hours=25))
 
     class Boom(FakeClient):
         def players(self):
@@ -166,21 +265,57 @@ def test_a_crash_mid_request_still_counts(tmp_path, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         _run(pw, m, IN_WINDOW, Boom())
     assert sleeper.read_player_map_ledger(cache)[-1]["outcome"] == "requested"
-    assert not sleeper.player_map_budget(sleeper.read_player_map_ledger(cache),
-                                         IN_WINDOW + timedelta(minutes=15)).due
+    for later in (timedelta(minutes=15), timedelta(hours=9)):
+        assert not sleeper.player_map_budget(sleeper.read_player_map_history(cache),
+                                             IN_WINDOW + later).due
+
+
+def test_a_bootstrap_run_makes_one_request_and_a_repeat_makes_none(tmp_path):
+    pw = _pull_week()
+    cache, _ = _cache(tmp_path)
+    client = FakeClient()
+    _run(pw, Manifest.load(cache, 2026), EVENING, client, bootstrap=True)
+    _run(pw, Manifest.load(cache, 2026), EVENING + timedelta(minutes=15), client,
+         bootstrap=True, force=True)
+    assert client.player_calls == 1
+    # the bootstrap left a trustworthy ledger; the budget governs from here
+    assert sleeper.read_player_map_history(cache).problem == ""
+
+
+def test_a_lost_ledger_with_a_fresh_map_refuses_the_bootstrap(tmp_path):
+    pw = _pull_week()
+    cache, m = _cache(tmp_path)
+    good = cache / "sleeper_players.json"
+    good.write_text(json.dumps({"1": {}}), encoding="utf-8")
+    m.record("sleeper_players", path=good, rows=1, source="t",
+             as_of=EVENING - timedelta(hours=3))
+    m.save()
+    client = _run(pw, Manifest.load(cache, 2026), EVENING, FakeClient(), bootstrap=True)
+    assert client.player_calls == 0
+    st = json.loads((cache / sleeper.PLAYER_MAP_STATUS).read_text())
+    assert st["state"] == "bootstrap-refused"
 
 
 def test_two_scheduled_runs_and_a_manual_force_make_one_request(tmp_path):
     pw = _pull_week()
     cache, _ = _cache(tmp_path)
+    _seed(cache, IN_WINDOW - timedelta(hours=26))
     client = FakeClient()
     _run(pw, Manifest.load(cache, 2026), IN_WINDOW, client)
-    m = Manifest.load(cache, 2026)
-    m.save()
     _run(pw, Manifest.load(cache, 2026), IN_WINDOW + timedelta(minutes=15), client)
     _run(pw, Manifest.load(cache, 2026), IN_WINDOW + timedelta(minutes=40), client,
          force=True)
     assert client.player_calls == 1
+
+
+def test_every_run_stamps_the_ledger_checked_without_touching_request_times(tmp_path):
+    pw = _pull_week()
+    cache, _ = _cache(tmp_path)
+    _seed(cache, IN_WINDOW - timedelta(hours=3))
+    before = sleeper.read_player_map_ledger(cache)
+    _run(pw, Manifest.load(cache, 2026), IN_WINDOW, FakeClient())
+    h = sleeper.read_player_map_history(cache)
+    assert list(h.lines) == before and h.checked == IN_WINDOW
 
 
 # ------------------------------------------- 2. one attempt, empty = failure
@@ -207,6 +342,7 @@ def test_an_empty_map_is_a_failure_and_keeps_the_last_good_one(tmp_path, body):
     pulled = IN_WINDOW - timedelta(hours=30)
     m.record("sleeper_players", path=good, rows=1, source="t", as_of=pulled)
     m.save()
+    _seed(cache, pulled)
     m = Manifest.load(cache, 2026)
     _run(pw, m, IN_WINDOW, FakeClient(players=body))
     e = m.get("sleeper_players")
@@ -290,12 +426,51 @@ def test_the_ledger_travels_with_the_carried_inputs_and_is_validated(tmp_path):
 
 
 def test_an_unreadable_ledger_never_opens_the_budget(tmp_path):
+    pw = _pull_week()
     cache, _ = _cache(tmp_path)
     (cache / sleeper.PLAYER_MAP_LEDGER).write_text("{not json", encoding="utf-8")
-    assert sleeper.read_player_map_ledger(cache) == []
-    # With no readable history the narrow slot applies, not "fetch now".
-    assert not sleeper.player_map_budget(sleeper.read_player_map_ledger(cache),
-                                         LATE_WINDOW).due
+    h = sleeper.read_player_map_history(cache)
+    assert h.lines == () and "unreadable" in h.problem
+    client = FakeClient()
+    for now in (IN_WINDOW, LATE_WINDOW, EVENING):
+        _run(pw, Manifest.load(cache, 2026), now, client)
+    assert client.player_calls == 0
+    # the unreadable file is left for a person to look at, not overwritten
+    assert (cache / sleeper.PLAYER_MAP_LEDGER).read_text(encoding="utf-8") == "{not json"
+
+
+def test_recovery_needed_is_said_on_the_page(tmp_path):
+    cache, _ = _cache(tmp_path)
+    b = sleeper.player_map_budget(sleeper.read_player_map_history(cache), EVENING)
+    sleeper.write_player_map_status(cache, EVENING, b)
+    note = sleeper.player_map_status_note(cache)
+    assert "PAUSED" in note and "RECOVERY NEEDED" in note and "bootstrap" in note
+    # a routine wait says nothing
+    ok = sleeper.player_map_budget(_hist((EVENING - timedelta(hours=2), "ok")), EVENING)
+    sleeper.write_player_map_status(cache, EVENING, ok)
+    assert sleeper.player_map_status_note(cache) == ""
+    # a carry that has not confirmed for 6 h past due is said too
+    stuck = sleeper.player_map_budget(_hist((EVENING - timedelta(hours=31), "ok")), EVENING,
+                                      carried=True, run=9)
+    sleeper.write_player_map_status(cache, EVENING, stuck)
+    assert "PAUSED" in sleeper.player_map_status_note(cache)
+
+
+def test_the_board_shows_the_recovery_note(tmp_path):
+    scn = _load_script("budget_scn", "scripts/weekly/dashboard_scenarios.py")
+    cli = _load_script("budget_cli", "scripts/weekly/dashboard.py")
+    root = tmp_path / "complete"
+    scn.build_scenario(root, "complete", now=scn.NOW)
+    directory = root / "season2026"
+    b = sleeper.player_map_budget(sleeper.PlayerMapHistory(problem="no request ledger"),
+                                  scn.NOW)
+    sleeper.write_player_map_status(directory, scn.NOW, b)
+    out = tmp_path / "out"
+    cli.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
+              "--out-dir", str(out), "--archive-root", str(tmp_path / "arch"),
+              "--now", scn.NOW.isoformat()])
+    html = (out / "dashboard_latest.html").read_text("utf-8")
+    assert "RECOVERY NEEDED" in html and "DEGRADED" in html
 
 
 # ----------------------------------------- 4. one league snapshot per run
@@ -342,24 +517,102 @@ def test_a_snapshot_that_is_not_this_runs_is_fetched(tmp_path, case):
     assert client.snapshot_calls == 1
 
 
+def _cloud_run(pw, tmp_path, store, i, now, client, *, run, save=True, bootstrap=False):
+    """One hosted run: empty runner, restore the carry, pull, publish (unless
+    this run's cache save is lost)."""
+    cache = tmp_path / f"runner{i}" / "season2026"
+    cache.mkdir(parents=True)
+    Manifest(cache, {}, 2026).save()
+    carryover.restore_inputs(store, cache, season=2026, now=now)
+    m = Manifest.load(cache, 2026)
+    pw.pull_sleeper(m, now, False, True, client=client, carried=True, run=run,
+                    bootstrap=bootstrap)
+    m.save()
+    if save:
+        carryover.publish_inputs(cache, store, season=2026, now=now)
+    return cache
+
+
 def test_two_fresh_cloud_runners_share_one_daily_request_through_the_carry(tmp_path):
     """The cloud shape: every run starts on an empty runner, restores the
-    carried inputs, pulls, publishes. Two consecutive runs 15 minutes apart
-    make ONE player-map request, and the second keeps the first's pull time."""
+    carried inputs, pulls, publishes. After the one-time bootstrap, runs 15
+    minutes apart make ONE request, and keep the first's pull time."""
     pw = _pull_week()
     store = tmp_path / "store"
     client = FakeClient()
     stamps = []
-    for i, now in enumerate((IN_WINDOW, IN_WINDOW + timedelta(minutes=15))):
-        cache = tmp_path / f"runner{i}" / "season2026"
-        cache.mkdir(parents=True)
-        Manifest(cache, {}, 2026).save()
-        carryover.restore_inputs(store, cache, season=2026, now=now)
-        m = Manifest.load(cache, 2026)
-        pw.pull_sleeper(m, now, False, True, client=client)
-        m.save()
+    for i, now in enumerate((IN_WINDOW, IN_WINDOW + timedelta(minutes=15),
+                             IN_WINDOW + timedelta(minutes=30))):
+        cache = _cloud_run(pw, tmp_path, store, i, now, client, run=100 + i,
+                           bootstrap=(i == 0))
         stamps.append(Manifest.load(cache, 2026).get("sleeper_players").as_of)
         assert Manifest.load(cache, 2026).get("sleeper_players").error == ""
-        carryover.publish_inputs(cache, store, season=2026, now=now)
     assert client.player_calls == 1
-    assert stamps[0] == stamps[1] == IN_WINDOW.isoformat(timespec="seconds")
+    assert stamps == [IN_WINDOW.isoformat(timespec="seconds")] * 3
+
+
+def test_a_fresh_cloud_deployment_without_a_bootstrap_requests_nothing(tmp_path):
+    pw = _pull_week()
+    store = tmp_path / "store"
+    client = FakeClient()
+    for i in range(6):
+        cache = _cloud_run(pw, tmp_path, store, i, IN_WINDOW + timedelta(minutes=15 * i),
+                           client, run=10 + i)
+    assert client.player_calls == 0
+    assert "RECOVERY NEEDED" in sleeper.player_map_status_note(cache)
+
+
+def test_a_day_of_cloud_runs_with_a_delay_makes_exactly_one_more_request(tmp_path):
+    """Bootstrap at 12:52 ET, then 15-minute runs, with the schedule stalling
+    from 12:40 to 16:00 ET the next day: the first run after the 24 h mark
+    requests, whatever the hour."""
+    pw = _pull_week()
+    store = tmp_path / "store"
+    client = FakeClient()
+    t0 = datetime(2026, 9, 23, 16, 52, tzinfo=UTC)
+    _cloud_run(pw, tmp_path, store, 0, t0, client, run=1, bootstrap=True)
+    now, run, i = t0, 1, 0
+    requested_at = []
+    while now < t0 + timedelta(hours=30):
+        now += timedelta(minutes=15)
+        if datetime(2026, 9, 24, 16, 40, tzinfo=UTC) <= now < datetime(2026, 9, 24, 20, 0,
+                                                                       tzinfo=UTC):
+            continue                                   # GitHub dropped these
+        run, i = run + 1, i + 1
+        before = client.player_calls
+        _cloud_run(pw, tmp_path, store, i, now, client, run=run)
+        if client.player_calls > before:
+            requested_at.append(now)
+    assert client.player_calls == 2
+    assert requested_at == [datetime(2026, 9, 24, 20, 7, tzinfo=UTC)]
+
+
+def test_a_cache_that_stops_saving_stops_requests(tmp_path):
+    """Every save after the first is lost: each runner restores the same old
+    ledger. The run numbers never line up again, so no run requests after
+    the one whose save was lost — not one per 15 minutes."""
+    pw = _pull_week()
+    store = tmp_path / "store"
+    client = FakeClient()
+    t0 = IN_WINDOW - timedelta(hours=24, minutes=5)    # run 2 inside the day, run 3 past it
+    _cloud_run(pw, tmp_path, store, 0, t0, client, run=1, bootstrap=True)
+    _cloud_run(pw, tmp_path, store, 1, IN_WINDOW - timedelta(minutes=15), client, run=2)
+    assert client.player_calls == 1
+    for i in range(3, 40):                           # ~9 hours of runs, none saved
+        _cloud_run(pw, tmp_path, store, i, IN_WINDOW + timedelta(minutes=15 * (i - 3)),
+                   client, run=i, save=False)
+    assert client.player_calls == 2                  # run 3 requested; nothing after
+
+
+def test_one_lost_save_after_a_request_costs_at_most_one_extra(tmp_path):
+    pw = _pull_week()
+    store = tmp_path / "store"
+    client = FakeClient()
+    t0 = IN_WINDOW - timedelta(hours=24, minutes=5)    # run 2 inside the day, run 3 past it
+    _cloud_run(pw, tmp_path, store, 0, t0, client, run=1, bootstrap=True)
+    _cloud_run(pw, tmp_path, store, 1, IN_WINDOW - timedelta(minutes=15), client, run=2)
+    _cloud_run(pw, tmp_path, store, 2, IN_WINDOW, client, run=3, save=False)   # requests; lost
+    for i in range(4, 20):
+        _cloud_run(pw, tmp_path, store, i, IN_WINDOW + timedelta(minutes=15 * (i - 3)),
+                   client, run=i)
+    assert client.player_calls == 3                  # bootstrap, run 3, and ONE extra

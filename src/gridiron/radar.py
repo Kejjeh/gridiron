@@ -102,6 +102,8 @@ def candidate_record(c: Candidate, designation: str = "") -> dict:
         "alternatives": [{"drop": _player(d), "lineup_gain": g} for d, g in c.alternatives],
         "versus": _player(c.versus), "gap": c.gap,
         "drop_check": c.drop_check,
+        # None/absent in older records: they predate the capacity rule.
+        "capacity_check": c.capacity_check,
     }
 
 

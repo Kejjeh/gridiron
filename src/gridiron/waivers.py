@@ -131,7 +131,9 @@ class Upgrade:
     """
 
     add: Player
-    drop: Player
+    #: Who leaves the roster, or None for an add with NO drop (a verified
+    #: open active roster spot, see `roster_capacity`).
+    drop: Player | None
     lineup_gain: float          # Δ best legal lineup points this week
     depth_gain: float           # add.value - drop.value; informational only
     slot: str                   # the slot the pickup would enter, or ""
@@ -144,6 +146,9 @@ class Upgrade:
     #: check the owner must make in Sleeper first (see `drop_rule`). A move
     #: whose drop carries a check is conditional on it, never executable.
     drop_check: str = ""
+    #: "" when the roster's open-spot count is known; otherwise the check
+    #: that decides whether this pickup needs its drop at all.
+    capacity_check: str = ""
 
     @property
     def kind(self) -> str:
@@ -151,11 +156,13 @@ class Upgrade:
 
     def describe(self) -> str:
         who = (f", displacing {self.displaces.name} ({self.displaces.position})"
-               if self.displaces is not None and self.displaces.sleeper_id != self.drop.sleeper_id
+               if self.displaces is not None and (self.drop is None or
+                                                  self.displaces.sleeper_id != self.drop.sleeper_id)
                else "")
+        cost = (f"drop {self.drop.name} ({self.drop.position}, {self.drop.value:.2f})"
+                if self.drop is not None else "no drop (open roster spot)")
         return (f"add {self.add.name} ({self.add.position}, {self.add.value:.2f}), "
-                f"drop {self.drop.name} ({self.drop.position}, {self.drop.value:.2f}): "
-                f"best lineup {self.lineup_gain:+.2f} pts via {self.slot}{who}")
+                f"{cost}: best lineup {self.lineup_gain:+.2f} pts via {self.slot}{who}")
 
 
 @dataclass(frozen=True)
@@ -207,6 +214,7 @@ class Candidate:
     versus: Player | None = None
     gap: float | None = None
     drop_check: str = ""
+    capacity_check: str = ""
 
     @property
     def is_move(self) -> bool:
@@ -302,6 +310,8 @@ class WaiverBoard:
     candidates: tuple[Candidate, ...] = field(default=())
     #: Pool coverage per position, so the page can say what was NOT looked at.
     positions: tuple[PositionCoverage, ...] = field(default=())
+    #: The open-active-spot count the board used (unknown = None).
+    capacity: "RosterCapacity | None" = None
 
 
 #: How many watchlist rows per position. Research, so short.
@@ -337,12 +347,14 @@ def drop_rule(p: Player) -> str:
         return STARTED_STARTER_RULE
     if p.locked:
         return (f"{p.name}'s game has started; Sleeper's documentation does not "
-                f"say whether a bench player can be dropped after kickoff — try "
-                f"the drop in Sleeper before relying on it")
+                f"say whether a bench player can be dropped after kickoff — open "
+                f"{p.name} in Sleeper and see whether it offers a drop for him, "
+                f"without submitting anything; never make a real drop to find out")
     if not p.lock_known:
         return (f"{p.name}'s kickoff could not be established, so whether his game "
                 f"has started (and whether Sleeper still lets you drop a bench "
-                f"player then) is unknown — check in Sleeper before relying on it")
+                f"player then) is unknown — open {p.name} in Sleeper and see "
+                f"whether it offers a drop, without submitting anything")
     return ""
 
 
@@ -404,6 +416,65 @@ def droppable_players(roster: Sequence[Player]) -> tuple[Player, ...]:
     return tuple(sorted(cands, key=lambda p: (p.value or 0.0)))
 
 
+#: Roster-position tags that are not ACTIVE roster spots. Sleeper keeps IR
+#: and taxi spots in league settings, not in `roster_positions`; they are
+#: excluded here too in case a league object lists them.
+_NON_ACTIVE_SLOTS = frozenset({"IR", "TAXI", "RESERVE"})
+
+
+@dataclass(frozen=True)
+class RosterCapacity:
+    """Open ACTIVE roster spots, or None when that cannot be established.
+
+    Active spots are the league's `roster_positions` (starters + BN) minus
+    any IR/taxi entries; active players are the roster's `players` minus its
+    `reserve` (IR) and `taxi` lists. A raw player count is never the answer:
+    an IR or taxi player does not use an active spot, and neither list is a
+    free active spot."""
+    open_spots: int | None
+    active_spots: int | None = None
+    active_players: int | None = None
+    reason: str = ""
+
+    @property
+    def known(self) -> bool:
+        return self.open_spots is not None
+
+    def check(self) -> str:
+        """The owner's check when the count is unknown ("" when known)."""
+        if self.known:
+            return ""
+        return (f"whether your roster has an open active spot could not be "
+                f"established ({self.reason}); open your roster in Sleeper — if it "
+                f"shows an empty bench spot, this pickup needs no drop at all")
+
+
+def roster_capacity(roster_positions: object, roster: object) -> RosterCapacity:
+    if not isinstance(roster_positions, (list, tuple)) or not roster_positions:
+        return RosterCapacity(None, reason="the league snapshot carries no roster_positions")
+    if not isinstance(roster, Mapping) or not isinstance(roster.get("players"), list):
+        return RosterCapacity(None, reason="the owner's roster lists no players")
+    held: set[str] = set()
+    for key in ("reserve", "taxi"):
+        if key not in roster:
+            return RosterCapacity(None, reason=f"the roster object has no `{key}` field, so "
+                                               f"who is off the active roster is unknown")
+        extra = roster.get(key)
+        if extra is None:            # Sleeper sends null for an empty list
+            continue
+        if not isinstance(extra, list):
+            return RosterCapacity(None, reason=f"the roster's `{key}` field is not a list")
+        held |= {normalize_id(x) for x in extra}
+    spots = sum(1 for s in roster_positions if str(s).upper() not in _NON_ACTIVE_SLOTS)
+    active = len({normalize_id(x) for x in roster["players"]} - held)
+    if active > spots:
+        return RosterCapacity(None, spots, active,
+                              f"{active} active players against {spots} active spots — "
+                              f"the snapshot is inconsistent")
+    return RosterCapacity(spots - active, spots, active,
+                          f"{active} of {spots} active spots used (IR and taxi excluded)")
+
+
 def _best_points(roster: Sequence[Player], starters: Sequence[str],
                  slots: Sequence[str]) -> tuple[float, tuple[Player | None, ...]]:
     plan = plan_lineup(roster, starters, slots, locks_known=True)
@@ -412,8 +483,18 @@ def _best_points(roster: Sequence[Player], starters: Sequence[str],
 
 def build_board(roster: Sequence[Player], pool: Sequence[Player],
                 starters: Sequence[str], slots: Sequence[str], *,
-                locks_known: bool) -> WaiverBoard:
-    """Evaluate add/drop pairs against this week's best legal lineup."""
+                locks_known: bool,
+                capacity: RosterCapacity = RosterCapacity(0)) -> WaiverBoard:
+    """Evaluate pickups against this week's best legal lineup.
+
+    With a VERIFIED open active roster spot a pickup is evaluated as an add
+    with no drop (same lineup, lock and gain > 0 rules); nobody is given up
+    who does not have to be. With a full roster every gain needs a drop. With
+    the count UNKNOWN the drop is still named — the cost can only be lower —
+    and every such move carries the capacity check. The default (0 open) is
+    the full-roster reading older callers relied on."""
+    open_add = capacity.known and (capacity.open_spots or 0) > 0
+    cap_check = capacity.check()
     pool_size = len(pool)
     # `movable`, not `not locked`: a free agent whose team's kickoff cannot be
     # established is not shown entering a lineup this week.
@@ -442,10 +523,11 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
                            protected=protected, candidates=cands,
                            positions=_position_coverage(pool, cands))
     drops = droppable_players(roster)
-    if not drops:
+    if not drops and not open_add:
         why = (f"no droppable player on the roster — all {len(protected)} candidate "
                f"drop(s) are protected (locked, unprojected, or projected 0 only "
-               f"because they are not playing this week)")
+               f"because they are not playing this week)"
+               + (f"; {cap_check}" if cap_check else ""))
         cands = tuple(Candidate(p, COVERAGE, why + "; nothing to compare him against")
                       for p in sorted(projected, key=lambda p: -(p.value or 0.0)))
         cands = _sort_candidates(cands + tuple(immovable))
@@ -481,6 +563,31 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
     for add in candidates:
         if add.sleeper_id in roster_ids:
             continue
+        if open_add:
+            trial = list(roster) + [Player(add.sleeper_id, add.name, add.position, add.team,
+                                           add.projection, "BENCH", add.locked, add.lock_note,
+                                           add.availability, add.flags, add.gsis_id)]
+            pts, best = _best_points(trial, starters, slots)
+            gain = round(pts - base_points, 3)
+            slot, displaced = "", None
+            trial_ids = {b.sleeper_id for b in best if b is not None}
+            for i, b in enumerate(best):
+                if b is not None and b.sleeper_id == add.sleeper_id:
+                    slot = slots[i]
+                    break
+            if slot:
+                gone = [sid for sid in base_ids if sid not in trial_ids]
+                displaced = next((p for p in roster if p.sleeper_id in gone), None)
+            if gain > 0:
+                u = Upgrade(add, None, gain, round(float(add.value or 0.0), 3), slot, displaced)
+                upgrades.append(u)
+                who = f", displacing {displaced.name}" if displaced is not None else ""
+                radar.append(Candidate(
+                    add, LINEUP, f"enters {slot}{who} for {gain:+.2f} to this week's best "
+                    f"legal lineup, with NO drop: the roster has an open active spot "
+                    f"({capacity.reason})", gain, None, slot, displaced, (),
+                    cheapest_at.get(add.position), None))
+                continue
         best_pair: Upgrade | None = None
         best_rank: tuple = ()
         feasible: list[tuple[Player, float]] = []
@@ -525,7 +632,7 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
             check = drop_rule(best_pair.drop)
             u = Upgrade(best_pair.add, best_pair.drop, best_pair.lineup_gain,
                         best_pair.depth_gain, best_pair.slot, best_pair.displaces, others,
-                        drop_check=check)
+                        drop_check=check, capacity_check=cap_check)
             upgrades.append(u)
             who = (f", displacing {u.displaces.name}" if u.displaces is not None
                    and u.displaces.sleeper_id != u.drop.sleeper_id else "")
@@ -534,7 +641,8 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
                 f"best legal lineup, at the cost of dropping {u.drop.name} "
                 f"({u.drop.position}, {u.drop.value or 0.0:.2f})",
                 u.lineup_gain, u.drop, u.slot, u.displaces, others,
-                cheapest_at.get(add.position), None, drop_check=check))
+                cheapest_at.get(add.position), None, drop_check=check,
+                capacity_check=cap_check))
             continue
         # Lineup unchanged. A like-for-like comparison only: the cheapest
         # droppable player at the SAME position, or nothing.
@@ -561,7 +669,9 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
                 f"{gap:+.2f} against your cheapest droppable {add.position}, "
                 f"{versus.name} ({versus.value or 0.0:.2f}); no reason to move",
                 versus=versus, gap=gap))
-    upgrades.sort(key=lambda u: (u.lineup_gain, -(u.drop.value or 0.0)), reverse=True)
+    upgrades.sort(key=lambda u: (u.lineup_gain,
+                                 -((u.drop.value or 0.0) if u.drop is not None else 0.0)),
+                  reverse=True)
     all_cands = _sort_candidates(tuple(radar) + tuple(unranked) + tuple(immovable))
     coverage: list[str] = []
     for pos in sorted({p.position for p in candidates}):
@@ -585,10 +695,16 @@ def build_board(roster: Sequence[Player], pool: Sequence[Player],
         f"and named with the reason; a player who scores 0 this week because "
         f"he is not playing is not a player worth 0",
     )
+    if open_add:
+        notes += (f"Roster capacity: {capacity.reason}, so a pickup that improves this "
+                  f"week's lineup is an add with NO drop",)
+    elif cap_check:
+        notes += ("Roster capacity UNKNOWN: " + cap_check,)
     return WaiverBoard(tuple(upgrades), pool_size, len(candidates), unprojected,
                        drops, notes=notes, protected=protected,
                        watchlist=tuple(watchlist), coverage=tuple(coverage),
-                       candidates=all_cands, positions=_position_coverage(pool, all_cands))
+                       candidates=all_cands, positions=_position_coverage(pool, all_cands),
+                       capacity=capacity)
 
 
 _VERDICT_RANK = {v: i for i, v in enumerate(VERDICTS)}

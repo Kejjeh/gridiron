@@ -69,7 +69,7 @@ from gridiron.scoring import ScoringCoverage
 from gridiron import theme
 from gridiron.waivers import (
     BELOW, COVERAGE, LINEUP, RESEARCH, Candidate, WaiverBoard, available_ids,
-    build_board, drop_rule, eligibility, pool_players,
+    build_board, drop_rule, eligibility, pool_players, roster_capacity,
 )
 from gridiron.weekly import (
     BYE, NO_SCHEDULE, availability, injury_index, schedule_index,
@@ -206,7 +206,8 @@ class Dashboard:
                 "opp_starters": [player(p) for p in m.opp_starters]},
             "matchup_reason": self.matchup_reason,
             "upgrades": [{
-                "add": player(u.add), "drop_id": u.drop.sleeper_id, "slot": u.slot,
+                "add": player(u.add), "drop_id": u.drop.sleeper_id if u.drop else None,
+                "slot": u.slot,
                 "lineup_gain": u.lineup_gain, "depth_gain": u.depth_gain,
                 "kind": u.kind,
                 "displaces_id": u.displaces.sleeper_id if u.displaces else None,
@@ -286,7 +287,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                     scoring: ScoringCoverage, owner_id: str, now: datetime,
                     rules: ScoringRules = DEFAULT_SCORING,
                     archive_root: Path | None = None,
-                    write_archive_file: bool = True) -> Dashboard:
+                    write_archive_file: bool = True,
+                    extra_notes: Sequence[str] = ()) -> Dashboard:
     week = context.report_week
     rosters = list(snapshot.get("rosters") or [])
     league = snapshot.get("league") or {}
@@ -426,13 +428,14 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
 
     pool = pool_players(ids, sleeper_players, crosswalk, projector,
                         lambda team: lock_state(nflverse_team(team), kickoffs, now))
-    board = build_board(roster, pool, starters, slots, locks_known=locks_usable)
+    board = build_board(roster, pool, starters, slots, locks_known=locks_usable,
+                        capacity=roster_capacity(league.get("roster_positions"), my))
 
     # ---- evaluation, chronological, capped at this report's boundary
     evaluation = chronological_evaluation(weeks, schedule, through_week=context.stats_through,
                                           rules=rules)
 
-    notes = list(degradations(sources, context))
+    notes = list(degradations(sources, context)) + [n for n in extra_notes if n]
     if not scoring.complete:
         notes.append(f"SCORING INPUTS INCOMPLETE — {scoring.reason()}; QB/K projections "
                      f"abstain for the affected group(s)")
@@ -654,6 +657,12 @@ class Action:
     #: A pickup's unverified-drop check (`gridiron.waivers.drop_rule`); "" when
     #: the drop is known to be allowed or the action drops nobody.
     drop_check: str = ""
+    #: A pickup's open-roster-spot check when the capacity is UNKNOWN.
+    capacity_check: str = ""
+    #: What an acquisition uses up that another may want too: the drop's id,
+    #: or "open-spot" for adds competing for the roster's LAST open spot. Two
+    #: supported pickups with the same key are one either/or card.
+    shares: str = ""
 
     @property
     def lapse(self) -> datetime | None:
@@ -800,10 +809,11 @@ def _coverage_after(roster: Sequence[Player], u) -> str:
     seen: dict[str, Player] = {}
     for p in roster:
         seen.setdefault(p.sleeper_id, p)
-    seen.pop(u.drop.sleeper_id, None)
+    if u.drop is not None:
+        seen.pop(u.drop.sleeper_id, None)
     seen[u.add.sleeper_id] = u.add
     bits = []
-    for pos in sorted({u.add.position, u.drop.position}):
+    for pos in sorted({u.add.position} | ({u.drop.position} if u.drop is not None else set())):
         held = [p for p in seen.values() if p.position == pos]
         names = ", ".join(sorted(p.name for p in held))
         bits.append(f"{pos} {len(held)} ({names or 'none'})")
@@ -954,6 +964,8 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
     if w_status == "ACTIONABLE":
         w_status = "CONDITIONAL"
     shown = list(board.upgrades[:2])
+    cap = board.capacity
+    last_spot = cap is not None and cap.open_spots == 1
     for i, u in enumerate(shown):
         elig = eligibility(snapshot_as_of=snapshot_as_of)
         kick, kick_note = _deadline_for([u.add, u.displaces], now)
@@ -962,49 +974,93 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                              f"{kick.astimezone(timezone.utc):%a %d %b %H:%M} UTC "
                              f"(first kickoff among the players involved)."
                              if kick is not None else f" {kick_note}."))
-        rivals = [o for o in shown if o is not u and o.drop.sleeper_id == u.drop.sleeper_id]
-        # Fallback drops are counted for THIS move on its own, verified ones
-        # first (`build_board` orders them so): a bench player whose game has
-        # started is named as unverified, never as "the next feasible drop".
-        legal = [(d, g) for d, g in u.alternatives if not drop_rule(d)]
-        unverified = [d for d, _ in u.alternatives if drop_rule(d)]
-        nxt = legal[0] if legal else None
-        count = (f"{len(legal)} verified fallback drop(s) for {u.add.name}"
-                 + (f"; {', '.join(d.name for d in unverified)} would also work but "
-                    f"{'has' if len(unverified) == 1 else 'have'} already played "
-                    f"(or kickoff unknown) — unverified whether Sleeper allows that drop"
-                    if unverified else ""))
-        if rivals:
-            either = (f"Either/or with {', '.join(r.add.name for r in rivals)}: both cost "
-                      f"the same drop, {u.drop.name}, so they are not both possible with "
-                      f"it. If that one is made first, "
-                      + (f"the next verified drop for {u.add.name} is {nxt[0].name} "
-                         f"({nxt[0].position}, {_num(nxt[0].value, 2)} pts), and the "
-                         f"lineup gain with that drop is {_num(nxt[1], 2, True)}"
-                         if nxt else
-                         f"there is no other verified drop for {u.add.name}: the move "
-                         f"is off") + f". {count}.")
-        else:
-            either = (f"if {u.drop.name} cannot be dropped, the next verified drop is "
-                      f"{nxt[0].name} ({nxt[0].position}, {_num(nxt[0].value, 2)} pts) "
-                      f"with a lineup gain of {_num(nxt[1], 2, True)}. {count}"
-                      if nxt else
-                      f"{u.drop.name} is the only verified drop; without it the move is off"
-                      + (f". {count}" if unverified else ""))
-        drop_note = (f" Drop legality UNVERIFIED: {u.drop_check}." if u.drop_check else "")
+        displ = (f"{u.displaces.name} leaves the lineup"
+                 if u.displaces is not None and (u.drop is None or
+                                                 u.displaces.sleeper_id != u.drop.sleeper_id)
+                 else f"{u.drop.name} leaves the roster" if u.drop is not None
+                 else "nobody leaves the lineup")
         after = _coverage_after(roster or [p for p in plan.current if p is not None]
                                 + list(plan.bench_pool), u)
-        displ = (f"{u.displaces.name} leaves the lineup"
-                 if u.displaces is not None and u.displaces.sleeper_id != u.drop.sleeper_id
-                 else f"{u.drop.name} leaves the roster")
+        benefit = (f"{_num(u.lineup_gain, 2, True)} to this week's best legal lineup: "
+                   f"{u.add.name} ({u.add.position}, {_num(u.add.value, 2)}) enters {u.slot}"
+                   + (f", {u.displaces.name} leaves the lineup"
+                      if u.displaces is not None and (u.drop is None or
+                                                      u.displaces.sleeper_id != u.drop.sleeper_id)
+                      else ""))
+        if u.drop is None:
+            # A verified open active spot: nobody is given up.
+            rivals = [o for o in shown if o is not u and o.drop is None] if last_spot else []
+            either = (f"No drop needed — {cap.reason if cap else 'open roster spot'}. "
+                      + (f"Either/or with {', '.join(r.add.name for r in rivals)}: the roster "
+                         f"has ONE open spot, so adding both would need a drop, which is "
+                         f"not proposed here. " if rivals else "")
+                      + "If he is not available the move is off; nobody leaves the roster "
+                        "either way.")
+            cost = f"no drop — the roster has an open active spot ({cap.reason if cap else ''})"
+            costs = f"Cost: no drop — the roster has an open active spot ({cap.reason if cap else ''})."
+            neutral_cost = "with no drop (the roster had an open active spot)"
+            verify_drop = (f"confirm your roster in Sleeper shows the open bench spot "
+                           f"({cap.reason if cap else 'open spot'}) before claiming",)
+            ids, names = (u.add.sleeper_id,), (u.add.name,)
+            shares = "open-spot" if rivals else ""
+        else:
+            rivals = [o for o in shown if o is not u and o.drop is not None
+                      and o.drop.sleeper_id == u.drop.sleeper_id]
+            # Fallback drops are counted for THIS move on its own, verified ones
+            # first (`build_board` orders them so): a bench player whose game has
+            # started is named as unverified, never as "the next feasible drop".
+            legal = [(d, g) for d, g in u.alternatives if not drop_rule(d)]
+            unverified = [d for d, _ in u.alternatives if drop_rule(d)]
+            nxt = legal[0] if legal else None
+            count = (f"{len(legal)} verified fallback drop(s) for {u.add.name}"
+                     + (f"; {', '.join(d.name for d in unverified)} would also work but "
+                        f"{'has' if len(unverified) == 1 else 'have'} already played "
+                        f"(or kickoff unknown) — unverified whether Sleeper allows that drop"
+                        if unverified else ""))
+            if rivals:
+                either = (f"Either/or with {', '.join(r.add.name for r in rivals)}: both cost "
+                          f"the same drop, {u.drop.name}, so they are not both possible with "
+                          f"it. If that one is made first, "
+                          + (f"the next verified drop for {u.add.name} is {nxt[0].name} "
+                             f"({nxt[0].position}, {_num(nxt[0].value, 2)} pts), and the "
+                             f"lineup gain with that drop is {_num(nxt[1], 2, True)}"
+                             if nxt else
+                             f"there is no other verified drop for {u.add.name}: the move "
+                             f"is off") + f". {count}.")
+            else:
+                either = (f"if {u.drop.name} cannot be dropped, the next verified drop is "
+                          f"{nxt[0].name} ({nxt[0].position}, {_num(nxt[0].value, 2)} pts) "
+                          f"with a lineup gain of {_num(nxt[1], 2, True)}. {count}"
+                          if nxt else
+                          f"{u.drop.name} is the only verified drop; without it the move is off"
+                          + (f". {count}" if unverified else ""))
+            if u.capacity_check:
+                either += (". Roster capacity UNKNOWN: if Sleeper shows an open bench spot, "
+                           "this needs no drop at all")
+            drop_note = (f" Drop legality UNVERIFIED: {u.drop_check}." if u.drop_check else "")
+            cap_note = (f" Roster capacity UNKNOWN: {u.capacity_check}." if u.capacity_check
+                        else "")
+            cost = (f"drop {u.drop.name} ({u.drop.position}, {_num(u.drop.value, 2)} projected)"
+                    + (" — unless Sleeper shows an open bench spot (capacity UNKNOWN)"
+                       if u.capacity_check else ""))
+            costs = (f"Cost: drop {u.drop.name} ({u.drop.position}, {_num(u.drop.value, 2)} "
+                     f"projected this week).{drop_note}{cap_note}")
+            neutral_cost = (f"at the cost of {u.drop.name} ({u.drop.position}, "
+                            f"{_num(u.drop.value, 2)})")
+            verify_drop = ((u.drop_check,) if u.drop_check else ()) + (
+                (u.capacity_check,) if u.capacity_check else ()) + (
+                f"confirm {u.drop.name} is the player you would drop and that no injured "
+                f"or bye player is a better drop — the protected list names the ones this "
+                f"page will not rank",)
+            ids, names = (u.add.sleeper_id, u.drop.sleeper_id), (u.add.name, u.drop.name)
+            shares = u.drop.sleeper_id
         out.append(Action(
             "acquire", w_status, "INFO",
             f"If available, claim {u.add.name} ({u.add.position}) — this week's lineup "
             f"{_num(u.lineup_gain, 2, True)} via {u.slot}",
             (f"Benefit: {u.add.name} enters {u.slot} ({_num(u.add.value, 2)} projected), "
              f"{displ}; best legal lineup {_num(u.lineup_gain, 2, True)} pts THIS WEEK. "
-             f"Cost: drop {u.drop.name} ({u.drop.position}, {_num(u.drop.value, 2)} "
-             f"projected this week).{drop_note} Coverage after the move: {after}. "
+             f"{costs} Coverage after the move: {after}. "
              f"Availability {elig.state}: this page cannot tell a free agent from a "
              f"player on waivers, so this is endorsed only if Sleeper shows him "
              f"available. Limits: projections are the UNVALIDATED baseline; FAAB, "
@@ -1020,8 +1076,7 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
             # first words of the body give some.
             neutral_detail=(f"{seen}, {u.add.name} ({u.add.position}) projected "
                             f"{_num(u.add.value, 2)} and would have entered {u.slot} for "
-                            f"{_num(u.lineup_gain, 2, True)} pts, at the cost of "
-                            f"{u.drop.name} ({u.drop.position}, {_num(u.drop.value, 2)}). "
+                            f"{_num(u.lineup_gain, 2, True)} pts, {neutral_cost}. "
                             f"Availability {elig.state} in that snapshot too: this page "
                             f"cannot tell a free agent from a player on waivers, and it "
                             f"does not know whether {u.add.name} is still unrostered."),
@@ -1029,24 +1084,15 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                       f"from box scores up to the evidence boundary stated at the top",)
                      + elig.basis,
             withheld_reasons=w_why,
-            verify=tuple(w_verify) + ((u.drop_check,) if u.drop_check else ()) + (
-                                      elig.verify,
-                                      f"confirm {u.drop.name} is the player you would "
-                                      f"drop and that no injured or bye player is a better "
-                                      f"drop — the protected list names the ones this "
-                                      f"page will not rank"),
+            verify=tuple(w_verify) + ((u.drop_check,) if u.drop_check else ())
+                   + (elig.verify,) + tuple(v for v in verify_drop if v != u.drop_check),
             delta_points=u.lineup_gain, order=i, lapses_at=kick,
-            player_ids=(u.add.sleeper_id, u.drop.sleeper_id), slot=u.slot,
+            player_ids=ids, slot=u.slot,
             why_now=("claims process on Sleeper's clock, not known here; to count this "
                      "week it must clear before " + (f"{kick.astimezone(timezone.utc):%a %d %b %H:%M} UTC"
                                                       if kick is not None else "an UNKNOWN kickoff")),
-            benefit=(f"{_num(u.lineup_gain, 2, True)} to this week's best legal lineup: "
-                     f"{u.add.name} ({u.add.position}, {_num(u.add.value, 2)}) enters {u.slot}"
-                     + (f", {u.displaces.name} leaves the lineup"
-                        if u.displaces is not None and u.displaces.sleeper_id != u.drop.sleeper_id
-                        else "")),
-            cost=f"drop {u.drop.name} ({u.drop.position}, {_num(u.drop.value, 2)} projected)",
-            names=(u.add.name, u.drop.name), drop_check=u.drop_check))
+            benefit=benefit, cost=cost, names=names, drop_check=u.drop_check,
+            capacity_check=u.capacity_check, shares=shares))
 
     out.sort(key=lambda a: a.rank)
     return tuple(out)
@@ -1080,6 +1126,11 @@ class DeskItem:
     #: The earlier of `lapse` and the page's evidence expiry: when this card
     #: stops being true. None = UNKNOWN (never invented).
     until: datetime | None = None
+    #: The first-screen face: a few words naming the exact move, and the key
+    #: facts (gain, what it costs, the one check) in as few words. The six
+    #: full answers in `rows` sit one tap below them.
+    short: str = ""
+    keys: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1145,7 +1196,7 @@ def action_desk(actions: Sequence[Action], gate: ActionGate, *,
             check = (f"none open — every input it rests on was current when built "
                      f"(designations {designations_as_of})")
         elif label == "IF AVAILABLE":
-            check = availability(a)
+            check = availability(a) + (f"; then {a.capacity_check}" if a.capacity_check else "")
         elif label == "CHECK IN SLEEPER":
             parts = []
             if a.withheld:
@@ -1167,27 +1218,91 @@ def action_desk(actions: Sequence[Action], gate: ActionGate, *,
                 ("Cost", a.cost or "—"), ("If not", a.backup or "—"),
                 ("Check", check), ("Valid until", valid))
         return DeskItem(label, tone, title, rows, (a,), a.lapse, href, text,
-                        _first(a.lapse, valid_until) if label != "WITHHELD" else None)
+                        _first(a.lapse, valid_until) if label != "WITHHELD" else None,
+                        short_title((a,), label), key_facts((a,), label))
+
+    def short_title(acts: Sequence[Action], label: str) -> str:
+        """The exact move in a few words. Only a supported card uses a verb;
+        a check or a withheld card names the players and nothing more."""
+        a = acts[0]
+        first = [x.names[0] if x.names else "?" for x in acts]
+        if a.kind == "swap" and len(a.names) > 1:
+            b, s_ = a.names[0], a.names[1]
+            return (f"Start {b} over {s_}" if label in ("LINEUP MOVE", "OPTIONAL")
+                    and not a.withheld else f"{b} or {s_} at {a.slot}")
+        if a.kind == "acquire":
+            if len(acts) > 1:
+                return ("Pick one: " if label == "IF AVAILABLE" else "") + " or ".join(first)
+            return (f"Add {first[0]} if available" if label == "IF AVAILABLE"
+                    else f"{first[0]} ({a.slot}) — last snapshot")
+        return a.title
+
+    def key_facts(acts: Sequence[Action], label: str) -> tuple[tuple[str, str], ...]:
+        a = acts[0]
+        out_: list[tuple[str, str]] = []
+        if label != "WITHHELD":
+            gains = [x.delta_points for x in acts if x.delta_points is not None]
+            if gains:
+                txt = " / ".join(f"{_num(g, 2, True)}" for g in gains) + " pts"
+                out_.append(("Gain", txt + (" if confirmed" if label == "CHECK IN SLEEPER"
+                                            else " (within noise)" if label == "OPTIONAL"
+                                            else "")))
+        if a.kind == "acquire":
+            if len(a.names) > 1:
+                drop = a.names[1] + (" — or none, if Sleeper shows an open spot"
+                                     if a.capacity_check else "")
+            else:
+                drop = "none — open roster spot"
+            out_.append(("Drop", drop))
+        elif a.kind == "swap" and len(a.names) > 1:
+            out_.append(("Benches", a.names[1]))
+        if label == "LINEUP MOVE":
+            chk = "none open"
+        elif label == "IF AVAILABLE":
+            chk = ("Sleeper lists " + ("them" if len(acts) > 1 else "him")
+                   + " as a free agent" + ("; an open spot?" if a.capacity_check else ""))
+        elif label == "CHECK IN SLEEPER":
+            parts = []
+            if a.withheld:
+                parts.append("status tags of " + ", ".join(a.names or ("the players",)))
+            if a.drop_check and len(a.names) > 1:
+                parts.append(f"Sleeper offers a drop for {a.names[1]}")
+            if a.kind == "acquire":
+                parts.append("free agent")
+            chk = "; ".join(parts) or "see details"
+        elif label == "WITHHELD":
+            chk = "inputs are stale — see details"
+        else:
+            chk = "none — optional"
+        out_.append(("Check", chk))
+        return tuple(out_)
 
     def group(items: list[DeskItem]) -> list[DeskItem]:
         """Pickups that cost the same drop are one either/or card."""
         out: list[DeskItem] = []
         by_drop: dict[str, list[DeskItem]] = {}
+
+        def key(a: Action) -> str:
+            if a.kind != "acquire":
+                return ""
+            # an action built without `shares` falls back to its drop's id
+            return a.shares or (a.player_ids[1] if len(a.player_ids) > 1 else "")
+
         for it in items:
-            a = it.actions[0]
-            if a.kind == "acquire" and len(a.player_ids) > 1:
-                by_drop.setdefault(a.player_ids[1], []).append(it)
+            if key(it.actions[0]):
+                by_drop.setdefault(key(it.actions[0]), []).append(it)
         done: set[int] = set()
         for it in items:
             if id(it) in done:
                 continue
             a = it.actions[0]
-            peers = by_drop.get(a.player_ids[1], []) if a.kind == "acquire" and len(a.player_ids) > 1 else []
+            peers = by_drop.get(key(a), []) if key(a) else []
             if len(peers) < 2:
                 out.append(it)
                 continue
             done.update(id(x) for x in peers)
             acts = tuple(x.actions[0] for x in peers)
+            spot = key(a) == "open-spot"
             drop = a.names[1] if len(a.names) > 1 else "the same player"
             rows = dict(it.rows)
             rows["Benefit"] = ("; ".join(f"{x.names[0] if x.names else '?'} "
@@ -1202,14 +1317,16 @@ def action_desk(actions: Sequence[Action], gate: ActionGate, *,
             names = " or ".join(x.names[0] if x.names else "?" for x in acts)
             # Only a supported group may say "pick": a withheld or unchecked
             # one describes what the last snapshot showed, never an order.
-            title = (f"Pick one — {names}; both cost dropping {drop}"
+            what = ("the roster's one open spot" if spot else f"dropping {drop}")
+            title = (f"Pick one — {names}; both use {what}"
                      if it.label == "IF AVAILABLE" else
-                     f"Either/or in the last snapshot — {names}; both would have cost {drop}")
+                     f"Either/or in the last snapshot — {names}; both would have used {what}")
             out.append(DeskItem(it.label, it.tone, title,
                                 tuple((k, rows[k]) for k, _ in it.rows), acts,
                                 min(lapses) if lapses else None, it.link, it.link_text,
                                 _first(min(lapses) if lapses else None, valid_until)
-                                if it.label != "WITHHELD" else None))
+                                if it.label != "WITHHELD" else None,
+                                short_title(acts, it.label), key_facts(acts, it.label)))
         return out
 
     supported: list[DeskItem] = []
@@ -1453,15 +1570,24 @@ box-shadow:inset 3px 0 0 var(--line2)}
 font-weight:800;font-size:13px;background:var(--fg);color:var(--lime-ink)}
 .dhead .best{font-size:var(--t-xs);letter-spacing:.12em;text-transform:uppercase;color:var(--fg);font-weight:800}
 .dhead .until{margin-left:auto;font-size:var(--t-s);color:var(--muted)}
-.dcard h3{font-size:18px;line-height:1.3;margin:10px 0 4px;max-width:60ch}
+.dcard h3{font-size:18px;line-height:1.25;margin:8px 0 2px;max-width:60ch}
 .dcard.first h3{font-size:21px;letter-spacing:-.01em}
+.dcard .cond{font-size:var(--t-s);color:var(--muted);margin:2px 0 0}
+.dcard.tone-cond .cond{color:var(--cyan)}.dcard.tone-check .cond,.dcard.tone-held .cond{color:var(--warn)}
+.keys{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;margin:12px 0 0;
+padding:12px 0 0;border-top:1px solid var(--line)}
+.keys>div{min-width:0}.keys dt{font-size:var(--t-xs);letter-spacing:.09em;text-transform:uppercase;color:var(--dim);font-weight:700}
+.keys dd{margin:2px 0 0;font-size:15px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.keys>div:first-child dd{color:var(--lime)}.tone-check .keys>div:first-child dd,.tone-opt .keys>div:first-child dd{color:var(--fg)}
+.dtitle{font-weight:700;margin:10px 0 0}.full h4{font-size:var(--t-xs);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:14px 0 2px}
+@media (min-width:900px){.keys{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .dcard .lead{font-size:var(--t-s);color:var(--muted);margin:6px 0 2px;max-width:75ch}
 .facts{margin:10px 0 0}
 .facts>div{display:grid;grid-template-columns:8.5em minmax(0,1fr);gap:12px;padding:9px 0;border-top:1px solid var(--line)}
 .facts dt{font-size:var(--t-xs);letter-spacing:.09em;text-transform:uppercase;color:var(--dim);font-weight:700;padding-top:3px}
 .facts dd{margin:0;font-size:14.5px;line-height:1.5;max-width:75ch}
 .dfoot{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin-top:12px}
-.dfoot .full{margin:0}.dfoot .full>summary{min-height:44px;display:flex;align-items:center}
+.dfoot .full{margin:0}.dfoot .full>summary{min-height:44px;display:flex;align-items:center;padding:0 4px;font-weight:600}
 .dfoot .full[open]{flex-basis:100%}.dfoot .full h4{font-size:14.5px;margin:12px 0 2px}.dfoot .full p,.dfoot .full li{font-size:var(--t-s);color:var(--muted);max-width:80ch}
 .more{margin:14px 0}.more>summary{min-height:44px;display:flex;align-items:center}
 .desk-side .panel details>summary{min-height:40px}
@@ -1625,10 +1751,24 @@ def _action_detail(a: "Action", *, titled: bool = False) -> str:
     return "".join(out)
 
 
+#: The one line of condition every card keeps in plain view, whatever is
+#: folded below it. Never shortened into a badge alone.
+_DESK_CONDITION = {
+    "go": "Supported: every input it rests on was current when built.",
+    "cond": "Only if Sleeper shows the player available — this page cannot check that.",
+    "check": "Not advice until the check passes; the numbers are the last computed.",
+    "held": "Last known picture on stale inputs — not advice.",
+    "opt": "Optional: the edge is inside the projections' noise.",
+}
+
+
 def _desk_card(item: "DeskItem", rank: int | None, *, first: bool = False) -> str:
-    """One Action Desk card: the verdict, the six answers, one link into the
-    detail, and the full wording one tap away. Carries the same live
-    attributes as every other move, so the reader's clock can lapse it."""
+    """One Action Desk card. The face answers "what exactly, for how much, at
+    what cost, after which check, until when" in a few words, keeps its
+    condition in plain view, and leads to the comparison; the six full
+    answers and the full reasoning are one tap below, never removed. Carries
+    the same live attributes as every other move, so the reader's clock can
+    lapse it."""
     endorsed = all(a.actionable or a.conditional for a in item.actions)
     attrs = _live_attrs(item.lapse, gated=item.tone in ("go", "cond", "opt") and endorsed,
                         move=True, held=item.tone == "held")
@@ -1636,25 +1776,35 @@ def _desk_card(item: "DeskItem", rank: int | None, *, first: bool = False) -> st
             + (f"<span class=\"rank\">{rank}</span>" if rank else "")
             + f"<span class=\"badge {_e(item.tone)}\">{_e(item.label)}</span>"
             + ("<span class=\"best\">Best next step</span>" if first else "")
-            + (f"<span class=\"until\">until {theme.time_html(item.until, _when(item.until))}</span>"
-               if item.until is not None else "")
             + "</div>")
+    until = (theme.time_html(item.until, _when(item.until)) if item.until is not None
+             else ("not supported now" if item.tone == "held" else "UNKNOWN"))
+    keys = "".join(f"<div><dt>{_e(k)}</dt><dd>{_e(v)}</dd></div>" for k, v in item.keys) \
+        + f"<div><dt>Until</dt><dd>{until}</dd></div>"
     facts = "".join(f"<div><dt>{_e(k)}</dt><dd>{_e(v)}</dd></div>" for k, v in item.rows)
     detail = "".join(_action_detail(a, titled=len(item.actions) > 1) for a in item.actions)
+    grouped = len(item.actions) > 1 and all(a.kind == "acquire" and a.player_ids
+                                            for a in item.actions)
+    compare = ("".join(f"<a class=\"btn{' primary' if first and i == 0 else ''}\" "
+                       f"href=\"#fa-{_e(a.player_ids[0])}\">Compare "
+                       f"{_e(a.names[0] if a.names else 'option')} →</a>"
+                       for i, a in enumerate(item.actions))
+               if grouped else
+               f"<a class=\"btn{' primary' if first else ''}\" href=\"{_e(item.link)}\">"
+               + ("Compare in the Radar" if item.link.startswith("#fa-")
+                  else "Compare start/sit") + " →</a>")
+    short = item.short or item.title
     return (f"<article class=\"dcard tone-{_e(item.tone)}{' first' if first else ''}\"{attrs}>"
-            + head + f"<h3>{_e(item.title)}</h3><span class=\"vstate\">"
+            + head + f"<h3>{_e(short)}</h3><span class=\"vstate\">"
             + (_e(_HELD) if item.tone == "held" else "") + "</span>"
+            + f"<p class=\"cond\">{_e(_DESK_CONDITION.get(item.tone, ''))}</p>"
+            + f"<dl class=\"keys\">{keys}</dl>"
+            + f"<div class=\"dfoot\">{compare}"
+            + "<details class=\"full\"><summary>Why &amp; details</summary>"
+            + (f"<p class=\"dtitle\">{_e(item.title)}</p>" if short != item.title else "")
             + _DESK_LEAD.get(item.tone, "")
             + f"<dl class=\"facts\">{facts}</dl>"
-            + "<div class=\"dfoot\">"
-            + ("".join(f"<a class=\"btn{' primary' if first and i == 0 else ''}\" "
-                       f"href=\"#fa-{_e(a.player_ids[0])}\">{_e(a.names[0] if a.names else 'Option')} "
-                       f"in the Radar →</a>" for i, a in enumerate(item.actions))
-               if len(item.actions) > 1 and all(a.kind == "acquire" and a.player_ids
-                                                for a in item.actions) else
-               f"<a class=\"btn{' primary' if first else ''}\" href=\"{_e(item.link)}\">"
-               f"{_e(item.link_text)} →</a>")
-            + f"<details class=\"full\"><summary>Full reasoning</summary>{detail}</details>"
+            + f"<h4>Full reasoning</h4>{detail}</details>"
             + "</div></article>")
 
 # --------------------------------------------------------------------------
@@ -1689,25 +1839,32 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
         meta += f" · <span class=\"warn\">{_e(desig)}</span>"
     pairs: list[tuple[str, str]] = [("Verdict", f"{badge} {_e(_VERDICT_WORD.get(c.verdict, ''))}"),
                                     ("Why", _e(c.reason))]
-    if c.verdict == LINEUP and c.drop is not None:
+    if c.verdict == LINEUP:
         displ = (f"{_e(c.displaces.name)} ({_e(c.displaces.position)}, "
                  f"{_num(c.displaces.value, 2)}) leaves the lineup"
-                 if c.displaces is not None and c.displaces.sleeper_id != c.drop.sleeper_id
-                 else f"{_e(c.drop.name)} leaves the roster and the lineup")
+                 if c.displaces is not None and (c.drop is None or
+                                                 c.displaces.sleeper_id != c.drop.sleeper_id)
+                 else f"{_e(c.drop.name)} leaves the roster and the lineup" if c.drop is not None
+                 else "nobody")
         alts = ("; ".join(f"{_e(dp.name)} ({_e(dp.position)}, {_num(dp.value, 2)}) → "
                           f"lineup {_num(g, 2, True)}"
                           + (" <span class=\"warn\">(already played — drop UNVERIFIED)</span>"
                              if drop_rule(dp) else "") for dp, g in c.alternatives)
-                or "none — this is the only feasible drop; without it the move is off")
+                or ("none needed — no drop" if c.drop is None else
+                    "none — this is the only feasible drop; without it the move is off"))
         deadline, note = _deadline_for([a, c.displaces], d.generated)
         pairs += [
             ("Benefit", f"enters <b>{_e(c.slot)}</b>; best legal lineup "
                         f"<b class=\"lime\">{_num(gain, 2, True)}</b> pts THIS WEEK"),
             ("Displaces", displ),
-            ("Cost", f"drop <b>{_e(c.drop.name)}</b> ({_e(c.drop.position)}, "
-                     f"{_e(c.drop.lineup)}, {_num(c.drop.value, 2)} projected this week)"
+            ("Cost", (f"drop <b>{_e(c.drop.name)}</b> ({_e(c.drop.position)}, "
+                      f"{_e(c.drop.lineup)}, {_num(c.drop.value, 2)} projected this week)"
+                      if c.drop is not None else
+                      "<b>no drop</b> — the roster has an open active spot")
                      + (f" — <span class=\"warn\">drop UNVERIFIED:</span> {_e(c.drop_check)}"
-                        if c.drop_check else "")),
+                        if c.drop_check else "")
+                     + (f" — <span class=\"warn\">capacity UNKNOWN:</span> {_e(c.capacity_check)}"
+                        if c.capacity_check else "")),
             ("Alternatives", alts),
             ("Coverage after", _e(_coverage_after(d.roster, c))),
             ("Deadline", _e(note)),
@@ -1983,10 +2140,10 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     desk = d.desk()
     until, _ = valid_until(d.sources, [a for a in ("lineup", "waiver") if d.gate.allows(a)],
                            d.generated)
-    stale = [x for x in d.sources if x.name in _SOURCE_WORDS and x.status is not Status.FRESH]
+    stale = [x for x in d.sources if x.status is not Status.FRESH]
     out: list[str] = [
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        f"<meta name=\"viewport\" content=\"{theme.VIEWPORT}\">",
         # The board fetches nothing but its own URL (the published-build
         # check) and runs only its own two scripts.
         f"<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
@@ -2034,40 +2191,32 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     if d.degraded:
         # The warning and WHICH inputs it concerns stay in view; the verbatim
         # notes (the same facts, per action) fold under it.
-        named = "; ".join(f"{_SOURCE_WORDS.get(x.name, x.name)} {x.status.value.upper()} "
-                          f"({x.reason})" for x in d.sources if x.status is not Status.FRESH)
-        out.append("<div class=\"banner\"><b class=\"bad\">DEGRADED</b> — one or more inputs "
-                   "are stale, missing or withheld. Every affected number is blank or "
-                   "labelled below; nothing is filled in."
-                   + (f"<p class=\"small\">{_e(named)}.</p>" if named else "")
-                   + (f"<details><summary>Every note ({len(d.notes)})</summary><ul>"
+        bad = [x for x in d.sources if x.status is not Status.FRESH]
+        # Which inputs, and how, stay in view; each one's full reason folds.
+        named = ", ".join(f"{_SOURCE_WORDS.get(x.name, x.name)} {x.status.value.upper()}"
+                          + (" (refresh FAILED)" if x.refresh_failed else "") for x in bad)
+        reasons = "".join(f"<li>{_e(_SOURCE_WORDS.get(x.name, x.name))}: {_e(x.reason)}</li>"
+                          for x in bad)
+        generic = ("one or more inputs are stale, missing or withheld. Every affected "
+                   "number is blank or labelled below; nothing is filled in.")
+        out.append("<div class=\"banner\"><b class=\"bad\">DEGRADED</b> — "
+                   + (f"{_e(named)}." if named else _e(generic))
+                   + (f"<details><summary>Why, and every note ({len(d.notes)})</summary>"
+                      f"<p class=\"small\">{_e(generic)}</p><ul class=\"small\">{reasons}</ul><ul>"
                       + "".join(f"<li>{_e(n)}</li>" for n in d.notes) + "</ul></details></div>"
-                      if named and len(d.notes) > 2 else
+                      if named else
                       # nothing to name, or little to say: the notes ARE the warning
                       "<ul>" + "".join(f"<li>{_e(n)}</li>" for n in d.notes) + "</ul></div>"))
-    out.append(theme.meta_details(
-        "<div class=\"ages\">"
-        + theme.age_span("League snapshot", iso("sleeper_league"), when("sleeper_league"))
-        + theme.age_span("Projections", iso("weekly_stats"),
-                         f"box scores through week {ctx.stats_through}, pulled {when('weekly_stats')}")
-        + theme.age_span("Designations", iso("sleeper_players"),
-                         when("sleeper_players") + " (once-a-day player map)")
-        + theme.age_span("Page built", generated_iso,
-                         d.generated.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
-        + "</div>"
-        + f"<p class=\"small sub\">{_e(ctx.headline())} · evidence boundary week "
-          f"{ctx.evidence_boundary}</p>"
-        + theme.snapshot_strip_html()
-        + f"<p class=\"small sub\">{_e(BASELINE_LABEL)}</p>"
-        + "<p class=\"small sub\"><a href=\"#inputs\">Every input and what it is good "
-          "enough for ↓</a></p>"))
 
     # ------------------------------------------------- 1. the action desk
     rc = d.radar_changes
     ch0 = d.changes
-    out.append(f"<section id=\"desk\" class=\"desk\"><h2>Action Desk — week {ctx.report_week}</h2>"
+    out.append(f"<section id=\"desk\" class=\"desk\"><h2 class=\"vh\">Action Desk — week {ctx.report_week}</h2>"
                "<div class=\"desk-grid\"><div class=\"desk-main\">")
-    if d.actions and not any(a.actionable or a.conditional for a in d.actions):
+    # With checks pending, the headline and the check cards already say that
+    # nothing is endorsed as is; the box would push the first check off screen.
+    if d.actions and not desk.checks and not any(a.actionable or a.conditional
+                                                 for a in d.actions):
         out.append("<div class=\"gatebox\"><b class=\"bad\">No action is endorsed on "
                    "this data.</b> Every item below is WITHHELD or waits on a check: the "
                    "inputs behind it are stale or unreadable, so what follows is the last "
@@ -2109,8 +2258,9 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    + "".join(_desk_card(item, None) for item in desk.more) + "</details>")
     if any(a.kind == "acquire" for a in d.actions):
         out.append("<p class=\"small sub\">Each pickup names the ONE drop it costs and the next "
-                   "verified drop. Two pickups that cost the same player are an either/or, "
-                   "not two moves.</p>")
+                   "verified drop — or no drop, when the roster has a verified open spot. "
+                   "Two pickups that cost the same player (or the last open spot) are an "
+                   "either/or, not two moves.</p>")
     out.append("</div><aside class=\"desk-side\" aria-label=\"This week\">")
     # --- the side panel: this week at a glance
     out.append("<div class=\"panel\"><h3>This week</h3>")
@@ -2167,6 +2317,24 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                "read from the schedule — where the schedule could not be read, the "
                "deadline says UNKNOWN rather than guessing a kickoff.</p>")
     out.append("</aside></div></section>")
+    # Where every date on this page comes from, one tap away and out of the
+    # first screen: the status line above already dates the evidence.
+    out.append(theme.meta_details(
+        "<div class=\"ages\">"
+        + theme.age_span("League snapshot", iso("sleeper_league"), when("sleeper_league"))
+        + theme.age_span("Projections", iso("weekly_stats"),
+                         f"box scores through week {ctx.stats_through}, pulled {when('weekly_stats')}")
+        + theme.age_span("Designations", iso("sleeper_players"),
+                         when("sleeper_players") + " (once-a-day player map)")
+        + theme.age_span("Page built", generated_iso,
+                         d.generated.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
+        + "</div>"
+        + f"<p class=\"small sub\">{_e(ctx.headline())} · evidence boundary week "
+          f"{ctx.evidence_boundary}</p>"
+        + theme.snapshot_strip_html()
+        + f"<p class=\"small sub\">{_e(BASELINE_LABEL)}</p>"
+        + "<p class=\"small sub\"><a href=\"#inputs\">Every input and what it is good "
+          "enough for ↓</a></p>"))
 
     # The sections below are built into their own lists and assembled after:
     # the decision surfaces first, provenance and diagnostics last and

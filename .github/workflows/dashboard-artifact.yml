@@ -36,11 +36,15 @@ name: Weekly dashboard artifact
 #     guarantee of live advice or live injury news.
 #   * not a full re-pull every run. The Sleeper league snapshot (five small
 #     GETs) is fetched ONCE per run, by the sync step; the pull step reuses
-#     it. Sleeper's full player map is requested at most once a day, between
-#     10:00 and 13:00 ET (docs.sleeper.com asks for that call "once per day
-#     at most"; gridiron.sleeper.player_map_budget), so on game days its
-#     designations are current for about six hours and the moves resting on
-#     them are withheld outside that, with a check-in-Sleeper step. The
+#     it. Sleeper's full player map is requested at most once per 24 h
+#     (docs.sleeper.com asks for that call "once per day at most";
+#     gridiron.sleeper.player_map_budget), by the first run after the 24 h
+#     mark, so on game days its designations are current for about six
+#     hours and the moves resting on them are withheld outside that, with a
+#     check-in-Sleeper step. The request ledger rides the Actions cache
+#     below, which is not durable: a lost or unreadable ledger stops requests
+#     (RECOVERY NEEDED on the page) until a person dispatches this workflow
+#     once with the player_map_bootstrap input. The
 #     nflverse frames are refreshed only when older than half the freshness
 #     limit IN EFFECT (tighter on game days; scripts/ingest/pull_week.py). A carried
 #     input is judged by the time of the pull that fetched it, exactly as a
@@ -81,6 +85,15 @@ on:
         description: 'NFL week to render (blank = the week the snapshot says)'
         required: false
         type: string
+      player_map_bootstrap:
+        # A person's one-time recovery when the carried player-map request
+        # ledger is missing or untrustworthy (HANDOFF.md, "Player-map
+        # bootstrap"). Refused by the script while the cached map shows a
+        # request under 24 h old, and ignored while the ledger is sound.
+        description: 'Player-map bootstrap: allow ONE request when the page says RECOVERY NEEDED'
+        required: false
+        type: boolean
+        default: false
   schedule:
     # Every 15 minutes, best effort, offset off the quarter-hours so it does
     # not queue behind the top-of-hour rush. This job refreshes the Sleeper
@@ -175,10 +188,20 @@ jobs:
       # --reuse-league-snapshot: the sync step above has just fetched and
       # published the league; the pull reuses that generation (only if it
       # carries no error and is this run's) instead of fetching it again.
+      # --carried-history: the player-map request ledger came from the
+      # Actions cache, so a request also needs proof that the previous run's
+      # save came back; a missing or unreadable ledger requests nothing and
+      # the page says RECOVERY NEEDED (gridiron.sleeper.player_map_budget).
+      # The bootstrap input reaches the script as an environment value.
       - name: Pull the week's nflverse frames and the player dump
         id: nflverse
         continue-on-error: true
-        run: python scripts/ingest/pull_week.py --reuse-league-snapshot 20
+        env:
+          PLAYER_MAP_BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && inputs.player_map_bootstrap }}
+        run: |
+          set -- --reuse-league-snapshot 20 --carried-history
+          if [ "$PLAYER_MAP_BOOTSTRAP" = "true" ]; then set -- "$@" --player-map-bootstrap; fi
+          python scripts/ingest/pull_week.py "$@"
 
       - name: Render the dashboard
         id: render

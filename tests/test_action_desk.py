@@ -118,10 +118,10 @@ def test_stale_designations_alone_turn_moves_into_check_in_sleeper_items():
 
 
 def test_a_pickup_with_an_unverified_drop_is_a_check_not_a_supported_move():
-    acts = [pickup("A1", "D1", 6.0, drop_check="D1's game has started; try the drop in Sleeper")]
+    acts = [pickup("A1", "D1", 6.0, drop_check="D1's game has started; open D1 in Sleeper and see whether it offers a drop")]
     desk = action_desk(acts, _gate(), valid_until=None, designations_as_of="x")
     assert desk.top == () and desk.checks[0].label == "CHECK IN SLEEPER"
-    assert "try the drop in Sleeper" in dict(desk.checks[0].rows)["Check"]
+    assert "whether it offers a drop" in dict(desk.checks[0].rows)["Check"]
 
 
 def test_other_stale_inputs_are_withheld_and_the_desk_holds():

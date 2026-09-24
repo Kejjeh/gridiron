@@ -1,0 +1,94 @@
+SYNTHETIC — offline, through the real pull_week.py + carryover code with a counting fake client.
+Driver: a scratch loop around pull_week.pull_sleeper + carryover restore/publish, the same
+shape as tests/test_player_map_budget.py::_cloud_run; the committed tests reproduce each case
+(test_a_day_of_cloud_runs_with_a_delay_makes_exactly_one_more_request,
+test_a_cache_that_stops_saving_stops_requests, test_a_fresh_cloud_deployment_without_a_bootstrap_requests_nothing).
+Head: the commit that adds this file (on top of 4b63520).
+
+== A. first deployment of this code: no carried ledger ==
+run #101 Wed 23 Sep 16:37Z (12:37 ET) scheduled:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-23T16:35:00+00:00)
+   sleeper_players: not requested — RECOVERY NEEDED — no request ledger, so there is no trustworthy record of the last player-map request and none is made automatically; a person runs the one-time bootstrap (HANDOFF.md, 'Player-map b
+   -> map requests so far 0, league fetches 0; map as_of None
+   -> PAGE NOTE: Player map requests are PAUSED (pull run 2026-09-23 16:37Z): RECOVERY NEEDED — no request ledger, so there is no trustworthy record of the last player-map reque…
+run #102 Wed 23 Sep 16:52Z (12:52 ET) manual dispatch [bootstrap]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-23T16:50:00+00:00)
+   sleeper_players: 1 players (next request no sooner than 24 h)
+   -> map requests so far 1, league fetches 0; map as_of 2026-09-23T16:52:00+00:00
+run #103 Wed 23 Sep 17:07Z (13:07 ET) scheduled:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-23T17:05:00+00:00)
+   sleeper_players: not requested — last request 2026-09-23 16:52Z; Sleeper asks for this call once a day at most, next allowed 2026-09-24 16:52Z
+   sleeper_players: carried map pulled 2026-09-23T16:52:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 1, league fetches 0; map as_of 2026-09-23T16:52:00+00:00
+run #104 Wed 23 Sep 17:22Z (13:22 ET) manual dispatch [--force, bootstrap]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-23T17:20:00+00:00)
+   sleeper_players: not requested — last request 2026-09-23 16:52Z; Sleeper asks for this call once a day at most, next allowed 2026-09-24 16:52Z
+   sleeper_players: carried map pulled 2026-09-23T16:52:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 1, league fetches 0; map as_of 2026-09-23T16:52:00+00:00
+
+== B. Astra's case: schedule stalls, next run lands after 13:00 ET the next day ==
+run #105 Thu 24 Sep 17:02Z (13:02 ET) scheduled (delayed):
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-24T17:00:00+00:00)
+   sleeper_players: 1 players (next request no sooner than 24 h)
+   -> map requests so far 2, league fetches 0; map as_of 2026-09-24T17:02:00+00:00
+run #106 Thu 24 Sep 17:17Z (13:17 ET) scheduled:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-24T17:15:00+00:00)
+   sleeper_players: not requested — last request 2026-09-24 17:02Z; Sleeper asks for this call once a day at most, next allowed 2026-09-25 17:02Z
+   sleeper_players: carried map pulled 2026-09-24T17:02:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 2, league fetches 0; map as_of 2026-09-24T17:02:00+00:00
+
+== C. the cache stops saving (every save after #106 lost), a day later ==
+run #107 Fri 25 Sep 17:30Z (13:30 ET) scheduled [cache save LOST]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T17:28:00+00:00)
+   sleeper_players: 1 players (next request no sooner than 24 h)
+   -> map requests so far 3, league fetches 0; map as_of 2026-09-25T17:30:00+00:00
+run #108 Fri 25 Sep 17:45Z (13:45 ET) scheduled [cache save LOST]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T17:43:00+00:00)
+   sleeper_players: not requested — last request 2026-09-24 17:02Z; a day has passed, but the carried ledger is not shown to come from the previous run (it was last saved by run 106; this is run 108), so a request may have been lost 
+   sleeper_players: carried map pulled 2026-09-24T17:02:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 3, league fetches 0; map as_of 2026-09-24T17:02:00+00:00
+run #109 Fri 25 Sep 18:00Z (14:00 ET) scheduled [cache save LOST]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T17:58:00+00:00)
+   sleeper_players: not requested — last request 2026-09-24 17:02Z; a day has passed, but the carried ledger is not shown to come from the previous run (it was last saved by run 106; this is run 109), so a request may have been lost 
+   sleeper_players: carried map pulled 2026-09-24T17:02:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 3, league fetches 0; map as_of 2026-09-24T17:02:00+00:00
+run #110 Fri 25 Sep 18:15Z (14:15 ET) scheduled [cache save LOST]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T18:13:00+00:00)
+   sleeper_players: not requested — last request 2026-09-24 17:02Z; a day has passed, but the carried ledger is not shown to come from the previous run (it was last saved by run 106; this is run 110), so a request may have been lost 
+   sleeper_players: carried map pulled 2026-09-24T17:02:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 3, league fetches 0; map as_of 2026-09-24T17:02:00+00:00
+run #111 Fri 25 Sep 18:30Z (14:30 ET) scheduled [cache save LOST]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T18:28:00+00:00)
+   sleeper_players: not requested — last request 2026-09-24 17:02Z; a day has passed, but the carried ledger is not shown to come from the previous run (it was last saved by run 106; this is run 111), so a request may have been lost 
+   sleeper_players: carried map pulled 2026-09-24T17:02:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 3, league fetches 0; map as_of 2026-09-24T17:02:00+00:00
+run #112 Fri 25 Sep 18:45Z (14:45 ET) scheduled [cache save LOST]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T18:43:00+00:00)
+   sleeper_players: not requested — last request 2026-09-24 17:02Z; a day has passed, but the carried ledger is not shown to come from the previous run (it was last saved by run 106; this is run 112), so a request may have been lost 
+   sleeper_players: carried map pulled 2026-09-24T17:02:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 3, league fetches 0; map as_of 2026-09-24T17:02:00+00:00
+run #113 Fri 25 Sep 19:00Z (15:00 ET) scheduled [cache save LOST]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T18:58:00+00:00)
+   sleeper_players: not requested — last request 2026-09-24 17:02Z; a day has passed, but the carried ledger is not shown to come from the previous run (it was last saved by run 106; this is run 113), so a request may have been lost 
+   sleeper_players: carried map pulled 2026-09-24T17:02:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 3, league fetches 0; map as_of 2026-09-24T17:02:00+00:00
+run #114 Fri 25 Sep 19:15Z (15:15 ET) scheduled [cache save LOST]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T19:13:00+00:00)
+   sleeper_players: not requested — last request 2026-09-24 17:02Z; a day has passed, but the carried ledger is not shown to come from the previous run (it was last saved by run 106; this is run 114), so a request may have been lost 
+   sleeper_players: carried map pulled 2026-09-24T17:02:00+00:00 kept as-is (designations are aged from that pull)
+   -> map requests so far 3, league fetches 0; map as_of 2026-09-24T17:02:00+00:00
+
+== D. the cache is evicted (nothing carried) ==
+run #120 Fri 25 Sep 20:00Z (16:00 ET) scheduled:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T19:58:00+00:00)
+   sleeper_players: not requested — RECOVERY NEEDED — no request ledger, so there is no trustworthy record of the last player-map request and none is made automatically; a person runs the one-time bootstrap (HANDOFF.md, 'Player-map b
+   -> map requests so far 3, league fetches 0; map as_of None
+   -> PAGE NOTE: Player map requests are PAUSED (pull run 2026-09-25 20:00Z): RECOVERY NEEDED — no request ledger, so there is no trustworthy record of the last player-map reque…
+run #121 Fri 25 Sep 20:15Z (16:15 ET) scheduled [--force]:
+   sleeper_league: reused, not fetched again — published 2 min ago by this run's sync step (2026-09-25T20:13:00+00:00)
+   sleeper_players: not requested — RECOVERY NEEDED — no request ledger, so there is no trustworthy record of the last player-map request and none is made automatically; a person runs the one-time bootstrap (HANDOFF.md, 'Player-map b
+   -> map requests so far 3, league fetches 0; map as_of None
+   -> PAGE NOTE: Player map requests are PAUSED (pull run 2026-09-25 20:15Z): RECOVERY NEEDED — no request ledger, so there is no trustworthy record of the last player-map reque…
+
+ledger after B: [{"at": "2026-09-23T16:52:00+00:00", "outcome": "ok", "note": ""}, {"at": "2026-09-24T17:02:00+00:00", "outcome": "ok", "note": ""}]
+TOTAL map requests: 3 (bootstrap #102, catch-up #105, stuck-cache #107); league fetches: 0

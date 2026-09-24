@@ -22,7 +22,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, time as clock, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -202,31 +202,40 @@ def season_matches(state: NflState) -> bool:
 # GET still asked Sleeper for the body. The ledger line is written BEFORE the
 # GET so a crash mid-download counts too.
 #
-# Three bounds, so no failure mode turns into a request every 15 minutes:
-#   * >= 24 h between requests, from the ledger (or, for a cache written
-#     before the ledger existed, from the map's own pull time);
-#   * requests only inside PLAYER_MAP_WINDOW (league time), so a ledger that
-#     stops being saved between cloud runs costs at most the runs inside one
-#     window a day;
-#   * with no history at all (a lost cache) only inside PLAYER_MAP_COLD_SLOT,
-#     about one scheduled run a day, unless a person asks for a cold start.
+# The rules, and what they can and cannot promise:
+#   * >= 24 h between requests, from a TRUSTWORTHY ledger: readable line by
+#     line, at least one request on it, none stamped after this machine's
+#     clock. Once a day has passed the next run may request at any hour; a
+#     run delayed past the morning does not cost the whole day. Because the
+#     first run after the 24 h mark makes the request, the day's request
+#     drifts later by up to one run interval a day; nothing re-anchors it.
+#   * No trustworthy ledger (missing, unreadable, malformed, future-dated,
+#     empty) never authorises a request. The state is RECOVERY NEEDED, shown
+#     on the page, until a person runs the one-time bootstrap
+#     (`pull_week.py --player-map-bootstrap`, or the workflow's bootstrap
+#     input), which itself refuses while the cached map shows a pull or a
+#     failed attempt less than 24 h old.
+#   * In the cloud (`carried=True`) the ledger lives in an Actions cache,
+#     which can silently fail to save or be evicted. Every run stamps the
+#     ledger with its workflow run number, and a request there also needs
+#     the carried stamp to come from the IMMEDIATELY previous run: proof that
+#     no run in between did something whose save was lost. A cache that
+#     stops saving therefore stops requests (the gap never closes) rather
+#     than turning each 15-minute run into one; a single run whose save was
+#     lost delays the request by one run. What this cannot rule out: a save
+#     lost right after a REQUEST followed by a save that works lets a later
+#     run request again (one extra request per such lost save). The cache is
+#     not durable storage, so the 24 h rule is only as strong as it; nothing
+#     here claims a strict guarantee.
 # ---------------------------------------------------------------------------
 
 PLAYER_MAP_LEDGER = "player_map_requests.json"
+#: This run's budget decision, for the page. Not carried: each run writes its own.
+PLAYER_MAP_STATUS = "player_map_status.json"
 PLAYER_MAP_MIN_INTERVAL = timedelta(hours=24)
-#: League-time window for the day's one request. 10:00-13:00 ET lands after
-#: nflverse's 07:00 UTC injury update and before the Sunday early kickoffs,
-#: so the day's designations are six hours old at most through the early
-#: slate. Scheduling, not a promise: a skipped run just means a later one.
-PLAYER_MAP_WINDOW = (clock(10, 0), clock(13, 0))
-PLAYER_MAP_COLD_SLOT = (clock(10, 0), clock(10, 20))
 PLAYER_MAP_LEDGER_KEEP = 14
 _FUTURE_SLACK = timedelta(minutes=5)
-
-
-def _league_tz():
-    from gridiron.freshness import LEAGUE_TZ
-    return LEAGUE_TZ
+_OUTCOMES = ("requested", "ok", "failed")
 
 
 def _stamp(value: object) -> datetime | None:
@@ -253,41 +262,89 @@ def valid_player_map_ledger(blob: object) -> tuple[list[dict], str]:
             return [], "a ledger line is not an object"
         at = _stamp(line.get("at"))
         outcome = line.get("outcome")
-        if at is None or outcome not in ("requested", "ok", "failed"):
+        if at is None or outcome not in _OUTCOMES:
             return [], "a ledger line has no readable time or outcome"
         out.append({"at": at.astimezone(timezone.utc).isoformat(timespec="seconds"),
                     "outcome": outcome, "note": str(line.get("note") or "")[:200]})
+    if blob.get("checked") is not None and _stamp(blob.get("checked")) is None:
+        return [], "its checked stamp is unreadable"
+    run = blob.get("checked_run")
+    if run is not None and (isinstance(run, bool) or not isinstance(run, int) or run < 1):
+        return [], "its checked run number is unreadable"
     return out, ""
+
+
+@dataclass(frozen=True)
+class PlayerMapHistory:
+    """What the ledger on disk says, and whether it can be trusted at all."""
+    lines: tuple[dict, ...] = ()
+    #: When a run last read this ledger and wrote it back, and that run's
+    #: workflow run number (cloud carry proof; None locally).
+    checked: datetime | None = None
+    checked_run: int | None = None
+    #: "" when the ledger is present and readable; otherwise why it is not.
+    problem: str = ""
+
+
+def read_player_map_history(directory: Path) -> PlayerMapHistory:
+    path = Path(directory) / PLAYER_MAP_LEDGER
+    if not path.exists():
+        return PlayerMapHistory(problem="no request ledger")
+    try:
+        blob = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return PlayerMapHistory(problem=f"the request ledger is unreadable "
+                                        f"({type(exc).__name__})")
+    lines, why = valid_player_map_ledger(blob)
+    if why:
+        return PlayerMapHistory(problem=f"the request ledger is {why}")
+    return PlayerMapHistory(tuple(lines), _stamp(blob.get("checked")),
+                            blob.get("checked_run"))
 
 
 def read_player_map_ledger(directory: Path) -> list[dict]:
     """Request lines oldest first; [] when absent or unreadable. An unreadable
-    ledger is not permission: `player_map_budget` then falls back to the map's
-    own pull time and, with none, to the narrow cold slot."""
-    try:
-        blob = json.loads((Path(directory) / PLAYER_MAP_LEDGER).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    lines, _ = valid_player_map_ledger(blob)
-    return lines
+    ledger is not permission: `player_map_budget` treats it as RECOVERY NEEDED."""
+    return list(read_player_map_history(directory).lines)
+
+
+def _write_ledger(directory: Path, lines: Sequence[dict], checked: datetime,
+                  run: int | None) -> None:
+    path = Path(directory) / PLAYER_MAP_LEDGER
+    tmp = path.with_name(path.name + ".part")
+    tmp.write_text(json.dumps({"endpoint": "players/nfl",
+                               "checked": checked.astimezone(timezone.utc)
+                               .isoformat(timespec="seconds"),
+                               "checked_run": run,
+                               "requests": list(lines)[-PLAYER_MAP_LEDGER_KEEP:]}, indent=1),
+                   encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def note_player_map_request(directory: Path, now: datetime, *, outcome: str,
-                            note: str = "") -> None:
+                            note: str = "", run: int | None = None) -> None:
     """Append a request line, or settle the last `requested` line to its
-    outcome. Written through a temp file so a crash leaves the old ledger."""
+    outcome. Written through a temp file so a crash leaves the old ledger.
+    An unreadable ledger is replaced only here, by a request a budget (or a
+    person's bootstrap) allowed; request times already on it are kept."""
     lines = read_player_map_ledger(directory)
     iso = now.astimezone(timezone.utc).isoformat(timespec="seconds")
     if outcome != "requested" and lines and lines[-1]["outcome"] == "requested":
         lines[-1] = {**lines[-1], "outcome": outcome, "note": note[:200]}
     else:
         lines.append({"at": iso, "outcome": outcome, "note": note[:200]})
-    path = Path(directory) / PLAYER_MAP_LEDGER
-    tmp = path.with_name(path.name + ".part")
-    tmp.write_text(json.dumps({"endpoint": "players/nfl",
-                               "requests": lines[-PLAYER_MAP_LEDGER_KEEP:]}, indent=1),
-                   encoding="utf-8")
-    os.replace(tmp, path)
+    _write_ledger(directory, lines, now, run)
+
+
+def note_player_map_check(directory: Path, now: datetime, run: int | None = None) -> bool:
+    """Stamp a trustworthy ledger as read by this run (its request lines and
+    their times untouched). Never CREATES a ledger: an empty one written here
+    would read as trustworthy history and let a lost cache request freely."""
+    h = read_player_map_history(directory)
+    if h.problem or not h.lines:
+        return False
+    _write_ledger(directory, h.lines, now, run)
+    return True
 
 
 @dataclass(frozen=True)
@@ -298,46 +355,103 @@ class PlayerMapBudget:
     #: True/False for the last logged request's outcome; None when unknown.
     last_ok: bool | None = None
     next_allowed: datetime | None = None
+    #: "due", "wait" (inside the 24 h), "unconfirmed" (cloud carry not yet
+    #: shown to work), "recovery" (no trustworthy history: a person must act)
+    #: or "bootstrap-refused".
+    state: str = "wait"
+
+    @property
+    def needs_person(self) -> bool:
+        return self.state in ("recovery", "bootstrap-refused")
 
 
-def _in(window: tuple[clock, clock], now: datetime) -> bool:
-    local = now.astimezone(_league_tz()).time()
-    return window[0] <= local < window[1]
+def player_map_budget(history: PlayerMapHistory | Sequence[Mapping[str, Any]],
+                      now: datetime, *, carried: bool = False, run: int | None = None,
+                      bootstrap: bool = False,
+                      fallback_last: datetime | None = None) -> PlayerMapBudget:
+    """May the full player map be requested now? Never bypassed by --force.
 
-
-def player_map_budget(ledger: Sequence[Mapping[str, Any]], now: datetime, *,
-                      fallback_last: datetime | None = None,
-                      cold_start: bool = False) -> PlayerMapBudget:
-    """May the full player map be requested now? Never bypassed by --force."""
-    last: datetime | None = None
-    last_ok: bool | None = None
-    for line in ledger:
-        t = _stamp(line.get("at"))
-        if t is not None and (last is None or t >= last):
-            last, last_ok = t, {"ok": True, "failed": False}.get(str(line.get("outcome")))
-    if last is None and fallback_last is not None:
-        last, last_ok = fallback_last, None
-    window = f"{PLAYER_MAP_WINDOW[0]:%H:%M}-{PLAYER_MAP_WINDOW[1]:%H:%M} ET"
-    if last is None:
-        if cold_start:
-            return PlayerMapBudget(True, "no earlier request on record; manual cold start")
-        if _in(PLAYER_MAP_COLD_SLOT, now):
-            return PlayerMapBudget(True, "no earlier request on record; daily cold-start slot")
-        return PlayerMapBudget(
-            False, f"no earlier request on record, and outside the "
-                   f"{PLAYER_MAP_COLD_SLOT[0]:%H:%M}-{PLAYER_MAP_COLD_SLOT[1]:%H:%M} ET "
-                   f"cold-start slot (a lost cache must not become a request every run)")
+    `fallback_last` is the cache's own evidence of the last request (the map's
+    pull time, or a later failed attempt); it only ever blocks a bootstrap,
+    it never authorises a request."""
+    if not isinstance(history, PlayerMapHistory):
+        lines, why = valid_player_map_ledger({"requests": list(history)})
+        history = PlayerMapHistory(tuple(lines), None, why)
+    problem = history.problem or ("" if history.lines else "no request on the ledger")
+    stamps = [t for t in (_stamp(x.get("at")) for x in history.lines) if t is not None]
+    last = max(stamps) if stamps else None
+    last_ok = None
+    if last is not None:
+        final = [x for x in history.lines if _stamp(x.get("at")) == last][-1]
+        last_ok = {"ok": True, "failed": False}.get(str(final.get("outcome")))
+        if last > now + _FUTURE_SLACK:
+            problem = (f"a request is stamped {last.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}, "
+                       f"after this machine's clock")
+    if problem:
+        if not bootstrap:
+            return PlayerMapBudget(
+                False, f"RECOVERY NEEDED — {problem}, so there is no trustworthy "
+                       f"record of the last player-map request and none is made "
+                       f"automatically; a person runs the one-time bootstrap "
+                       f"(HANDOFF.md, 'Player-map bootstrap')", last, last_ok,
+                state="recovery")
+        if fallback_last is not None and (fallback_last > now + _FUTURE_SLACK
+                                          or now < fallback_last + PLAYER_MAP_MIN_INTERVAL):
+            nxt = fallback_last + PLAYER_MAP_MIN_INTERVAL
+            return PlayerMapBudget(
+                False, f"bootstrap refused — {problem}, and the cached map shows a "
+                       f"request at {fallback_last.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}; "
+                       f"retry the bootstrap after {nxt.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}",
+                fallback_last, None, nxt, state="bootstrap-refused")
+        return PlayerMapBudget(True, f"bootstrap by a person — {problem}", last, last_ok,
+                               state="due")
     nxt = last + PLAYER_MAP_MIN_INTERVAL
     when = f"last request {last.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}"
-    if last > now + _FUTURE_SLACK:
-        return PlayerMapBudget(False, f"{when} is AFTER this machine's clock; not "
-                                      f"requesting until that is explained", last, last_ok, nxt)
     if now < nxt:
         return PlayerMapBudget(False, f"{when}; Sleeper asks for this call once a day at "
                                       f"most, next allowed {nxt.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}",
-                               last, last_ok, nxt)
-    if not _in(PLAYER_MAP_WINDOW, now):
-        return PlayerMapBudget(False, f"{when}; a day has passed but requests are made "
-                                      f"only in the {window} window", last, last_ok, nxt)
-    return PlayerMapBudget(True, f"{when}; a day has passed and this is the {window} window",
-                           last, last_ok, nxt)
+                               last, last_ok, nxt, state="wait")
+    if carried and (run is None or history.checked_run is None
+                    or history.checked_run != run - 1):
+        seen = (f"it was last saved by run {history.checked_run}"
+                if history.checked_run is not None else "no run has stamped it")
+        return PlayerMapBudget(
+            False, f"{when}; a day has passed, but the carried ledger is not shown to "
+                   f"come from the previous run ({seen}; this is run {run}), so a "
+                   f"request may have been lost with a save; this run stamps it and the "
+                   f"next one can request", last, last_ok, nxt, state="unconfirmed")
+    return PlayerMapBudget(True, f"{when}; a day has passed", last, last_ok, nxt,
+                           state="due")
+
+
+def write_player_map_status(directory: Path, now: datetime, budget: PlayerMapBudget) -> None:
+    path = Path(directory) / PLAYER_MAP_STATUS
+    tmp = path.with_name(path.name + ".part")
+    last = budget.last_request
+    tmp.write_text(json.dumps({"at": now.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                               "state": budget.state, "reason": budget.reason[:400],
+                               "last_request": last.astimezone(timezone.utc)
+                               .isoformat(timespec="seconds") if last else None}),
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def player_map_status_note(directory: Path) -> str:
+    """The page's line for a budget that needs a person, or ""."""
+    try:
+        blob = json.loads((Path(directory) / PLAYER_MAP_STATUS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(blob, dict):
+        return ""
+    at, last = _stamp(blob.get("at")), _stamp(blob.get("last_request"))
+    # "unconfirmed" is routine for one run after a gap; it is said on the page
+    # only once it has held the map back six hours past its due time.
+    stuck = (blob.get("state") == "unconfirmed" and at is not None and last is not None
+             and at - last >= PLAYER_MAP_MIN_INTERVAL + timedelta(hours=6))
+    if blob.get("state") not in ("recovery", "bootstrap-refused") and not stuck:
+        return ""
+    when = f" (pull run {at.astimezone(timezone.utc):%Y-%m-%d %H:%MZ})" if at else ""
+    return (f"Player map requests are PAUSED{when}: {str(blob.get('reason') or '')[:300]}. "
+            f"Designations age from the last map; moves resting on them are withheld "
+            f"once it is stale")

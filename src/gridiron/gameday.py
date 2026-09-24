@@ -1228,7 +1228,10 @@ def summarise_radar(block: object) -> dict:
         if not isinstance(c, Mapping) or c.get("verdict") != "LINEUP":
             continue
         drop = c.get("drop") if isinstance(c.get("drop"), Mapping) else {}
-        moves.append({"deadline": _move_deadline(c),"id": str(c.get("id") or ""), "name": str(c.get("name") or ""),
+        # An explicit null drop is an add into an open roster spot; an older
+        # record always named one, and a missing key is not read as "none".
+        no_drop = "drop" in c and c.get("drop") is None
+        moves.append({"no_drop": no_drop, "deadline": _move_deadline(c),"id": str(c.get("id") or ""), "name": str(c.get("name") or ""),
                       "position": str(c.get("position") or ""),
                       "lineup_gain": _num(c.get("lineup_gain")), "slot": str(c.get("slot") or ""),
                       "drop": str(drop.get("name") or ""), "drop_id": str(drop.get("id") or ""),
@@ -1522,9 +1525,9 @@ _CSS = theme.CSS + """
 .chg li{margin:3px 0}
 .moves li{margin:4px 0}
 .gd-h1{font-size:22px;margin:4px 0 10px}
-.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;margin:0;padding:0;border:0}
 .hero-card{background:var(--card2);border-color:var(--line2);padding:20px 18px 14px;margin-top:4px}
 .modebar #gd-refresh{margin-left:auto;min-width:112px}
+.hero-card .modebar{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 14px;margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line)}.hero-card #gd-modepill{grid-column:1;justify-self:start}.hero-card #gd-asof{grid-column:1}.hero-card #gd-refresh{grid-column:2;grid-row:1 / span 2;margin-left:0}.hero-card .status{margin:6px 0 0}.about{margin:2px 0 0}.about>summary{min-height:44px;display:flex;align-items:center;font-size:var(--t-s);color:var(--muted);font-weight:600}
 @media (min-width:700px){.gd-h1{font-size:26px}.score .pts{font-size:56px}}
 @media (max-width:560px){.score .pts{font-size:40px}.hero-card{padding:16px 12px 12px}}
 """
@@ -1635,7 +1638,7 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
     lead_cls = "ok" if (s.margin or 0) > POINTS_EPS else "bad" if (s.margin or 0) < -POINTS_EPS else ""
     out: list[str] = [
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        f"<meta name=\"viewport\" content=\"{theme.VIEWPORT}\">",
         # The policy is the request fan-out guard: the page may talk to the
         # Sleeper hosts it names and to nothing else, run only its own script,
         # load no image, font or frame, and submit no form anywhere.
@@ -1657,7 +1660,9 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
     ]
     # 1. score — the first thing on the page, with the one control that
     # renews it right beside it.
-    out.append("<h2 class=\"vh\">Score</h2><div class=\"card hero-card\" id=\"gd-score\">")
+    # The script re-renders #gd-score; the refresh bar beside it in the same
+    # card is outside it, so a refresh never removes its own controls.
+    out.append("<h2 class=\"vh\">Score</h2><div class=\"card hero-card\"><div id=\"gd-score\">")
     if o is None:
         out.append(f"<div class=\"score\"><div><div class=\"who\">{_e(m.label)}</div>"
                    f"<div class=\"pts\">{_e(_pts(m.platform_points))}</div></div>"
@@ -1672,10 +1677,11 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
                    f"<p class=\"lead {lead_cls}\">{_e(lead)}</p>"
                    f"<p class=\"settle small\">{_e(s.settled())}</p>"
                    f"<p class=\"small sub\">You: {_e(m.exposure())}<br>They: {_e(o.exposure())}</p>")
-    # The as-of is stated once, in the refresh bar below, which the script
-    # keeps current after every refresh.
-    out.append("<p class=\"small sub\">Platform totals as sent; nothing here is projected "
-               "or scaled.</p></div>")
+    out.append("</div>")
+    # The as-of is stated once, in the refresh bar at the foot of the score
+    # card, which the script keeps current after every refresh. The mode pill
+    # and the status line stay in view (a failed refresh is said there); how
+    # refresh works is one tap below.
     out += [
         "<div class=\"modebar\" id=\"gd-mode\">"
         "<span class=\"pill\" id=\"gd-modepill\">SNAPSHOT</span>"
@@ -1684,26 +1690,20 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
         "title=\"needs the page script\">Refresh</button>"
         "</div>",
         "<p class=\"small status\" id=\"gd-status\" role=\"status\" aria-live=\"polite\">"
-        "Snapshot mode: this page shows what the cloud build cached. Reloading the file "
-        "does not fetch anything; the Refresh button does, when the script can run.</p>",
+        "Snapshot: the cloud build's scores. Refresh needs the page script.</p>",
+        "<details class=\"about\" id=\"gd-about\"><summary>About refresh</summary>"
+        "<p class=\"small sub\">Reloading the file fetches nothing; Refresh makes three "
+        "read-only requests to Sleeper for scores and game statuses, and the page then keeps "
+        "itself current while it is open and visible. Designations, positions, kickoff times "
+        "and the pregame record are from the cloud build "
+        f"({_e(_stamp(d.generated))}) and are not refreshed by this page. Platform totals "
+        "as sent; nothing here is projected or scaled.</p></details></div>",
     ]
     if d.notes:
         out.append("<div class=\"banner\" id=\"gd-notes\"><b class=\"warn\">Read first</b><ul class=\"small\">"
                    + "".join(f"<li>{_e(n)}</li>" for n in d.notes) + "</ul></div>")
     else:
         out.append("<div class=\"banner ok hidden\" id=\"gd-notes\"></div>")
-    out.append(theme.meta_details(
-        "<div class=\"ages\">"
-        + theme.age_span("Live scores", None, "snapshot until you tap Refresh")
-        + theme.age_span("League snapshot", s.as_of.astimezone(timezone.utc).isoformat(timespec="seconds") if s.as_of else None,
-                         _stamp(s.as_of) if s.as_of else "no as-of")
-        + theme.age_span("Designations", d.embedded.get("players_as_of"),
-                         (_stamp(_parse_dt(d.embedded.get("players_as_of"))) if d.embedded.get("players_as_of") else "never pulled")
-                         + " (once-a-day player map)")
-        + theme.age_span("Page built", d.generated.astimezone(timezone.utc).isoformat(timespec="seconds"), _stamp(d.generated))
-        + "</div>"
-        + f"<p class=\"small sub\">season {d.season} · roster #{_e(d.my_roster_id)}</p>"
-        + theme.snapshot_strip_html()))
 
     # 2. actions
     out.append("<h2>What you can still do</h2><div class=\"card\" id=\"gd-actions\">")
@@ -1753,8 +1753,10 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
                 f"<li{_lapse(m.get('deadline'), d.generated)[0]}><span class=\"pill\">PREGAME</span> "
                 f"<b>{_e(m['name'])}</b> ({_e(m['position'])}) "
                 f"into {_e(m['slot'])}: <span class=\"num\">{'+' if (m['lineup_gain'] or 0) > 0 else ''}{_pts(m['lineup_gain'])}</span> to the best "
-                f"legal lineup on the pregame numbers, at the cost of dropping {_e(m['drop'])} — "
-                f"conditional on availability, which the board could not verify"
+                f"legal lineup on the pregame numbers, "
+                + ("with no drop (the roster had an open spot) — " if m.get("no_drop") else
+                   f"at the cost of dropping {_e(m['drop'])} — ")
+                + f"conditional on availability, which the board could not verify"
                 + (f"; drop UNVERIFIED — {_e(m['drop_check'])}" if m.get("drop_check") else "")
                 + f"<span class=\"vstate\">{_lapse(m.get('deadline'), d.generated)[1]}</span></li>"
                 for m in moves) + "</ul>")
@@ -1764,6 +1766,20 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
                    "<a href=\"dashboard_latest.html#free-agents\">Free Agents</a> tab.</p>")
     out.append("</div>")
 
+    # Where every date on this page comes from: one tap away, below the
+    # decisions (the refresh bar above already dates the scores).
+    out.append(theme.meta_details(
+        "<div class=\"ages\">"
+        + theme.age_span("Live scores", None, "snapshot until you tap Refresh")
+        + theme.age_span("League snapshot", s.as_of.astimezone(timezone.utc).isoformat(timespec="seconds") if s.as_of else None,
+                         _stamp(s.as_of) if s.as_of else "no as-of")
+        + theme.age_span("Designations", d.embedded.get("players_as_of"),
+                         (_stamp(_parse_dt(d.embedded.get("players_as_of"))) if d.embedded.get("players_as_of") else "never pulled")
+                         + " (once-a-day player map)")
+        + theme.age_span("Page built", d.generated.astimezone(timezone.utc).isoformat(timespec="seconds"), _stamp(d.generated))
+        + "</div>"
+        + f"<p class=\"small sub\">season {d.season} · roster #{_e(d.my_roster_id)}</p>"
+        + theme.snapshot_strip_html()))
     # 3. changes
     out.append("<h2>Since the last snapshot</h2><div class=\"card\" id=\"gd-changes\">")
     ch = d.changes
@@ -2175,7 +2191,7 @@ function renderScore(vm,asOfNote){ var root=clear($('gd-score')), sc=el('div','s
   if(!o) root.appendChild(el('p','warn',vm.opp_reason));
   else { root.appendChild(el('p','lead '+((vm.margin||0)>EPS?'ok':(vm.margin||0)<-EPS?'bad':''),vm.lead)); root.appendChild(el('p','settle small',vm.settled));
     var ex=el('p','small sub'); ex.appendChild(document.createTextNode('You: '+exposure(m))); ex.appendChild(el('br')); ex.appendChild(document.createTextNode('They: '+exposure(o))); root.appendChild(ex); }
-  root.appendChild(el('p','small sub','Platform totals as sent; nothing here is projected or scaled.')); }
+}
 function actCard(a){ var d=el('div',a.available?'act':'act off'); d.appendChild(el('span',a.available?'pill ok':'pill',a.available?'AVAILABLE':'NOT NOW'));
   d.appendChild(document.createTextNode(' ')); d.appendChild(el('span','pill',a.kind)); d.appendChild(el('h3',null,a.title));
   if(a.available){ d.appendChild(el('p',null,a.body)); var b=el('p'); b.appendChild(el('b',null,a.deadline_note)); d.appendChild(b);
@@ -2317,7 +2333,7 @@ document.addEventListener('visibilitychange',function(){ if(document.hidden){ pl
   if(S.live&&!S.inflight&&S.lastGoodAt&&now()-S.lastGoodAt>POLL_LIVE_MS) refresh(false); else planNext(); });
 var btn=$('gd-refresh'); btn.disabled=false; btn.title='Fetch the current scores and game statuses from Sleeper (read-only)';
 btn.addEventListener('click',function(){ refresh(true); });
-setStatus('Snapshot mode: showing what the cloud build cached. Tap Refresh to fetch live scores and game statuses from Sleeper (read-only); the page then keeps itself current while it is open and visible. '+buildNote()+'.');
+setStatus('Snapshot: the cloud build’s scores. Tap Refresh for live scores (read-only).');
 tick(); setInterval(tick,TICK_MS);
 window.gridironGameDay={refresh:refresh,compute:compute,diff:diff,judge:judge,tick:tick,now:now,state:function(){ return S; },data:D,
   tune:function(o){ o=o||{}; if(typeof o.skewMs==='number') S.skewMs=o.skewMs; if(typeof o.timeoutMs==='number'&&o.timeoutMs>0) S.timeoutMs=o.timeoutMs; return tick(); }};

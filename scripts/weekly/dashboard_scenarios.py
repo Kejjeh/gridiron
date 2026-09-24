@@ -44,6 +44,14 @@ stale, and when inputs are missing. Nothing here reads the real cache.
   designations  the complete cache with ONLY the once-a-day player map past
             its limit (pulled 26 h ago): the Action Desk turns its moves into
             CHECK IN SLEEPER items naming the players to check, and holds.
+  open_spot the complete cache with two EMPTY bench spots (the league keeps
+            five, the owner's roster fills three): a pickup that improves the
+            lineup is an add with NO drop, and two such adds are not an
+            either/or because both spots are free.
+
+Every scenario's rosters carry `taxi: null` like the real league object, and
+(outside open_spot) the league's bench is sized so the owner's active roster
+is exactly full: every pickup there needs a drop.
 
 `--screenshot` renders each page to PNG at 375, 768 and 1440 CSS px with the
 pre-installed headless Chromium when one is found (no Python dependency is
@@ -80,7 +88,8 @@ from gridiron.paths import REPO_ROOT
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
 UTC = timezone.utc
 SCENARIOS = ("complete", "stale", "missing", "partial_schedule", "slate_end",
-             "hold", "sparse", "taken", "roster_changed", "next_week", "designations")
+             "hold", "sparse", "taken", "roster_changed", "next_week", "designations",
+             "open_spot")
 
 #: Saturday of NFL week 3 in the fixture calendar (games Sun 2026-09-27),
 #: rendered at noon UTC: pregame, nothing locked, waivers cleared.
@@ -100,7 +109,7 @@ SCENARIO_NOW = {"slate_end": NOW_SLATE_END, "taken": NOW_LATER,
 TWO_RUN = ("taken", "roster_changed", "next_week")
 #: The synthetic scenarios that are the `complete` cache with a twist.
 _BASE = {"slate_end": "complete", "hold": "complete", "sparse": "complete",
-         "designations": "complete",
+         "designations": "complete", "open_spot": "complete",
          "taken": "complete", "roster_changed": "complete", "next_week": "complete"}
 
 #: Unrostered fixture players with box scores AND crosswalk rows. Two go to
@@ -250,6 +259,18 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
         # the owner dropped his cheapest droppable TE and starts the other
         mine["players"] = [s for s in mine["players"] if s != "3271"]
         mine["starters"] = ["5022" if s == "3271" else s for s in mine["starters"]]
+    # The real league object sends `taxi: null` on every roster; the fixture
+    # predates that field. Bench spots: the owner's active roster (players
+    # minus IR) fills the league exactly, except in open_spot, which keeps
+    # the fixture's five bench spots and so leaves two of them empty.
+    for r in snapshot["rosters"]:
+        r.setdefault("taxi", None)
+    if twist != "open_spot":
+        active = len(set(mine["players"]) - set(mine.get("reserve") or []))
+        if twist == "roster_changed" and run == 2:
+            active += 1          # the same league as run 1: one spot now open
+        lineup = [x for x in snapshot["league"]["roster_positions"] if x != "BN"]
+        snapshot["league"]["roster_positions"] = lineup + ["BN"] * (active - len(lineup))
     for m in snapshot["matchups"]:
         if str(m.get("roster_id")) == str(mine.get("roster_id")):
             m["starters"] = list(mine["starters"])

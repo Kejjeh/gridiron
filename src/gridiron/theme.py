@@ -139,6 +139,7 @@ font-size:14px;letter-spacing:.01em;border:1px solid transparent;display:flex;al
 .nav .brand{flex:0 0 auto;font-weight:900;letter-spacing:.14em;text-transform:uppercase;font-size:12px;color:var(--fg);padding:0 10px 0 0}
 .hero{padding:14px 0 4px}
 .eyebrow{font-size:var(--t-xs);letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:700}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;margin:0;padding:0;border:0}
 .statusbar{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 6px}
 .chip{display:inline-block;padding:6px 12px;border-radius:999px;background:var(--card);
 border:1px solid var(--line);font-size:var(--t-s);color:var(--muted);line-height:1.35}
@@ -188,11 +189,12 @@ li[data-live] .badge,[data-live] .badge.v-LINEUP,[data-held] .badge.v-LINEUP{bac
 @media (min-width:700px){.controls{grid-template-columns:2fr 1fr 1fr}body{padding:0 24px 64px}h1{font-size:32px}}
 @media (min-width:1100px){body{padding:0 32px 80px}}
 @media (max-width:560px){h1{font-size:25px}.card{padding:14px 14px}.act{padding:13px 14px}
-.nav{position:fixed;top:auto;bottom:0;left:0;right:0;margin:0;padding:6px 8px 16px;
+.nav{position:fixed;top:auto;bottom:0;left:0;right:0;margin:0;
+padding:6px max(8px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));
 border-top:1px solid var(--line);border-bottom:0;gap:4px}
 .nav a{font-size:13.5px;padding:10px 2px;min-height:48px}.nav .brand{display:none}
-body{padding-bottom:96px}[id]{scroll-margin-top:12px}.hero{padding-top:8px}
-.statusbar{gap:6px}.chip{font-size:12.5px;padding:5px 10px}}
+body{padding-bottom:calc(96px + env(safe-area-inset-bottom))}[id]{scroll-margin-top:12px}.hero{padding-top:8px}
+.statusbar{gap:4px 14px;margin:2px 0 4px}.chip{font-size:13px;padding:2px 0;background:none;border:0;border-radius:0}.chip.bad{padding:4px 10px;border:1px solid rgba(255,128,128,.45);border-radius:999px}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 @media print{.nav,button,.snap{display:none}details{display:block}details>*{display:block}body{background:#fff;color:#000}}
 """
@@ -412,3 +414,20 @@ window.gridironSnapshot={check:check,state:function(){ return S; },tune:function
   if(typeof o.timeoutMs==='number'&&o.timeoutMs>0) S.timeoutMs=o.timeoutMs; if(typeof o.backoffMaxMs==='number') S.backoffMaxMs=o.backoffMaxMs; if(typeof o.throttleMs==='number') S.throttleMs=o.throttleMs; schedule(S.intervalMs); return S; }};
 })();
 """
+
+
+#: The viewport both pages declare. `viewport-fit=cover` lets the phone tab
+#: bar reach the screen edge on an iPhone with a home indicator; the CSS
+#: then pads it by `env(safe-area-inset-bottom)` so no tab sits under it.
+VIEWPORT = "width=device-width, initial-scale=1, viewport-fit=cover"
+
+
+def page_copy(html_text: str) -> str:
+    """The words a reader can see or hear: the page with its stylesheets and
+    inline style attributes removed. For wording guards ("never call a lead
+    safe"): a CSS identifier such as `env(safe-area-inset-bottom)` is not a
+    claim, while script strings stay in, because the page's own script
+    writes visible copy."""
+    import re
+    out = re.sub(r"<style\b[^>]*>.*?</style>", " ", html_text, flags=re.S | re.I)
+    return re.sub(r"\sstyle=\"[^\"]*\"", " ", out)

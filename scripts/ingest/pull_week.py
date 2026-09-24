@@ -40,8 +40,9 @@ from gridiron import livesync as ls
 from gridiron.league_config import SEASON_YEAR
 from gridiron.paths import ensure_dirs
 from gridiron.scoring import scoring_coverage
-from gridiron.sleeper import (USER_AGENT, SleeperReadOnly, note_player_map_request,
-                              player_map_budget, read_player_map_ledger)
+from gridiron.sleeper import (USER_AGENT, SleeperReadOnly, note_player_map_check,
+                              note_player_map_request, player_map_budget,
+                              read_player_map_history, write_player_map_status)
 
 NFLVERSE_SOURCES = ("weekly_stats", "snap_counts", "schedules", "injuries")
 
@@ -188,32 +189,41 @@ def _map_evidence(manifest: ing.Manifest) -> datetime | None:
 
 
 def pull_player_map(manifest: ing.Manifest, client, now: datetime, *,
-                    cold_start: bool = False) -> None:
+                    carried: bool = False, run: int | None = None,
+                    bootstrap: bool = False) -> None:
     """Request Sleeper's full player map only when its budget allows.
 
     `--force` does not reach here: the budget is Sleeper's ask, not a cache
     policy (gridiron.sleeper.player_map_budget). A request is ledgered BEFORE
     the GET, so a crash mid-download still counts against the day. A request
     that is not made restamps nothing; the map is aged from its own pull.
+    Every run stamps a trustworthy ledger as checked (request times kept), so
+    the next cloud run can tell the carry is being saved, and writes its
+    decision to PLAYER_MAP_STATUS for the page.
     """
     name = "sleeper_players"
     directory = manifest.directory
-    budget = player_map_budget(read_player_map_ledger(directory), now,
-                               fallback_last=_map_evidence(manifest),
-                               cold_start=cold_start)
+    history = read_player_map_history(directory)
+    budget = player_map_budget(history, now, carried=carried, run=run,
+                               bootstrap=bootstrap, fallback_last=_map_evidence(manifest))
+    write_player_map_status(directory, now, budget)
     if not budget.due:
-        print(f"  {name}: not requested — {budget.reason}")
+        note_player_map_check(directory, now, run)
+        print(f"  {name}: not requested — {budget.reason}",
+              file=sys.stderr if budget.needs_person else sys.stdout)
         e = manifest.get(name)
         # Not refreshing it was the budget's decision, not a failure, so the
         # carried mark is cleared — but only when the last logged request
         # SUCCEEDED. After a failed one the mark stays and the gate withholds.
         if (e is not None and e.error == CARRIED_FORWARD and budget.last_ok is True
-                and manifest.file(name) is not None):
+                and not budget.needs_person and manifest.file(name) is not None):
             manifest.entries[name] = replace(e, error="")
             print(f"  {name}: carried map pulled {e.as_of} kept as-is "
                   f"(designations are aged from that pull)")
         return
-    note_player_map_request(directory, now, outcome="requested", note=budget.reason)
+    if bootstrap and not history.problem and history.lines:
+        print(f"  {name}: bootstrap not needed; the ledger governs")
+    note_player_map_request(directory, now, outcome="requested", note=budget.reason, run=run)
     path = directory / "sleeper_players.json"
     try:
         players = client.players()
@@ -223,14 +233,21 @@ def pull_player_map(manifest: ing.Manifest, client, now: datetime, *,
         atomic(path, lambda t: t.write_text(json.dumps(players), encoding="utf-8"))
         manifest.record(name, path=path, rows=len(players),
                         source="api.sleeper.app/v1/players/nfl (read-only)", as_of=now)
-        note_player_map_request(directory, now, outcome="ok")
+        note_player_map_request(directory, now, outcome="ok", run=run)
         print(f"  {name}: {len(players)} players (next request no sooner than 24 h)")
     except Exception as exc:
         err = f"{type(exc).__name__}: {exc}"
         manifest.record_failure(name, source="api.sleeper.app", error=err, at=now)
-        note_player_map_request(directory, now, outcome="failed", note=err)
-        print(f"  {name}: FAILED {err} — not retried until the next day's window",
-              file=sys.stderr)
+        note_player_map_request(directory, now, outcome="failed", note=err, run=run)
+        print(f"  {name}: FAILED {err} — not retried for 24 h", file=sys.stderr)
+
+
+def run_number(text: str | None) -> int | None:
+    """GitHub's per-workflow run counter, or None. Not a credential: it is the
+    number every run page shows. It only increases, so a carried ledger
+    stamped by run N-1 proves no run in between lost its save."""
+    text = (text or "").strip()
+    return int(text) if text.isdigit() and int(text) > 0 else None
 
 
 def reusable_league_snapshot(manifest: ing.Manifest, now: datetime, minutes: float,
@@ -259,7 +276,8 @@ def reusable_league_snapshot(manifest: ing.Manifest, now: datetime, minutes: flo
 
 def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
                  with_players: bool, *, client=None, reuse_league_minutes: float = 0,
-                 cold_start: bool = False) -> int:
+                 carried: bool = False, run: int | None = None,
+                 bootstrap: bool = False) -> int:
     client = client or SleeperReadOnly()
     week = 0
     reused = (reusable_league_snapshot(manifest, now, reuse_league_minutes,
@@ -301,7 +319,8 @@ def pull_sleeper(manifest: ing.Manifest, now: datetime, force: bool,
     if not with_players:
         print("  sleeper_players: skipped (--no-players)")
     else:
-        pull_player_map(manifest, client, now, cold_start=cold_start)
+        pull_player_map(manifest, client, now, carried=carried, run=run,
+                        bootstrap=bootstrap)
     return week
 
 
@@ -368,10 +387,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="reuse a league snapshot published (without error) in the "
                          "last MINUTES instead of fetching it again; the cloud run "
                          "passes this because its sync step has just fetched it")
-    ap.add_argument("--player-map-cold-start", action="store_true",
-                    help="with NO earlier player-map request on record, allow one "
-                         "outside the daily cold-start slot (a first local run); "
-                         "the once-a-day budget still applies after it")
+    ap.add_argument("--player-map-bootstrap", "--player-map-cold-start",
+                    dest="player_map_bootstrap", action="store_true",
+                    help="a person's one-time recovery: with NO trustworthy "
+                         "player-map request ledger, allow one request (refused "
+                         "while the cached map shows one under 24 h old); ignored "
+                         "when the ledger is sound")
+    ap.add_argument("--carried-history", action="store_true",
+                    help="the ledger is carried between runs by a disposable "
+                         "cache (the cloud run): request only when the carried "
+                         "ledger was saved by the previous run (GITHUB_RUN_NUMBER)")
     args = ap.parse_args(argv)
 
     ensure_dirs()
@@ -397,7 +422,8 @@ def main(argv: list[str] | None = None) -> int:
     print("[pull] sleeper (read-only)")
     pull_sleeper(manifest, now, args.force, not args.no_players,
                  reuse_league_minutes=args.reuse_league_snapshot,
-                 cold_start=args.player_map_cold_start)
+                 carried=args.carried_history, run=run_number(os.environ.get("GITHUB_RUN_NUMBER")),
+                 bootstrap=args.player_map_bootstrap)
     check_scoring_inputs(manifest)
     # Save under the same lock the sync uses, merging in anything a concurrent
     # writer committed while this pull was running. Without the merge, a long
