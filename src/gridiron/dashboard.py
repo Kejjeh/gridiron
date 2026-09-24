@@ -148,6 +148,17 @@ class Dashboard:
         return bool(self.notes) or any(s.status is not Status.FRESH for s in self.sources)
 
     # ------------------------------------------------------------ archive
+    def desk(self) -> "Desk":
+        """The Action Desk: this page's actions, prioritised for the first
+        screen (see `action_desk`). Derived on demand, never archived."""
+        until, _ = valid_until(self.sources, [a for a in ("lineup", "waiver")
+                                              if self.gate.allows(a)], self.generated)
+        src = next((x for x in self.sources if x.name == "sleeper_players"), None)
+        des = (src.as_of.astimezone(timezone.utc).strftime("%a %d %b %H:%M UTC")
+               if src is not None and src.as_of else "at an unknown time")
+        return action_desk(self.actions, self.gate, valid_until=until,
+                           designations_as_of=des, snapshot_as_of=self.snapshot_as_of)
+
     def record(self) -> dict:
         """The decision-time record: every number that was on the page."""
         def player(p: Player | None, withheld: bool = False) -> dict | None:
@@ -632,6 +643,17 @@ class Action:
     #: its own (waiver timing is unknown) but still lapses at kickoff. The
     #: page re-judges it on the reader's clock.
     lapses_at: datetime | None = None
+    #: Short, structured restatements for the Action Desk, written by the
+    #: producer that knows the players (never parsed out of `detail`). Not
+    #: part of `record()`: the archive keeps the sentences it always had.
+    why_now: str = ""
+    benefit: str = ""
+    cost: str = ""
+    #: Display names parallel to `player_ids`, for the desk's check wording.
+    names: tuple[str, ...] = field(default=())
+    #: A pickup's unverified-drop check (`gridiron.waivers.drop_rule`); "" when
+    #: the drop is known to be allowed or the action drops nobody.
+    drop_check: str = ""
 
     @property
     def lapse(self) -> datetime | None:
@@ -842,7 +864,11 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                 evidence=("an unfilled slot scores nothing; this is not a "
                           "projection question",),
                 withheld_reasons=l_why, verify=l_verify,
-                player_ids=(best.sleeper_id,) if best else (), slot=slots[i]))
+                player_ids=(best.sleeper_id,) if best else (), slot=slots[i],
+                why_now=note, benefit=(f"an empty {slots[i]} scores 0; {best.name} "
+                                       f"projects {_num(best.value, 2)}" if best else
+                                       f"an empty {slots[i]} scores 0"),
+                cost="nobody leaves the lineup", names=(best.name,) if best else ()))
             continue
         if cur.projection.is_withheld and cur.movable:
             replacement = best if (best and best.sleeper_id != cur.sleeper_id) else None
@@ -874,7 +900,14 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                 withheld_reasons=l_why, verify=l_verify,
                 delta_points=(float(replacement.value or 0.0) if replacement else None),
                 player_ids=((replacement.sleeper_id, cur.sleeper_id) if replacement
-                            else (cur.sleeper_id,)), slot=slots[i]))
+                            else (cur.sleeper_id,)), slot=slots[i],
+                why_now=note,
+                benefit=(f"{replacement.name} projects {_num(replacement.value, 2)} where "
+                         f"{cur.name} projects 0 ({why})" if replacement else
+                         f"{cur.name} projects 0 ({why})"),
+                cost=(f"{cur.name} goes to the bench" if replacement else
+                      "no eligible bench player — the slot stays as it is"),
+                names=((replacement.name, cur.name) if replacement else (cur.name,))))
 
     # 2. Favourable swaps the optimizer found, above the noise floor.
     for a in plan.alternatives:
@@ -903,7 +936,13 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                       f"{_num(a.starter.sd, 2)}"),
             withheld_reasons=l_why, verify=l_verify,
             delta_points=a.delta_points, z=a.z,
-            player_ids=(a.bench.sleeper_id, a.starter.sleeper_id), slot=a.slot))
+            player_ids=(a.bench.sleeper_id, a.starter.sleeper_id), slot=a.slot,
+            why_now=note,
+            benefit=(f"{_num(a.delta_points, 2, True)} projected pts this week"
+                     + (f" (z {_num(a.z, 2)}: inside the noise)" if noise else
+                        f" (z {_num(a.z, 2)})" if a.z is not None else "")),
+            cost=f"{a.starter.name} goes to the bench",
+            names=(a.bench.name, a.starter.name)))
 
     # 3. Acquisitions. Only a pair that improves THIS WEEK's best legal
     # lineup gets a card, and the card is CONDITIONAL at best: the lineup
@@ -997,10 +1036,223 @@ def build_actions(*, plan: LineupPlan, board: WaiverBoard, gate: ActionGate,
                                       f"drop — the protected list names the ones this "
                                       f"page will not rank"),
             delta_points=u.lineup_gain, order=i, lapses_at=kick,
-            player_ids=(u.add.sleeper_id, u.drop.sleeper_id), slot=u.slot))
+            player_ids=(u.add.sleeper_id, u.drop.sleeper_id), slot=u.slot,
+            why_now=("claims process on Sleeper's clock, not known here; to count this "
+                     "week it must clear before " + (f"{kick.astimezone(timezone.utc):%a %d %b %H:%M} UTC"
+                                                      if kick is not None else "an UNKNOWN kickoff")),
+            benefit=(f"{_num(u.lineup_gain, 2, True)} to this week's best legal lineup: "
+                     f"{u.add.name} ({u.add.position}, {_num(u.add.value, 2)}) enters {u.slot}"
+                     + (f", {u.displaces.name} leaves the lineup"
+                        if u.displaces is not None and u.displaces.sleeper_id != u.drop.sleeper_id
+                        else "")),
+            cost=f"drop {u.drop.name} ({u.drop.position}, {_num(u.drop.value, 2)} projected)",
+            names=(u.add.name, u.drop.name), drop_check=u.drop_check))
 
     out.sort(key=lambda a: a.rank)
     return tuple(out)
+
+
+# --------------------------------------------------------------------------
+# The Action Desk: the actions above, prioritised for the first screen
+# --------------------------------------------------------------------------
+#: How many supported cards the desk leads with. More than three and the
+#: first phone screen is a list again, not a decision.
+DESK_TOP = 3
+#: Sources whose staleness only means "a status tag may have changed": a
+#: move withheld on these alone is a check the owner can make in Sleeper in
+#: seconds, not a page that has lost track of the roster.
+_DESIGNATION_SOURCES = frozenset({"sleeper_players", "injuries"})
+
+
+@dataclass(frozen=True)
+class DeskItem:
+    """One card on the desk. `rows` are the six answers, in order; every
+    sentence in them was written by the producer of the action(s)."""
+
+    label: str        # LINEUP MOVE | IF AVAILABLE | CHECK IN SLEEPER | WITHHELD | OPTIONAL
+    tone: str         # go | cond | check | held | opt
+    title: str
+    rows: tuple[tuple[str, str], ...]
+    actions: tuple[Action, ...]
+    lapse: datetime | None
+    link: str
+    link_text: str
+    #: The earlier of `lapse` and the page's evidence expiry: when this card
+    #: stops being true. None = UNKNOWN (never invented).
+    until: datetime | None = None
+
+
+@dataclass(frozen=True)
+class Desk:
+    headline: str
+    top: tuple[DeskItem, ...]          # supported, best first, at most DESK_TOP
+    checks: tuple[DeskItem, ...]       # CHECK IN SLEEPER
+    more: tuple[DeskItem, ...]         # supported overflow, then optional
+    withheld: tuple[DeskItem, ...]     # last known picture, inputs stale
+    hold: bool
+
+
+def _when(t: datetime) -> str:
+    return f"{t.astimezone(timezone.utc):%a %d %b %H:%M} UTC"
+
+
+def _first(*ts: datetime | None) -> datetime | None:
+    known = [t for t in ts if t is not None]
+    return min(known) if known else None
+
+
+def _valid_row(lapse: datetime | None, until: datetime | None, evidence: str) -> str:
+    known = [(t, w) for t, w in ((lapse, "the first kickoff it involves"),
+                                 (until, "the evidence behind it passes its limit"))
+             if t is not None]
+    if not known:
+        head = "UNKNOWN — no kickoff time or evidence expiry could be established"
+    else:
+        t, why = min(known, key=lambda x: x[0])
+        head = f"{_when(t)}, when {why}"
+    return head + (f" · evidence: {evidence}" if evidence else "")
+
+
+def action_desk(actions: Sequence[Action], gate: ActionGate, *,
+                valid_until: datetime | None, designations_as_of: str,
+                snapshot_as_of: str = "") -> Desk:
+    """Sort the page's actions into the desk. Nothing is re-judged here: the
+    status each action carries (from the gate, the lock and the drop rule)
+    decides where it goes, and only the wording is condensed."""
+    evidence = f"league snapshot {snapshot_as_of}" if snapshot_as_of else ""
+
+    def gate_of(a: Action):
+        return gate.gate("waiver" if a.kind == "acquire" else "lineup")
+
+    def link(a: Action) -> tuple[str, str]:
+        if a.kind == "acquire" and a.player_ids:
+            return f"#fa-{a.player_ids[0]}", "Open in Free Agent Radar"
+        return "#startsit", "Open the start/sit comparison"
+
+    def availability(a: Action) -> str:
+        return next((v for v in a.verify if "FREE AGENT" in v),
+                    "open the player in Sleeper: it shows FREE AGENT or a waiver clear time")
+
+    def designation_check(a: Action) -> str:
+        who = ", ".join(a.names) or "the players in this move"
+        return (f"open {who} in Sleeper and read the status tag beside each name "
+                f"(Q, D, O, IR or none): this page's designations come from the "
+                f"once-a-day player map pulled {designations_as_of}, older than the "
+                f"gate allows")
+
+    def item(a: Action, label: str, tone: str) -> DeskItem:
+        if label == "LINEUP MOVE":
+            check = (f"none open — every input it rests on was current when built "
+                     f"(designations {designations_as_of})")
+        elif label == "IF AVAILABLE":
+            check = availability(a)
+        elif label == "CHECK IN SLEEPER":
+            parts = []
+            if a.withheld:
+                parts.append(designation_check(a))
+            if a.drop_check:
+                parts.append(a.drop_check)
+            if a.kind == "acquire":
+                parts.append(availability(a))
+            check = "; then ".join(parts)
+        elif label == "WITHHELD":
+            check = "; ".join(gate_of(a).verify() or a.verify) or "see the inputs section"
+        else:
+            check = "none — optional"
+        title = a.title
+        valid = ("not supported now: " + "; ".join(a.withheld_reasons)
+                 if label == "WITHHELD" else _valid_row(a.lapse, valid_until, evidence))
+        href, text = link(a)
+        rows = (("Why now", a.why_now or a.deadline_note), ("Benefit", a.benefit or a.body),
+                ("Cost", a.cost or "—"), ("If not", a.backup or "—"),
+                ("Check", check), ("Valid until", valid))
+        return DeskItem(label, tone, title, rows, (a,), a.lapse, href, text,
+                        _first(a.lapse, valid_until) if label != "WITHHELD" else None)
+
+    def group(items: list[DeskItem]) -> list[DeskItem]:
+        """Pickups that cost the same drop are one either/or card."""
+        out: list[DeskItem] = []
+        by_drop: dict[str, list[DeskItem]] = {}
+        for it in items:
+            a = it.actions[0]
+            if a.kind == "acquire" and len(a.player_ids) > 1:
+                by_drop.setdefault(a.player_ids[1], []).append(it)
+        done: set[int] = set()
+        for it in items:
+            if id(it) in done:
+                continue
+            a = it.actions[0]
+            peers = by_drop.get(a.player_ids[1], []) if a.kind == "acquire" and len(a.player_ids) > 1 else []
+            if len(peers) < 2:
+                out.append(it)
+                continue
+            done.update(id(x) for x in peers)
+            acts = tuple(x.actions[0] for x in peers)
+            drop = a.names[1] if len(a.names) > 1 else "the same player"
+            rows = dict(it.rows)
+            rows["Benefit"] = ("; ".join(f"{x.names[0] if x.names else '?'} "
+                                         f"{_num(x.delta_points, 2, True)} via {x.slot}"
+                                         for x in acts)
+                               + " — this week's best legal lineup; one or the other, not both")
+            rows["If not"] = a.backup or "—"
+            lapses = [x.lapse for x in acts if x.lapse is not None]
+            rows["Valid until"] = (_valid_row(min(lapses) if lapses else None, valid_until,
+                                              evidence) if it.label != "WITHHELD"
+                                   else rows["Valid until"])
+            names = " or ".join(x.names[0] if x.names else "?" for x in acts)
+            # Only a supported group may say "pick": a withheld or unchecked
+            # one describes what the last snapshot showed, never an order.
+            title = (f"Pick one — {names}; both cost dropping {drop}"
+                     if it.label == "IF AVAILABLE" else
+                     f"Either/or in the last snapshot — {names}; both would have cost {drop}")
+            out.append(DeskItem(it.label, it.tone, title,
+                                tuple((k, rows[k]) for k, _ in it.rows), acts,
+                                min(lapses) if lapses else None, it.link, it.link_text,
+                                _first(min(lapses) if lapses else None, valid_until)
+                                if it.label != "WITHHELD" else None))
+        return out
+
+    supported: list[DeskItem] = []
+    checks: list[DeskItem] = []
+    optional: list[DeskItem] = []
+    withheld: list[DeskItem] = []
+    for a in sorted(actions, key=lambda a: a.rank):
+        g = gate_of(a)
+        if a.kind == "swap" and a.urgency == "INFO":
+            # inside the noise: never worth a top slot or a check in Sleeper,
+            # whatever its status (a withheld one keeps its neutral title)
+            optional.append(item(a, "OPTIONAL", "opt"))
+        elif a.actionable:
+            supported.append(item(a, "LINEUP MOVE", "go"))
+        elif a.conditional and a.drop_check:
+            checks.append(item(a, "CHECK IN SLEEPER", "check"))
+        elif a.conditional:
+            supported.append(item(a, "IF AVAILABLE", "cond"))
+        elif (a.withheld and a.kind != "verify" and g.blockers
+              and set(g.sources) <= _DESIGNATION_SOURCES):
+            checks.append(item(a, "CHECK IN SLEEPER", "check"))
+        else:
+            withheld.append(item(a, "WITHHELD", "held"))
+    supported, checks, withheld = group(supported), group(checks), group(withheld)
+    top, overflow = supported[:DESK_TOP], supported[DESK_TOP:]
+
+    def n(k: int, word: str) -> str:
+        return f"{k} {word}{'' if k == 1 else 's'}"
+
+    moves = sum(1 for i in supported if i.label == "LINEUP MOVE")
+    picks = sum(1 for i in supported if i.label == "IF AVAILABLE")
+    parts = ([n(moves, "lineup move")] if moves else []) + \
+            ([n(picks, "pickup") + " if available"] if picks else [])
+    if parts:
+        headline = " · ".join(parts + ([f"{len(checks)} to check in Sleeper"] if checks else []))
+    elif checks:
+        headline = "Check Sleeper before acting"
+    elif withheld:
+        headline = "Hold — inputs are stale"
+    else:
+        headline = "Hold — no change needed"
+    return Desk(headline, tuple(top), tuple(checks), tuple(overflow + optional),
+                tuple(withheld), hold=not supported)
 
 
 # --------------------------------------------------------------------------
@@ -1188,7 +1440,36 @@ color:inherit;font-weight:500;list-style:none}
 .badge.v-LOCKED,.badge.v-UNKNOWN{color:var(--bad);border-color:rgba(255,128,128,.45)}
 .radar li[hidden]{display:none}
 .chg li{margin:3px 0}
-@media (max-width:560px){.radar summary{padding:9px 2px}.radar .rname{font-size:15px}}
+.desk h2{border-top:0;margin-top:22px;padding-top:0}
+.desk-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0 28px}
+.deskh{font-size:var(--t-xs);letter-spacing:.12em;text-transform:uppercase;color:var(--warn);margin:22px 0 4px}
+.dcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin:12px 0;
+box-shadow:inset 3px 0 0 var(--line2)}
+.dcard.first{background:var(--card2);border-color:var(--line2);padding:18px 20px}
+.dcard.tone-go{box-shadow:inset 3px 0 0 var(--lime)}.dcard.tone-cond{box-shadow:inset 3px 0 0 var(--cyan)}
+.dcard.tone-check{box-shadow:inset 3px 0 0 var(--warn)}.dcard.tone-hold{box-shadow:inset 3px 0 0 var(--muted)}
+.dhead{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dhead .rank{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+font-weight:800;font-size:13px;background:var(--fg);color:var(--lime-ink)}
+.dhead .best{font-size:var(--t-xs);letter-spacing:.12em;text-transform:uppercase;color:var(--fg);font-weight:800}
+.dhead .until{margin-left:auto;font-size:var(--t-s);color:var(--muted)}
+.dcard h3{font-size:18px;line-height:1.3;margin:10px 0 4px;max-width:60ch}
+.dcard.first h3{font-size:21px;letter-spacing:-.01em}
+.dcard .lead{font-size:var(--t-s);color:var(--muted);margin:6px 0 2px;max-width:75ch}
+.facts{margin:10px 0 0}
+.facts>div{display:grid;grid-template-columns:8.5em minmax(0,1fr);gap:12px;padding:9px 0;border-top:1px solid var(--line)}
+.facts dt{font-size:var(--t-xs);letter-spacing:.09em;text-transform:uppercase;color:var(--dim);font-weight:700;padding-top:3px}
+.facts dd{margin:0;font-size:14.5px;line-height:1.5;max-width:75ch}
+.dfoot{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin-top:12px}
+.dfoot .full{margin:0}.dfoot .full>summary{min-height:44px;display:flex;align-items:center}
+.dfoot .full[open]{flex-basis:100%}.dfoot .full h4{font-size:14.5px;margin:12px 0 2px}.dfoot .full p,.dfoot .full li{font-size:var(--t-s);color:var(--muted);max-width:80ch}
+.more{margin:14px 0}.more>summary{min-height:44px;display:flex;align-items:center}
+.desk-side .panel details>summary{min-height:40px}
+@media (min-width:1100px){.desk-grid{grid-template-columns:minmax(0,1fr) 340px}
+.desk-side{position:sticky;top:72px;align-self:start;max-height:calc(100vh - 88px);overflow:auto;padding-top:0}}
+@media (max-width:560px){.radar summary{padding:9px 2px}.radar .rname{font-size:15px}
+.facts>div{grid-template-columns:1fr;gap:2px;padding:8px 0}.dcard,.dcard.first{padding:14px 15px}
+.dcard.first h3{font-size:19px}.dhead .until{margin-left:0;flex-basis:100%}}
 """
 
 
@@ -1310,6 +1591,72 @@ def _action_card(a: "Action") -> str:
 
 
 
+
+_DESK_LEAD = {
+    "cond": ("<p class=\"lead\"><b>CONDITIONAL — if available.</b> The lineup arithmetic is "
+             "current; whether the player can be claimed is NOT established here. Endorsed "
+             "only if Sleeper shows him available.</p>"),
+    "held": "<p class=\"lead\"><b>Last known picture — no action is being recommended.</b></p>",
+    "check": ("<p class=\"lead\"><b>Not advice until checked.</b> This is the comparison as "
+              "last computed; the check below decides whether it holds.</p>"),
+    "opt": ("<p class=\"lead\">Optional: the edge is inside the noise of the two projections, "
+            "so doing nothing is fine.</p>"),
+}
+
+
+def _action_detail(a: "Action", *, titled: bool = False) -> str:
+    """Everything the action card used to say, for the desk card's
+    "Full reasoning" disclosure. Wording unchanged. `titled` leads with the
+    action's own headline, for a card that groups several."""
+    out = ([f"<h4>{_e(a.title)}</h4>"] if titled else []) + [
+        f"<p>{_e(a.body)}</p>", f"<p class=\"deadline\">{_e(a.deadline_note)}</p>"]
+    if a.backup:
+        out.append(f"<p class=\"backup\">Backup — {_e(a.backup)}</p>")
+    if a.withheld:
+        out.append("<p class=\"why\"><b class=\"bad\">Not advice right now.</b> "
+                   + _e("; ".join(a.withheld_reasons))
+                   + ". The comparison above is the last known picture, kept so it is "
+                     "not lost; it is not a statement about the situation now.</p>")
+    if a.verify:
+        out.append("<p class=\"why\">Verify first: " + _e("; ".join(a.verify)) + ".</p>")
+    if a.evidence:
+        out.append("<ul class=\"small\">" + "".join(f"<li>{_e(x)}</li>" for x in a.evidence)
+                   + "</ul>")
+    return "".join(out)
+
+
+def _desk_card(item: "DeskItem", rank: int | None, *, first: bool = False) -> str:
+    """One Action Desk card: the verdict, the six answers, one link into the
+    detail, and the full wording one tap away. Carries the same live
+    attributes as every other move, so the reader's clock can lapse it."""
+    endorsed = all(a.actionable or a.conditional for a in item.actions)
+    attrs = _live_attrs(item.lapse, gated=item.tone in ("go", "cond", "opt") and endorsed,
+                        move=True, held=item.tone == "held")
+    head = ("<div class=\"dhead\">"
+            + (f"<span class=\"rank\">{rank}</span>" if rank else "")
+            + f"<span class=\"badge {_e(item.tone)}\">{_e(item.label)}</span>"
+            + ("<span class=\"best\">Best next step</span>" if first else "")
+            + (f"<span class=\"until\">until {theme.time_html(item.until, _when(item.until))}</span>"
+               if item.until is not None else "")
+            + "</div>")
+    facts = "".join(f"<div><dt>{_e(k)}</dt><dd>{_e(v)}</dd></div>" for k, v in item.rows)
+    detail = "".join(_action_detail(a, titled=len(item.actions) > 1) for a in item.actions)
+    return (f"<article class=\"dcard tone-{_e(item.tone)}{' first' if first else ''}\"{attrs}>"
+            + head + f"<h3>{_e(item.title)}</h3><span class=\"vstate\">"
+            + (_e(_HELD) if item.tone == "held" else "") + "</span>"
+            + _DESK_LEAD.get(item.tone, "")
+            + f"<dl class=\"facts\">{facts}</dl>"
+            + "<div class=\"dfoot\">"
+            + ("".join(f"<a class=\"btn{' primary' if first and i == 0 else ''}\" "
+                       f"href=\"#fa-{_e(a.player_ids[0])}\">{_e(a.names[0] if a.names else 'Option')} "
+                       f"in the Radar →</a>" for i, a in enumerate(item.actions))
+               if len(item.actions) > 1 and all(a.kind == "acquire" and a.player_ids
+                                                for a in item.actions) else
+               f"<a class=\"btn{' primary' if first else ''}\" href=\"{_e(item.link)}\">"
+               f"{_e(item.link_text)} →</a>")
+            + f"<details class=\"full\"><summary>Full reasoning</summary>{detail}</details>"
+            + "</div></article>")
+
 # --------------------------------------------------------------------------
 # The Free Agent Radar
 # --------------------------------------------------------------------------
@@ -1403,7 +1750,7 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
              f"data-gain=\"{'' if gain is None else gain}\" data-gap=\"{'' if c.gap is None else c.gap}\" "
              f"data-name=\"{_e(a.name.lower())}\" data-team=\"{_e(a.team.lower())}\" data-order=\"{order}\""
              + live)
-    return (f"<li class=\"rrow\" {attrs}><details><summary>"
+    return (f"<li class=\"rrow\" id=\"fa-{_e(a.sleeper_id)}\" {attrs}><details><summary>"
             f"<span><span class=\"rname\">{_e(a.name)}</span> {badge}<br>"
             f"<span class=\"rmeta\">{meta}</span><span class=\"vstate\">{vstate}</span></span>"
             f"<span class=\"rnum\">{head_num}</span></summary>"
@@ -1412,7 +1759,7 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
 
 def _radar_html(d: Dashboard) -> str:
     b = d.board
-    out = ["<h2 id=\"free-agents\">5. Free Agent Radar — every available player against your "
+    out = ["<h2 id=\"free-agents\">Free Agent Radar — every available player against your "
            "roster</h2><div class=\"card\">"]
     waiver_ok = d.gate.allows("waiver")
     if not waiver_ok:
@@ -1570,7 +1917,20 @@ v.addEventListener('change',function(){ state.verdict=v.value; apply(); });
 s.addEventListener('change',function(){ state.sort=s.value; apply(); });
 chips.addEventListener('click',function(e){ var b=e.target&&e.target.closest?e.target.closest('button'):null; if(!b||!chips.contains(b)) return; state.pos=b.getAttribute('data-pos')||''; apply(); });
 apply();
-window.gridironRadar={apply:apply,state:function(){ return state; },set:function(o){ o=o||{}; ['q','verdict','sort','pos'].forEach(function(k){ if(typeof o[k]==='string') state[k]=o[k]; }); return apply(); },total:total};
+// A link from the Action Desk (#fa-<id>) must land on its row even when the
+// saved filters hide it: the filters are cleared, the row opened and focused.
+function reveal(id){ var r=document.getElementById(id); if(!r||!list.contains(r)) return false;
+  if(r.hasAttribute('hidden')){ state.q=''; state.verdict=''; state.pos=''; apply(); }
+  var dd=r.querySelector('details'); if(dd) dd.open=true;
+  var sm=r.querySelector('summary'); if(sm&&sm.focus){ try{ sm.focus({preventScroll:true}); }catch(e){ sm.focus(); } }
+  if(r.scrollIntoView) r.scrollIntoView({block:'start'});
+  // The hash has done its job; left in the URL it would re-reveal on every
+  // reload and wipe the filters the reader chose afterwards.
+  try{ if(history.replaceState&&location.hash==='#'+id) history.replaceState(null,'',location.pathname+location.search); }catch(e){}
+  return true; }
+function fromHash(){ var h=(location.hash||'').slice(1); if(h.indexOf('fa-')===0) reveal(h); }
+window.addEventListener('hashchange',fromHash); fromHash();
+window.gridironRadar={apply:apply,reveal:reveal,state:function(){ return state; },set:function(o){ o=o||{}; ['q','verdict','sort','pos'].forEach(function(k){ if(typeof o[k]==='string') state[k]=o[k]; }); return apply(); },total:total};
 })();
 """
 
@@ -1618,6 +1978,12 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         return (x.as_of.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
                 + ("" if x.status is Status.FRESH else f" ({x.status.value.upper()})"))
 
+    nd = d.next
+    b = d.board
+    desk = d.desk()
+    until, _ = valid_until(d.sources, [a for a in ("lineup", "waiver") if d.gate.allows(a)],
+                           d.generated)
+    stale = [x for x in d.sources if x.name in _SOURCE_WORDS and x.status is not Status.FRESH]
     out: list[str] = [
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
@@ -1631,91 +1997,149 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         f"<title>{_e(title)}</title>",
         f"<style nonce=\"{nonce}\">{_CSS}</style></head><body><main>",
         theme.nav_html("board"),
-        f"<h1>{_e(title)}</h1>",
-        f"<div class=\"sub\">{_e(ctx.headline())} · evidence boundary week {ctx.evidence_boundary}</div>",
+        "<header class=\"hero\">",
+        f"<div class=\"eyebrow\">Week {ctx.report_week} · Board"
+        + (f" · {_e(d.league_name)}" if include_names and d.league_name else "") + "</div>",
+        # The headline is the desk's verdict. It carries the evidence expiry
+        # like any endorsed card, so a tab left open past it strikes it out.
+        "<div class=\"headline\""
+        + ("" if desk.hold else f" data-gated=\"\" data-expire-text=\"{_e(_EXPIRED)}\"")
+        + f"><h1>{_e(desk.headline)}</h1><span class=\"vstate\"></span></div>",
+        "<div class=\"statusbar\">",
+    ]
+    if d.degraded:
+        out.append(f"<a class=\"chip bad\" href=\"#inputs\"><b>DEGRADED</b> "
+                   + (f"{len(stale)} input(s) not current" if stale else
+                      f"{len(d.notes)} note(s) below") + "</a>")
+    else:
+        out.append("<span class=\"chip ok\" data-gated=\"\" data-expire-text=\"No longer "
+                   "true: these inputs were current when the page was built and have since "
+                   "passed their freshness limit.\"><b class=\"ok\">All inputs current "
+                   "when built.</b><span class=\"vstate\"></span></span>")
+    if until is not None:
+        out.append(f"<span class=\"chip\">Moves valid until&nbsp;<b>"
+                   f"{theme.time_html(until, _when(until))}</b></span>")
+    players_src = src_by.get("sleeper_players")
+    warn = " warn" if players_src is not None and players_src.status is not Status.FRESH else ""
+    out.append(f"<span class=\"chip{warn}\""
+               + (f" data-asof=\"{_e(iso('sleeper_players'))}\"" if iso("sleeper_players") else "")
+               + ">Designations&nbsp;<b>"
+               + (theme.time_html(players_src.as_of, when("sleeper_players"))
+                  if players_src is not None and players_src.as_of else "never pulled")
+               + (f" {_e(players_src.status.value.upper())}" if warn else "")
+               + "</b><span class=\"age\"></span></span>")
+    out.append("</div></header>")
+    out.append(theme.validity_html())
+    out.append(theme.snapshot_banner_html())
+    if d.degraded:
+        # The warning and WHICH inputs it concerns stay in view; the verbatim
+        # notes (the same facts, per action) fold under it.
+        named = "; ".join(f"{_SOURCE_WORDS.get(x.name, x.name)} {x.status.value.upper()} "
+                          f"({x.reason})" for x in d.sources if x.status is not Status.FRESH)
+        out.append("<div class=\"banner\"><b class=\"bad\">DEGRADED</b> — one or more inputs "
+                   "are stale, missing or withheld. Every affected number is blank or "
+                   "labelled below; nothing is filled in."
+                   + (f"<p class=\"small\">{_e(named)}.</p>" if named else "")
+                   + (f"<details><summary>Every note ({len(d.notes)})</summary><ul>"
+                      + "".join(f"<li>{_e(n)}</li>" for n in d.notes) + "</ul></details></div>"
+                      if named and len(d.notes) > 2 else
+                      # nothing to name, or little to say: the notes ARE the warning
+                      "<ul>" + "".join(f"<li>{_e(n)}</li>" for n in d.notes) + "</ul></div>"))
+    out.append(theme.meta_details(
         "<div class=\"ages\">"
         + theme.age_span("League snapshot", iso("sleeper_league"), when("sleeper_league"))
         + theme.age_span("Projections", iso("weekly_stats"),
                          f"box scores through week {ctx.stats_through}, pulled {when('weekly_stats')}")
-        + theme.age_span("Designations", iso("sleeper_players"), when("sleeper_players"))
+        + theme.age_span("Designations", iso("sleeper_players"),
+                         when("sleeper_players") + " (once-a-day player map)")
         + theme.age_span("Page built", generated_iso,
                          d.generated.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
-        + "</div>",
-        theme.snapshot_html(),
-        theme.validity_html(),
-        f"<div class=\"sub small\">{_e(BASELINE_LABEL)}</div>",
-    ]
-    if d.degraded:
-        out.append("<div class=\"banner\"><b class=\"bad\">DEGRADED</b> — one or more inputs "
-                   "are stale, missing or withheld. Every affected number is blank or "
-                   "labelled below; nothing is filled in.<ul>"
-                   + "".join(f"<li>{_e(n)}</li>" for n in d.notes) + "</ul></div>")
-    else:
-        out.append("<div class=\"banner ok\" data-gated=\"\" data-expire-text=\"No longer "
-                   "true: these inputs were current when the page was built and have since "
-                   "passed their freshness limit.\"><b class=\"ok\">All inputs current "
-                   "when built.</b><span class=\"vstate\"></span></div>")
+        + "</div>"
+        + f"<p class=\"small sub\">{_e(ctx.headline())} · evidence boundary week "
+          f"{ctx.evidence_boundary}</p>"
+        + theme.snapshot_strip_html()
+        + f"<p class=\"small sub\">{_e(BASELINE_LABEL)}</p>"
+        + "<p class=\"small sub\"><a href=\"#inputs\">Every input and what it is good "
+          "enough for ↓</a></p>"))
 
-    # ------------------------------------------------- 1. the next decision
-    nd = d.next
-    live = [a for a in d.actions if a.actionable]
-    cond = [a for a in d.actions if a.conditional]
-    lineup_cards = [a for a in d.actions if a.kind != "acquire"]
-    acquire_cards = [a for a in d.actions if a.kind == "acquire"]
-    out.append(f"<h2>1. Next decision — week {ctx.report_week}</h2><div class=\"next\">")
-    if nd is not None:
-        out.append("<p class=\"small sub\">" + " · ".join(_e(x) for x in nd.evidence) + "</p>")
-        out.append(f"<p class=\"small\"><b>Lineup lock:</b> {nd.locked_starters} of "
-                   f"{nd.total_starters} starters locked"
-                   + (f"; still open: {_e('; '.join(nd.open_starters))}" if nd.open_starters
-                      else "; nothing on this week's lineup can still change")
-                   + ".</p>")
+    # ------------------------------------------------- 1. the action desk
     rc = d.radar_changes
     ch0 = d.changes
+    out.append(f"<section id=\"desk\" class=\"desk\"><h2>Action Desk — week {ctx.report_week}</h2>"
+               "<div class=\"desk-grid\"><div class=\"desk-main\">")
+    if d.actions and not any(a.actionable or a.conditional for a in d.actions):
+        out.append("<div class=\"gatebox\"><b class=\"bad\">No action is endorsed on "
+                   "this data.</b> Every item below is WITHHELD or waits on a check: the "
+                   "inputs behind it are stale or unreadable, so what follows is the last "
+                   "known picture rather than current advice.</div>")
+    for i, item in enumerate(desk.top, 1):
+        out.append(_desk_card(item, i, first=i == 1))
+    if desk.checks:
+        out.append("<h3 class=\"deskh\">Check in Sleeper first</h3>")
+        for item in desk.checks:
+            out.append(_desk_card(item, None))
+    if desk.hold:
+        if d.actions and all(a.withheld for a in d.actions) and not desk.checks:
+            why = "the inputs behind every comparison are stale or unreadable (see Inputs)"
+        elif nd is not None and nd.all_locked:
+            why = ("Every starter has kicked off. No lineup change this week is possible, "
+                   "and none is proposed; no available player can enter this week's lineup")
+        elif d.plan.abstained:
+            why = d.plan.abstained
+        else:
+            why = ("the current lineup is the best legal one the projections find, and no "
+                   "available player improves it")
+        out.append("<article class=\"dcard tone-hold first\"><div class=\"dhead\"><span "
+                   "class=\"badge\">HOLD</span></div><h3>Hold — no supported change</h3>"
+                   f"<dl class=\"facts\"><div><dt>Why</dt><dd>{_e(why)}.</dd></div>"
+                   "<div><dt>What would change it</dt><dd>A fresh "
+                   "league snapshot and player map within their game-day limits, a "
+                   "projection edge outside noise, or an available player who enters "
+                   "this week's lineup.</dd></div></dl>"
+                   "<div class=\"dfoot\"><a class=\"btn\" href=\"#free-agents\">Open the "
+                   "Free Agent Radar</a></div></article>")
+    if desk.withheld:
+        out.append(f"<details class=\"more\"><summary>Last known picture — {len(desk.withheld)} "
+                   f"withheld item(s)</summary>"
+                   + "".join(_desk_card(item, None) for item in desk.withheld) + "</details>")
+    if desk.more:
+        out.append(f"<details class=\"more\"><summary>More options ({len(desk.more)})</summary>"
+                   + "".join(_desk_card(item, None) for item in desk.more) + "</details>")
+    if any(a.kind == "acquire" for a in d.actions):
+        out.append("<p class=\"small sub\">Each pickup names the ONE drop it costs and the next "
+                   "verified drop. Two pickups that cost the same player are an either/or, "
+                   "not two moves.</p>")
+    out.append("</div><aside class=\"desk-side\" aria-label=\"This week\">")
+    # --- the side panel: this week at a glance
+    out.append("<div class=\"panel\"><h3>This week</h3>")
+    if nd is not None:
+        out.append(f"<p><b>Lineup lock:</b> {nd.locked_starters} of {nd.total_starters} "
+                   f"starters locked"
+                   + ("" if nd.open_starters else "; nothing on this week's lineup can still change")
+                   + ".</p>")
+        if nd.open_starters:
+            out.append(f"<details><summary>{len(nd.open_starters)} still open</summary><ul>"
+                       + "".join(f"<li>{_e(x)}</li>" for x in nd.open_starters) + "</ul></details>")
     roster_line = ("no earlier record to compare against" if ch0 is None else
                    (f"{len(ch0.items)} roster/lineup change(s) since {ch0.previous}"
                     if ch0.any else f"roster, lineup and projections unchanged since {ch0.previous}"))
-    out.append("<p class=\"small\"><b>What changed:</b> " + _e(roster_line) + " · "
+    out.append("<p><b>What changed:</b> " + _e(roster_line) + " · "
                + (_e(rc.summary()) if rc is not None else "free-agent pool not compared")
                + " <a href=\"#free-agents\">Free Agents ↓</a></p>")
-    if d.actions and not live and not cond:
-        out.append("<div class=\"gatebox\"><b class=\"bad\">No action is endorsed on "
-                   "this data.</b> Every item below is WITHHELD: the inputs behind it "
-                   "are stale or unreadable, so what follows is the last known "
-                   "picture rather than current advice. The comparisons are kept "
-                   "deliberately — old information is still information, as long as "
-                   "it is labelled as old.</div>")
-
-    out.append("<h3>Lineup — this week</h3>")
-    if lineup_cards:
-        for a in lineup_cards:
-            out.append(_action_card(a))
-    elif nd is not None and nd.all_locked:
-        out.append("<div class=\"card\"><p>Every starter has kicked off. No lineup change "
-                   "this week is possible, and none is proposed.</p></div>")
-    elif d.plan.abstained:
-        out.append(f"<div class=\"card\"><p class=\"bad\">{_e(d.plan.abstained)}</p></div>")
-    else:
-        out.append("<div class=\"card\"><p class=\"ok\">No supported lineup change: the "
-                   "current lineup is already the best legal one the projections can "
-                   "find.</p></div>")
-
-    out.append("<h3>Acquisitions — conditional on availability</h3>")
-    if acquire_cards:
-        for a in acquire_cards:
-            out.append(_action_card(a))
-        out.append("<p class=\"small sub\">Each card names the ONE drop it costs and what "
-                   "the next verified drop would be. Two cards that cost the same player "
-                   "are an either/or, not two moves.</p>")
-    else:
-        out.append("<div class=\"card\"><p>No available player improves this week's best "
-                   "legal lineup"
-                   + (": " + _e(d.board.abstained) if d.board.abstained else "")
-                   + ". A pickup that would only sit on the bench is research, "
-                   "listed below, not a move.</p></div>")
-
-    b = d.board
-    out.append("<h3>Watchlist and withheld — research, not moves</h3><div class=\"card\">")
+    if m is not None:
+        out.append(f"<p><b>Matchup:</b> <span class=\"num\">{_num(m.my_mean)}</span> vs "
+                   f"<span class=\"num\">{_num(m.opp_mean)}</span> projected "
+                   f"({_num(m.margin, 1, True)}) — context, not advice. "
+                   f"<a href=\"#matchup\">Matchup ↓</a></p>")
+    lineup_n = sum(1 for c in b.candidates if c.verdict == LINEUP)
+    out.append(f"<p><b>Free agents:</b> {b.pool_size} in the pool, {b.evaluated} compared, "
+               f"<b class=\"{'lime' if lineup_n else ''}\">{lineup_n}</b> improve this week's "
+               f"lineup. <a href=\"#free-agents\">Radar ↓</a></p>")
+    if nd is not None:
+        out.append("<p class=\"small sub\">" + " · ".join(_e(x) for x in nd.evidence) + "</p>")
+    out.append("</div>")
+    out.append("<details class=\"panel\"><summary>Watchlist and withheld — research, not moves"
+               "</summary>")
     if b.watchlist:
         out.append("<ul class=\"small\">"
                    + "".join(f"<li>{_e(w.describe())}</li>" for w in b.watchlist) + "</ul>")
@@ -1727,38 +2151,27 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     out.append("<p class=\"small sub\">Same position, this week's projection only, lineup "
                "unchanged. Nothing here is a ranked recommendation, and a player's value "
                "beyond this week is not priced — that would need a rest-of-season model "
-               "this repo does not have (rule #5).</p></div>")
-
-    if not live and not cond:
-        why = ("the inputs behind every comparison are stale or unreadable (see section 2)"
-               if d.actions else
-               "every starter has kicked off, and no available player improves this "
-               "week's lineup" if nd is not None and nd.all_locked else
-               "the current lineup is the best legal one the projections find, and no "
-               "available player improves it")
-        out.append("<div class=\"act act-INFO\"><div class=\"bar\"><span class=\"badge\">HOLD"
-                   "</span></div><h3>Hold — no supported change</h3>"
-                   f"<p>Why: {_e(why)}.</p>"
-                   "<p class=\"why\">What would change it: a fresh league snapshot and "
-                   "player dump within their gameday limits, a projection edge outside "
-                   "noise, or an available player who enters this week's lineup.</p></div>")
-
+               "this repo does not have (rule #5).</p></details>")
     if nd is not None:
-        out.append("<h3>Week transition</h3><div class=\"card\">")
+        out.append("<details class=\"panel\"><summary>Week transition</summary>")
         out.append("<p><b>Still possible now:</b></p><ul class=\"small\">"
                    + "".join(f"<li>{_e(x)}</li>" for x in nd.still_possible) + "</ul>")
         out.append("<p><b>Must wait for next-week inputs:</b></p><ul class=\"small\">"
                    + "".join(f"<li>{_e(x)}</li>" for x in nd.must_wait) + "</ul>")
         out.append(f"<p><b>Week {nd.next_week} preview (schedule only):</b></p><ul class=\"small\">"
-                   + "".join(f"<li>{_e(x)}</li>" for x in nd.next_week_lines) + "</ul></div>")
-    out.append("</div>")
+                   + "".join(f"<li>{_e(x)}</li>" for x in nd.next_week_lines) + "</ul></details>")
     out.append("<p class=\"small sub\">Nothing on this page is ever submitted to Sleeper. "
                "Every action is a move the owner makes by hand, and every deadline is "
                "read from the schedule — where the schedule could not be read, the "
                "deadline says UNKNOWN rather than guessing a kickoff.</p>")
+    out.append("</aside></div></section>")
 
-    # ---------------------------------------------------- 2. inputs & gating
-    out.append("<h2>2. Inputs, and what they are good enough for</h2><div class=\"card\">")
+    # The sections below are built into their own lists and assembled after:
+    # the decision surfaces first, provenance and diagnostics last and
+    # folded (their warnings are already in the status bar and banner).
+    main_out = out
+    # ---------------------------------------------------- inputs & gating
+    out = ["<div class=\"card\">"]
     rows = [[f"<span class=\"{_status_class(s.status)}\">{_e(s.status.value.upper())}</span>",
              _e(s.name), _e(s.as_of.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC') if s.as_of else 'never'),
              _e(s.coverage()), _e(s.reason)] for s in d.sources]
@@ -1779,8 +2192,9 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                "refresh keeps the SNAPSHOT current; it does not make injury news timely, "
                "and nothing here should be read as a claim that it does.</p></div>")
 
-    # -------------------------------------------------------- 3. what changed
-    out.append("<h2>3. Since the last snapshot</h2><div class=\"card\">")
+    sec_inputs = out
+    # -------------------------------------------------------- what changed
+    out = ["<div class=\"card\">"]
     ch = d.changes
     if ch is None:
         out.append("<p class=\"sub\">No earlier snapshot to compare against — this is the "
@@ -1803,8 +2217,10 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                f"at least {MOVE_POINTS} points to be listed, so one more box score does not "
                "read as news.</p></div>")
 
-    # ------------------------------------------------------------ 4. start/sit
-    out.append("<h2>4. Start / sit — the comparisons behind those actions</h2><div class=\"card\">")
+    sec_changes = out
+    # ------------------------------------------------------------ start/sit
+    out = ["<h2 id=\"startsit\">Start / sit — the comparisons behind those actions</h2>"
+           "<div class=\"card\">"]
     plan = d.plan
     if not d.gate.allows("lineup"):
         out.append(f"<div class=\"gatebox\">{_e(d.gate.banner('lineup'))}</div>")
@@ -1855,15 +2271,17 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                "accept it now: position-eligible, both players proven unlocked, nobody "
                "promoted off IR.</p></div>")
 
-    # ------------------------------------------------ 5. free agent radar
-    out.append(_radar_html(d))
+    sec_startsit = out
+    # ------------------------------------------------ free agent radar
+    sec_radar = [_radar_html(d)]
+    out = []
 
     # ------------------------------------------------------------- 6. roster
     slot_of = {}
     for i, p in enumerate(d.plan.current):
         if p is not None:
             slot_of[p.sleeper_id] = f"{d.slots[i]}"
-    out.append("<h2>6. Roster projections</h2><div class=\"card\">")
+    out.append("<h2 id=\"roster\">Roster projections</h2><div class=\"card\">")
     order = sorted(d.roster, key=lambda p: ({"START": 0, "BENCH": 1, "IR": 2}.get(p.lineup, 3),
                                             -(p.value or -1)))
     out.append(_table(["slot", "player", "pos", "nfl", "projection (mean ± SD)",
@@ -1878,7 +2296,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                "model's own number is kept next to it.</p></div>")
 
     # ------------------------------------------------------------ 7. matchup
-    out.append("<h2>7. Matchup — context, not advice</h2><div class=\"card\">")
+    out.append("<h2 id=\"matchup\">Matchup — context, not advice</h2><div class=\"card\">")
     if m is None:
         out.append(f"<p class=\"warn\"><b>No matchup view:</b> {_e(d.matchup_reason)}</p>")
     else:
@@ -1918,9 +2336,10 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         out.append("</details>")
     out.append("</div>")
 
-    # --------------------------------------------------------- 8. track record
+    sec_roster = out
+    # --------------------------------------------------------- track record
     ev = d.evaluation
-    out.append("<h2>8. How the baseline has fared (chronological, out-of-sample)</h2><div class=\"card\">")
+    out = ["<div class=\"card\">"]
     out.append(f"<p><b>{_e(ev.verdict())}</b></p>")
     if ev.n:
         out.append(_table(["predictor", "n", "MAE", "RMSE", "bias"],
@@ -1939,8 +2358,9 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         out.append(f"<p class=\"small sub\">{_e(n)}</p>")
     out.append("</div>")
 
-    # ------------------------------------------------------------- 9. archive
-    out.append("<h2>9. Decision-time archive</h2><div class=\"card\">")
+    sec_baseline = out
+    # ------------------------------------------------------------- archive
+    out = ["<div class=\"card\">"]
     if d.archive:
         out.append(f"<p>Written to <code>{_e(d.archive.name)}</code> — the projections, lineup, "
                    "alternatives, upgrades, the freshness gate and which actions were "
@@ -1951,6 +2371,25 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     else:
         out.append("<p class=\"sub\">Archive not written (dry run).</p>")
     out.append("</div>")
+    sec_archive = out
+
+    def sect(sid: str, title: str, hint: str, body: list[str], cls: str = "") -> str:
+        return (f"<details class=\"sect\" id=\"{sid}\"><summary><h2>{_e(title)}</h2>"
+                f"<span class=\"hint {cls}\">{_e(hint)}</span></summary>{''.join(body)}</details>")
+
+    out = main_out + sec_radar + sec_startsit + sec_roster
+    stale_n = sum(1 for x in d.sources if x.status is not Status.FRESH)
+    out.append(sect("inputs", "Inputs, and what they are good enough for",
+                    f"{stale_n} not current" if stale_n else "all current",
+                    sec_inputs, "warn" if stale_n else ""))
+    out.append(sect("changes", "Since the last snapshot",
+                    "first page" if d.changes is None else
+                    (f"{len(d.changes.items)} change(s)" if d.changes.any else "unchanged"),
+                    sec_changes))
+    out.append(sect("baseline", "How the baseline has fared (chronological, out-of-sample)",
+                    "UNVALIDATED" if not ev.n else f"n={ev.n}", sec_baseline))
+    out.append(sect("archive", "Decision-time archive",
+                    "written" if d.archive else "not written", sec_archive))
     out.append(f"<script nonce=\"{nonce}\">{theme.AGES_JS}</script>")
     out.append(f"<script nonce=\"{nonce}\">{theme.SNAPSHOT_JS}</script>")
     out.append(f"<script nonce=\"{nonce}\">{_RADAR_JS}</script>")

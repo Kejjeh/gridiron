@@ -36,7 +36,7 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   is a move ONLY if it improves THIS WEEK's lineup (`gridiron.waivers`): no
   cross-position "depth", bench-only adds are research, an acquisition is
   CONDITIONAL (availability UNVERIFIED); the Free Agent Radar (`gridiron.radar`,
-  board §5) verdicts every projected pool player; rollover = "no comparison". Game Day (`scripts/weekly/gameday.py`,
+  under the Action Desk) verdicts every projected pool player; rollover = "no comparison". Game Day (`scripts/weekly/gameday.py`,
   scenarios A-F in `gameday_scenarios.py --screenshot --browser`): platform
   actuals only, game status OBSERVED or UNKNOWN (never inferred from the
   clock), every archived move re-judged NOW by player id against freshness,

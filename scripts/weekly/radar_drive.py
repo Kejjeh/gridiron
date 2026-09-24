@@ -35,7 +35,8 @@ time, reading the DOM back after every step:
               the clock back restores the page as built
   pause       Pause clears the timer; Resume re-arms exactly one
   radar       position chips, search, verdict filter, sort, a disclosure
-              opened, the count line, keyboard focus on the controls
+              opened, the count line, keyboard focus on the controls, and
+              an Action Desk link landing on a row the filters had hidden
   reload      filters chosen, the frame reloaded: the filters are back
 
 The fixture counts every request, so a duplicate timer would show up as
@@ -225,11 +226,26 @@ _HARNESS = r"""<!doctype html><html><head><meta charset="utf-8"><title>drive</ti
       var det = d.querySelector('#radar-list li.rrow details'); det.open = true;
       R.radar.expanded = det.open; R.radar.bodyText = (det.querySelector('.rbody')||{}).textContent || '';
       R.radar.bodyHasDrop = /Cost/.test(R.radar.bodyText) && /Alternatives/.test(R.radar.bodyText) && /UNVERIFIED/.test(R.radar.bodyText);
-      // keyboard: the controls are native and focusable
+      // keyboard: the controls are native and focusable (the build check
+      // lives in the Data & freshness disclosure, opened the way a reader would)
+      var fresh = d.getElementById('data-freshness'); if (fresh) fresh.open = true;
       var focusables = [d.getElementById('radar-q'), d.getElementById('radar-v'), d.getElementById('radar-s'),
-                        d.querySelector('#radar-pos button'), det.querySelector('summary'), d.getElementById('snap-check')];
+                        d.querySelector('#radar-pos button'), det.querySelector('summary'), d.getElementById('snap-check'),
+                        d.querySelector('#desk a.btn'), d.querySelector('#desk .full summary')];
       R.radar.focusable = focusables.map(function(el){ if (!el) return null; el.focus(); return d.activeElement === el; });
       R.radar.outline = d.defaultView.getComputedStyle(d.getElementById('radar-q')).outlineStyle;
+      // deep link from the Action Desk: a row the saved filters hide is
+      // revealed (filters cleared), opened and focused
+      var deskLink = d.querySelector('#desk a.btn[href^="#fa-"]');
+      if (deskLink) { var tid = deskLink.getAttribute('href').slice(1);
+        radar.set({q: 'zzzz-no-such-player'});
+        var hiddenBefore = d.getElementById(tid).hasAttribute('hidden');
+        deskLink.click(); await wait(400);
+        var trow = d.getElementById(tid);
+        R.radar.deepLink = {id: tid, hiddenBefore: hiddenBefore, visible: !trow.hasAttribute('hidden'),
+          open: trow.querySelector('details').open, q: radar.state().q,
+          focused: d.activeElement === trow.querySelector('summary')};
+        radar.set({q: ''}); }
       // reload keeps the filters (the snapshot banner's reload path)
       radar.set({pos: 'WR', sort: 'name', verdict: ''});
       await mode('same');
@@ -251,8 +267,8 @@ _HARNESS = r"""<!doctype html><html><head><meta charset="utf-8"><title>drive</ti
           rowsLive: Array.prototype.map.call(lin, function(e){ return e.getAttribute('data-live'); }),
           rowsVerdict: Array.prototype.map.call(lin, function(e){ return e.getAttribute('data-verdict'); }),
           rowNote: lin.length ? txt(lin[0], '.vstate') : null,
-          cardsLive: Array.prototype.map.call(d.querySelectorAll('.act[data-deadline]'), function(e){ return e.getAttribute('data-live'); }),
-          cardNote: (function(){ var c = d.querySelector('.act[data-deadline] .vstate'); return c ? c.textContent : null; })(),
+          cardsLive: Array.prototype.map.call(d.querySelectorAll('.dcard[data-deadline]'), function(e){ return e.getAttribute('data-live'); }),
+          cardNote: (function(){ var c = d.querySelector('.dcard[data-deadline] .vstate'); return c ? c.textContent : null; })(),
           kpi: txt(d, '[data-live-count="LINEUP"]'), lineupFilter: radar.set({verdict: 'LINEUP'})}; }
       R.validity = {until: until, kick: kick, steps: [vstate('built', built), vstate('expired', until + 60000),
         vstate('kickoff', kick + 60000), vstate('back', built)]};
@@ -423,6 +439,10 @@ def verdict(result: dict) -> list[str]:
             bad.append("the first row's disclosure did not open on a full comparison")
         if not all(r.get("focusable") or []):
             bad.append(f"a control is not keyboard-focusable: {r.get('focusable')}")
+        dl = r.get("deepLink") or {}
+        if not (dl.get("hiddenBefore") and dl.get("visible") and dl.get("open")
+                and dl.get("q") == "" and dl.get("focused")):
+            bad.append(f"the Action Desk link did not reveal and open its radar row: {dl}")
     v = result.get("validity") or {}
     vs = {s["label"]: s for s in v.get("steps", [])}
     if not v or not (v.get("until") and v.get("kick")) or v["until"] >= v["kick"]:

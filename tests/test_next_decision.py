@@ -145,7 +145,7 @@ def test_pregame_labels_the_week_and_the_open_starters(tmp_path):
     assert nd["open_starters"] and nd["locked_starters"] < nd["total_starters"]
     assert nd["next_week"] == 4
     assert any("UNAVAILABLE" in line for line in nd["next_week_lines"])
-    assert "1. Next decision — week 3" in html
+    assert "Action Desk — week 3" in html
     assert "Week transition" in html and "Must wait for next-week inputs" in html
 
 
@@ -290,9 +290,9 @@ def test_the_next_decision_section_fits_a_phone_and_its_disclosures_take_the_key
         f"<iframe id=f src=\"{page.resolve().as_uri()}\" style=\"width:375px;height:2000px\" "
         "onload=\"probe()\"></iframe><script>function probe(){try{"
         "var d=document.getElementById('f').contentDocument;"
-        "var s=d.querySelectorAll('.next summary');var ok=0;"
-        "for(var i=0;i<s.length;i++){s[i].focus();if(d.activeElement===s[i])ok++;}"
-        "document.title='KEYS '+s.length+' '+ok;}catch(e){document.title='KEYSFAIL '+e.name}}"
+        "var s=d.querySelectorAll('#desk summary');var ok=0;"
+        "var n=0;for(var i=0;i<s.length;i++){if(!s[i].getClientRects().length||(s[i].checkVisibility&&!s[i].checkVisibility()))continue;n++;s[i].focus();if(d.activeElement===s[i])ok++;}"
+        "document.title='KEYS '+n+' '+ok;}catch(e){document.title='KEYSFAIL '+e.name}}"
         "</script></body></html>", encoding="utf-8")
     proc = subprocess.run(
         [SCN.chrome_binary(), "--headless=new", "--no-sandbox", "--disable-gpu",

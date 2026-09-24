@@ -80,9 +80,9 @@ def test_the_dashboard_renders_from_the_cache_with_no_network(tmp_path, no_netwo
     assert rc == 0
     assert "<title>Week 3 decision dashboard" in html
     # action-first: what to do comes before the evidence behind it
-    assert "1. Next decision — week 3" in html
-    assert "9. Decision-time archive" in html
-    assert html.index("1. Next decision") < html.index("2. Inputs,") < html.index("6. Roster")
+    assert "Action Desk — week 3" in html
+    assert "Decision-time archive" in html
+    assert html.index("Action Desk") < html.index("Roster projections") < html.index("Inputs, and what")
 
 
 def test_every_source_the_dashboard_reads_declares_its_freshness(tmp_path):
@@ -99,8 +99,8 @@ def test_every_source_the_dashboard_reads_declares_its_freshness(tmp_path):
     assert set(CLI.SOURCES) == {"sleeper_league", "sleeper_players", "injuries", "schedules",
                                 "weekly_stats", "snap_counts", "crosswalk"}
     _, html, _ = render(tmp_path, "complete")
-    block = html.split("2. Inputs, and what they are good enough for")[1] \
-        .split("3. Since the last snapshot")[0]
+    block = html.split("Inputs, and what they are good enough for")[1] \
+        .split("Since the last snapshot")[0]
     for s in CLI.SOURCES:
         assert f"<td>{s}</td>" in block, f"{s} has no freshness line"
 
@@ -142,7 +142,7 @@ def test_complete_projects_matches_and_recommends_with_labels(tmp_path):
     # the bench-only QB is research, not an upgrade
     assert any(w["add"]["position"] == "QB" for w in rec["watchlist"])
     assert "Δ depth" not in html
-    assert "5. Free Agent Radar" in html
+    assert "Free Agent Radar — every available player" in html
     assert rec["radar"]["counts"]["lineup"] == len(rec["upgrades"])
     # evaluation ran, and does not claim calibration
     assert "evaluated chronologically" in rec["evaluation"]["verdict"]
@@ -239,7 +239,7 @@ def test_a_fresh_cache_still_endorses_its_actions(tmp_path):
 
 def test_the_page_leads_with_actions_and_demotes_uncalibrated_win_probability(tmp_path):
     _, html, rec = render(tmp_path, "complete")
-    assert html.index("1. Next decision") < html.index("7. Matchup")
+    assert html.index("Action Desk") < html.index("Matchup — context")
     # P(win) is present, labelled, and behind a disclosure rather than in the
     # headline: rule #7 denominates decisions in DP(win), and this baseline has
     # never been calibrated, so it ranks nothing.

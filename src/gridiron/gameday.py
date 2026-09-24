@@ -1521,7 +1521,12 @@ _CSS = theme.CSS + """
 .act h3{margin:6px 0 4px}
 .chg li{margin:3px 0}
 .moves li{margin:4px 0}
-@media (max-width:560px){.score .pts{font-size:36px}}
+.gd-h1{font-size:22px;margin:4px 0 10px}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;margin:0;padding:0;border:0}
+.hero-card{background:var(--card2);border-color:var(--line2);padding:20px 18px 14px;margin-top:4px}
+.modebar #gd-refresh{margin-left:auto;min-width:112px}
+@media (min-width:700px){.gd-h1{font-size:26px}.score .pts{font-size:56px}}
+@media (max-width:560px){.score .pts{font-size:40px}.hero-card{padding:16px 12px 12px}}
 """
 
 
@@ -1643,34 +1648,16 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
                          "gameday_latest.html"),
         f"<title>{_e(title)}</title><style nonce=\"{nonce}\">{_CSS}</style></head><body><main>",
         theme.nav_html("gameday"),
-        f"<h1>{_e(title)}</h1>",
-        f"<div class=\"sub small\">season {d.season} · roster #{_e(d.my_roster_id)}</div>",
-        "<div class=\"ages\">"
-        + theme.age_span("Live scores", None, "snapshot until you tap Refresh")
-        + theme.age_span("League snapshot", s.as_of.astimezone(timezone.utc).isoformat(timespec="seconds") if s.as_of else None,
-                         _stamp(s.as_of) if s.as_of else "no as-of")
-        + theme.age_span("Designations", d.embedded.get("players_as_of"),
-                         _stamp(_parse_dt(d.embedded.get("players_as_of"))) if d.embedded.get("players_as_of") else "never pulled")
-        + theme.age_span("Page built", d.generated.astimezone(timezone.utc).isoformat(timespec="seconds"), _stamp(d.generated))
-        + "</div>",
-        theme.snapshot_html(),
-        "<div class=\"modebar\" id=\"gd-mode\">"
-        "<span class=\"pill\" id=\"gd-modepill\">SNAPSHOT</span>"
-        f"<span id=\"gd-asof\" class=\"small\">{_e(s.as_of_note)}</span>"
-        "<button type=\"button\" id=\"gd-refresh\" disabled title=\"needs the page script\">Refresh</button>"
-        "</div>",
-        "<p class=\"small status\" id=\"gd-status\" role=\"status\" aria-live=\"polite\">"
-        "Snapshot mode: this page shows what the cloud build cached. Reloading the file "
-        "does not fetch anything; the Refresh button does, when the script can run.</p>",
+        "<header class=\"hero\">",
+        f"<div class=\"eyebrow\">Week {d.week} · Game Day"
+        + (f" · {_e(d.league_name)}" if include_names and d.league_name else "")
+        + f" · roster #{_e(d.my_roster_id)}</div>",
+        f"<h1 class=\"gd-h1\">Game Day — week {d.week}</h1></header>",
+        theme.snapshot_banner_html(),
     ]
-    if d.notes:
-        out.append("<div class=\"banner\" id=\"gd-notes\"><b class=\"warn\">Read first</b><ul class=\"small\">"
-                   + "".join(f"<li>{_e(n)}</li>" for n in d.notes) + "</ul></div>")
-    else:
-        out.append("<div class=\"banner ok hidden\" id=\"gd-notes\"></div>")
-
-    # 1. score
-    out.append("<h2>Score</h2><div class=\"card\" id=\"gd-score\">")
+    # 1. score — the first thing on the page, with the one control that
+    # renews it right beside it.
+    out.append("<h2 class=\"vh\">Score</h2><div class=\"card hero-card\" id=\"gd-score\">")
     if o is None:
         out.append(f"<div class=\"score\"><div><div class=\"who\">{_e(m.label)}</div>"
                    f"<div class=\"pts\">{_e(_pts(m.platform_points))}</div></div>"
@@ -1685,8 +1672,38 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
                    f"<p class=\"lead {lead_cls}\">{_e(lead)}</p>"
                    f"<p class=\"settle small\">{_e(s.settled())}</p>"
                    f"<p class=\"small sub\">You: {_e(m.exposure())}<br>They: {_e(o.exposure())}</p>")
-    out.append(f"<p class=\"small sub\">{_e(s.as_of_note)}. Platform totals as sent; "
-               f"nothing here is projected or scaled.</p></div>")
+    # The as-of is stated once, in the refresh bar below, which the script
+    # keeps current after every refresh.
+    out.append("<p class=\"small sub\">Platform totals as sent; nothing here is projected "
+               "or scaled.</p></div>")
+    out += [
+        "<div class=\"modebar\" id=\"gd-mode\">"
+        "<span class=\"pill\" id=\"gd-modepill\">SNAPSHOT</span>"
+        f"<span id=\"gd-asof\" class=\"small\">{_e(s.as_of_note)}</span>"
+        "<button type=\"button\" id=\"gd-refresh\" class=\"primary\" disabled "
+        "title=\"needs the page script\">Refresh</button>"
+        "</div>",
+        "<p class=\"small status\" id=\"gd-status\" role=\"status\" aria-live=\"polite\">"
+        "Snapshot mode: this page shows what the cloud build cached. Reloading the file "
+        "does not fetch anything; the Refresh button does, when the script can run.</p>",
+    ]
+    if d.notes:
+        out.append("<div class=\"banner\" id=\"gd-notes\"><b class=\"warn\">Read first</b><ul class=\"small\">"
+                   + "".join(f"<li>{_e(n)}</li>" for n in d.notes) + "</ul></div>")
+    else:
+        out.append("<div class=\"banner ok hidden\" id=\"gd-notes\"></div>")
+    out.append(theme.meta_details(
+        "<div class=\"ages\">"
+        + theme.age_span("Live scores", None, "snapshot until you tap Refresh")
+        + theme.age_span("League snapshot", s.as_of.astimezone(timezone.utc).isoformat(timespec="seconds") if s.as_of else None,
+                         _stamp(s.as_of) if s.as_of else "no as-of")
+        + theme.age_span("Designations", d.embedded.get("players_as_of"),
+                         (_stamp(_parse_dt(d.embedded.get("players_as_of"))) if d.embedded.get("players_as_of") else "never pulled")
+                         + " (once-a-day player map)")
+        + theme.age_span("Page built", d.generated.astimezone(timezone.utc).isoformat(timespec="seconds"), _stamp(d.generated))
+        + "</div>"
+        + f"<p class=\"small sub\">season {d.season} · roster #{_e(d.my_roster_id)}</p>"
+        + theme.snapshot_strip_html()))
 
     # 2. actions
     out.append("<h2>What you can still do</h2><div class=\"card\" id=\"gd-actions\">")
@@ -2158,7 +2175,7 @@ function renderScore(vm,asOfNote){ var root=clear($('gd-score')), sc=el('div','s
   if(!o) root.appendChild(el('p','warn',vm.opp_reason));
   else { root.appendChild(el('p','lead '+((vm.margin||0)>EPS?'ok':(vm.margin||0)<-EPS?'bad':''),vm.lead)); root.appendChild(el('p','settle small',vm.settled));
     var ex=el('p','small sub'); ex.appendChild(document.createTextNode('You: '+exposure(m))); ex.appendChild(el('br')); ex.appendChild(document.createTextNode('They: '+exposure(o))); root.appendChild(ex); }
-  root.appendChild(el('p','small sub',asOfNote+'. Platform totals as sent; nothing here is projected or scaled.')); }
+  root.appendChild(el('p','small sub','Platform totals as sent; nothing here is projected or scaled.')); }
 function actCard(a){ var d=el('div',a.available?'act':'act off'); d.appendChild(el('span',a.available?'pill ok':'pill',a.available?'AVAILABLE':'NOT NOW'));
   d.appendChild(document.createTextNode(' ')); d.appendChild(el('span','pill',a.kind)); d.appendChild(el('h3',null,a.title));
   if(a.available){ d.appendChild(el('p',null,a.body)); var b=el('p'); b.appendChild(el('b',null,a.deadline_note)); d.appendChild(b);

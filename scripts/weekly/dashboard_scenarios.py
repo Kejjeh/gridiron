@@ -41,6 +41,9 @@ stale, and when inputs are missing. Nothing here reads the real cache.
   next_week two runs a week apart: the platform has moved to week 4 (with
             week-4 schedule rows). The radar says "week rollover — no
             comparison" instead of diffing week-3 verdicts against week 4.
+  designations  the complete cache with ONLY the once-a-day player map past
+            its limit (pulled 26 h ago): the Action Desk turns its moves into
+            CHECK IN SLEEPER items naming the players to check, and holds.
 
 `--screenshot` renders each page to PNG at 375, 768 and 1440 CSS px with the
 pre-installed headless Chromium when one is found (no Python dependency is
@@ -77,7 +80,7 @@ from gridiron.paths import REPO_ROOT
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
 UTC = timezone.utc
 SCENARIOS = ("complete", "stale", "missing", "partial_schedule", "slate_end",
-             "hold", "sparse", "taken", "roster_changed", "next_week")
+             "hold", "sparse", "taken", "roster_changed", "next_week", "designations")
 
 #: Saturday of NFL week 3 in the fixture calendar (games Sun 2026-09-27),
 #: rendered at noon UTC: pregame, nothing locked, waivers cleared.
@@ -97,6 +100,7 @@ SCENARIO_NOW = {"slate_end": NOW_SLATE_END, "taken": NOW_LATER,
 TWO_RUN = ("taken", "roster_changed", "next_week")
 #: The synthetic scenarios that are the `complete` cache with a twist.
 _BASE = {"slate_end": "complete", "hold": "complete", "sparse": "complete",
+         "designations": "complete",
          "taken": "complete", "roster_changed": "complete", "next_week": "complete"}
 
 #: Unrostered fixture players with box scores AND crosswalk rows. Two go to
@@ -266,8 +270,11 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
         players["3198"]["injury_status"] = "Questionable"     # a designation that will read STALE
     players_path = directory / "sleeper_players.json"
     players_path.write_text(json.dumps(players, indent=1), encoding="utf-8")
+    # designations: everything current except the once-a-day player map,
+    # pulled 26 h ago — past its 24 h limit, as it is for most of a game day.
     manifest.record("sleeper_players", path=players_path, rows=len(players),
-                    as_of=stamp, source="api.sleeper.app (read-only)")
+                    as_of=now - timedelta(hours=26) if twist == "designations" else stamp,
+                    source="api.sleeper.app (read-only)")
     if kind == "stale":
         manifest.record_failure("sleeper_players", source="api.sleeper.app (read-only)",
                                 error="timed out after 60s", at=now)

@@ -123,13 +123,17 @@ def test_the_board_carries_its_expiry_and_every_move_carries_its_deadline(tmp_pa
     research = [r for r in rows if 'data-verdict="RESEARCH"' in r]
     assert research and all('data-deadline="2026-09-27T17:00:00+00:00"' in r for r in research)
     assert all("data-gated" not in r for r in research)     # research is not a move
-    cards = re.findall(r'<div class="act ([^"]*)"([^>]*)>', html)
-    moves = [a for c, a in cards if "data-deadline" in a]
-    assert len(moves) == 3 and all("data-gated" in a for a in moves)
+    cards = re.findall(r'<article class="dcard ([^"]*)"([^>]*)>', html)
+    moves = [a for c, a in cards if re.search(r"tone-(go|cond|opt)", c)]
+    # the pick-one pickup card and the optional swap: each lapses at its own
+    # kickoff and is struck when the evidence expires
+    assert len(moves) == 2 and all("data-gated" in a and "data-deadline" in a for a in moves)
     assert 'data-live-count="LINEUP"' in html
     # the build-time "all current" line is itself gated: it is a claim about now
-    assert re.search(r'<div class="banner ok" data-gated="" data-expire-text="No longer true',
+    assert re.search(r'<span class="chip ok" data-gated="" data-expire-text="No longer true',
                      html)
+    # and so is the headline that counts the moves
+    assert re.search(r'<div class="headline" data-gated="" data-expire-text="EXPIRED', html)
 
 
 def test_a_board_built_on_stale_inputs_marks_its_moves_held_in_the_row_itself(tmp_path):
