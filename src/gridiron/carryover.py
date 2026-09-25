@@ -514,8 +514,9 @@ INPUT_MAX_AGE_DAYS = 21
 #: than a flag because it is printed to the owner on the page, under the
 #: source's own as-of line — and it is kept SHORT on purpose: freshness
 #: truncates an error to 100 characters when it builds that line, so a longer
-#: sentence would reach the owner cut off in the middle of a word.
-CARRIED_FORWARD = "CARRIED FORWARD from an earlier run; this run did not refresh it"
+#: sentence would reach the owner cut off in the middle of a word. Freshness
+#: prints it as "not refreshed", never as REFRESH FAILED: nothing was tried.
+CARRIED_FORWARD = ing.CARRIED_FORWARD
 
 
 #: The fields `ing.Entry` is built from. Read off the dataclass rather than
