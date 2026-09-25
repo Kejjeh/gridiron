@@ -108,8 +108,9 @@ def box_score_blockers(sources: Iterable[SourceFreshness], *,
     Returns `extra`-shaped entries for every action, because every action on
     this page is scored through a projection and every projection is built
     from these frames. A source earns a blocker when it is MISSING, when its
-    latest refresh FAILED, when it has a hole inside the weeks it claims to
-    cover, or when it has not reached the evidence boundary. Being merely old
+    latest refresh FAILED or it was carried in unrefreshed, when it has a hole
+    inside the weeks it claims to cover, or when it has not reached the
+    evidence boundary. Being merely old
     earns nothing.
     """
     reasons: list[tuple[str, str]] = []
@@ -119,7 +120,10 @@ def box_score_blockers(sources: Iterable[SourceFreshness], *,
         if s.status is Status.MISSING:
             reasons.append((s.name, f"no box-score frame at all ({s.reason})"))
             continue
-        if s.refresh_failed:
+        if s.carried:
+            reasons.append((s.name, f"it was carried from an earlier run and not "
+                                    f"refreshed by this run ({s.reason})"))
+        elif s.refresh_failed:
             reasons.append((s.name, f"the latest refresh FAILED, so the newest "
                                     f"thing known about this source is an error "
                                     f"({s.reason})"))

@@ -27,6 +27,12 @@ from gridiron.paths import RESEARCH_CACHE
 
 MANIFEST_NAME = "manifest.json"
 
+#: `Entry.error` on an input carried from an earlier run that this run has
+#: not refreshed (`gridiron.carryover`, which re-exports it). Defined here so
+#: `Manifest.freshness` can tell "not refreshed" from "refresh FAILED"
+#: without importing carryover, which imports this module.
+CARRIED_FORWARD = "CARRIED FORWARD from an earlier run; this run did not refresh it"
+
 
 def season_cache(season: int = SEASON_YEAR, root: Path | None = None) -> Path:
     return (root or RESEARCH_CACHE) / f"season{season}"
@@ -229,14 +235,19 @@ class Manifest:
                        covered_weeks=e.weeks)
         if not e.error:
             return fresh
-        # Real data, but the latest refresh failed. It can never read FRESH:
-        # the newest thing that happened to this source is a failure.
+        # Real data, but the latest refresh failed — or, for a carried input,
+        # was never made. It can never read FRESH either way: the newest
+        # thing that happened to this source is not a successful pull.
+        carried = e.error == CARRIED_FORWARD
         return replace(
             fresh,
             refresh_failed=True,
+            carried=carried,
             status=Status.STALE if fresh.status is Status.FRESH else fresh.status,
-            reason=(f"{fresh.reason}; REFRESH FAILED at "
-                    f"{e.last_attempt or 'unknown time'}: {e.error[:100]}"),
+            reason=(f"{fresh.reason}; {CARRIED_FORWARD} (restored "
+                    f"{e.last_attempt or 'at an unknown time'})" if carried
+                    else f"{fresh.reason}; REFRESH FAILED at "
+                         f"{e.last_attempt or 'unknown time'}: {e.error[:100]}"),
         )
 
     def freshness_report(self, names: Sequence[str], *, now: datetime,

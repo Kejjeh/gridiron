@@ -2194,7 +2194,9 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         bad = [x for x in d.sources if x.status is not Status.FRESH]
         # Which inputs, and how, stay in view; each one's full reason folds.
         named = ", ".join(f"{_SOURCE_WORDS.get(x.name, x.name)} {x.status.value.upper()}"
-                          + (" (refresh FAILED)" if x.refresh_failed else "") for x in bad)
+                          + (" (not refreshed)" if x.carried
+                             else " (refresh FAILED)" if x.refresh_failed else "")
+                          for x in bad)
         reasons = "".join(f"<li>{_e(_SOURCE_WORDS.get(x.name, x.name))}: {_e(x.reason)}</li>"
                           for x in bad)
         generic = ("one or more inputs are stale, missing or withheld. Every affected "

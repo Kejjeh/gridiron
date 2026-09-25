@@ -149,6 +149,11 @@ class SourceFreshness:
     #: good is the assumption that it is current. Carried as a field rather
     #: than left inside `reason` so a gate can test it without reading prose.
     refresh_failed: bool = False
+    #: True when that "failure" is only the carryover's mark: the input came
+    #: from an earlier run and this run did not refresh it — nothing was
+    #: attempted, so nothing FAILED. `refresh_failed` stays set (the gates are
+    #: the same); this only decides the words the owner reads.
+    carried: bool = False
 
     @property
     def usable(self) -> bool:
