@@ -46,11 +46,19 @@ GRADES_DIR = LEDGER / "grades"
 FIELDS = ("season", "week", "archive", "archive_built", "graded", "ungradeable",
           "scorable", "agree", "direction_n", "direction_agree", "withheld",
           "unverified", "decisions", "projection_mae", "projection_n",
-          "shootout_n", "shootout_pairs", "baseline_pairwise", "sleeper_pairwise",
-          "blend_pairwise", "baseline_mae", "sleeper_mae", "blend_mae", "graded_at")
+          "shootout_n", "shootout_pairs",
+          "page_pairwise", "baseline_v1_pairwise", "sleeper_pairwise", "blend_pairwise",
+          "stack_pairwise", "page_mae", "baseline_v1_mae", "sleeper_mae", "blend_mae",
+          "stack_mae", "graded_at")
 
-#: The systems the weekly shoot-out scores on identical players.
-SYSTEMS = ("baseline", "sleeper", "blend")
+#: The systems the weekly shoot-out scores on identical players:
+#:   page         the projection the page used (advanced_v1 when it ran)
+#:   baseline_v1  the model before advanced stats (record `contenders`)
+#:   sleeper      Sleeper's pre-kickoff projection (record `shadow`)
+#:   blend        (page + sleeper) / 2
+#:   stack        advanced + Sleeper (record `contenders`)
+#: A system an archive does not carry is simply absent from that week.
+SYSTEMS = ("page", "baseline_v1", "sleeper", "blend", "stack")
 #: Pairs are formed only among players the shadow projected at least this
 #: high — the same "fantasy-relevant" cut as the 2025 backtest.
 SHOOTOUT_MIN = 5.0
@@ -138,18 +146,23 @@ def actuals_from_nflverse(season: int, week: int) -> dict[str, float]:
 
 def shootout(archive: Mapping[str, object], actuals: Mapping[str, float], *,
              min_proj: float = SHOOTOUT_MIN) -> dict | None:
-    """Ours vs the shadow vs their average, on the SAME players, against
-    actual points: MAE, and the start/sit success rate — over every pair at
-    one position (both shadow-projected >= `min_proj`, actuals not tied),
-    the share each system ordered the way the points did.
+    """Every system the archive carries, on the SAME players, against actual
+    points: MAE, and the start/sit success rate — over every pair at one
+    position (both Sleeper-projected >= `min_proj`, actuals not tied), the
+    share each system ordered the way the points did.
 
-    Only players whose shadow number was captured before their kickoff, who
-    carry a projection of ours that was not withheld, and who have an actual
-    are scored. Returns None when the archive carries no shadow."""
+    Scored players: Sleeper number captured before their kickoff, a page
+    projection that was not withheld, an actual, and a number from every
+    system present. Returns None when the archive carries no shadow."""
     shadow = archive.get("shadow") or {}
     sp = shadow.get("players") if isinstance(shadow, Mapping) else None
     if not sp:
         return None
+    cont = archive.get("contenders") or {}
+    extra = {k: cont.get(k) or {} for k in ("baseline_v1", "stack")
+             if isinstance(cont, Mapping) and cont.get(k)}
+    systems = ["page"] + [k for k in ("baseline_v1",) if k in extra] + ["sleeper", "blend"] \
+        + [k for k in ("stack",) if k in extra]
     people = [(p.get("sleeper_id"), p) for p in archive.get("roster") or []]
     radar = archive.get("radar") or {}
     people += [(c.get("id"), c) for c in radar.get("candidates") or []]
@@ -166,16 +179,21 @@ def shootout(archive: Mapping[str, object], actuals: Mapping[str, float], *,
                 or theirs is None or actual is None
                 or str(p.get("position")) not in ("QB", "RB", "WR", "TE")):
             continue
-        rows.append({"position": p.get("position"), "actual": float(actual),
-                     "baseline": float(ours), "sleeper": float(theirs),
-                     "blend": (float(ours) + float(theirs)) / 2.0})
+        row = {"position": p.get("position"), "actual": float(actual),
+               "page": float(ours), "sleeper": float(theirs),
+               "blend": (float(ours) + float(theirs)) / 2.0}
+        for k, table in extra.items():
+            row[k] = table.get(sid)
+        if any(row.get(k) is None for k in systems):
+            continue
+        rows.append(row)
     if not rows:
-        return {"n": 0, "pairs": 0}
-    out: dict = {"n": len(rows)}
-    for sname in SYSTEMS:
+        return {"n": 0, "pairs": 0, "systems": systems}
+    out: dict = {"n": len(rows), "systems": systems}
+    for sname in systems:
         out[f"{sname}_mae"] = round(sum(abs(r[sname] - r["actual"]) for r in rows)
                                     / len(rows), 3)
-    hits, pairs = dict.fromkeys(SYSTEMS, 0), 0
+    hits, pairs = dict.fromkeys(systems, 0), 0
     rel = [r for r in rows if r["sleeper"] >= min_proj]
     for i, a in enumerate(rel):
         for b in rel[i + 1:]:
@@ -183,11 +201,11 @@ def shootout(archive: Mapping[str, object], actuals: Mapping[str, float], *,
                 continue
             pairs += 1
             truth = a["actual"] > b["actual"]
-            for sname in SYSTEMS:
+            for sname in systems:
                 if a[sname] != b[sname] and (a[sname] > b[sname]) == truth:
                     hits[sname] += 1
     out["pairs"] = pairs
-    for sname in SYSTEMS:
+    for sname in systems:
         out[f"{sname}_pairwise"] = round(hits[sname] / pairs, 4) if pairs else None
     return out
 
@@ -254,10 +272,15 @@ def shootout_line(rows: Sequence[Mapping[str, object]]) -> str:
     if not done:
         return "; no shoot-out yet (archives carry no shadow projections)"
     pairs = sum(int(r["shootout_pairs"]) for r in done)
-    rate = {s: sum(float(r[f"{s}_pairwise"]) * int(r["shootout_pairs"]) for r in done)
-            / pairs for s in SYSTEMS}
+    rate = {}
+    for sname in SYSTEMS:
+        have = [r for r in done if str(r.get(f"{sname}_pairwise") or "") not in ("", "None")]
+        n = sum(int(r["shootout_pairs"]) for r in have)
+        if n:
+            rate[sname] = sum(float(r[f"{sname}_pairwise"]) * int(r["shootout_pairs"])
+                              for r in have) / n
     return ("; start/sit shoot-out over " + f"{pairs} pairs in {len(done)} week(s): "
-            + ", ".join(f"{s} {rate[s]:.1%}" for s in SYSTEMS))
+            + ", ".join(f"{k} {v:.1%}" for k, v in rate.items()))
 
 
 def render(grade: Grade, names: Mapping[str, str]) -> list[str]:
@@ -332,7 +355,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if shoot and shoot.get("pairs"):
         print(f"shoot-out on {shoot['n']} players / {shoot['pairs']} start/sit pairs: "
               + ", ".join(f"{s} {shoot[f'{s}_pairwise']:.1%} (MAE {shoot[f'{s}_mae']:.2f})"
-                          for s in SYSTEMS) + "\n")
+                          for s in shoot["systems"]) + "\n")
     else:
         print("shoot-out: this archive carries no pre-kickoff shadow projections\n")
     print("\n".join(render(grade, names)) + "\n")

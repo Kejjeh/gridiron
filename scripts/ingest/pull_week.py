@@ -38,6 +38,7 @@ from gridiron.freshness import CADENCES
 from gridiron.ids import CROSSWALK_URL
 from gridiron import livesync as ls
 from gridiron import shadow
+from gridiron.models import advanced as adv_model
 from gridiron.league_config import SEASON_YEAR
 from gridiron.paths import ensure_dirs
 from gridiron.scoring import scoring_coverage
@@ -280,6 +281,26 @@ def pull_shadow(manifest: ing.Manifest, now: datetime, force: bool, *,
           f"(Sleeper, shadow only)")
 
 
+def pull_model_inputs(manifest: ing.Manifest, season: int, now: datetime,
+                      force: bool, *, loaders=None) -> None:
+    """The advanced model's inputs (expected points, Next Gen Stats, depth
+    charts), normalised and written beside the cache
+    (`gridiron.models.advanced`). Best effort and outside the manifest: a
+    failure is logged, and the page keeps the baseline and says why."""
+    directory = manifest.directory
+    if not force and adv_model.inputs_fresh(directory, season, now):
+        print(f"  model_inputs: fetched under {adv_model.INPUT_REFRESH_HOURS:g} h ago, reused")
+        return
+    try:
+        frames = adv_model.fetch_inputs(season, loaders=loaders)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  model_inputs: FAILED {type(exc).__name__}: {exc} — the page "
+              f"keeps the baseline projection", file=sys.stderr)
+        return
+    adv_model.write_inputs(directory, season, frames, now)
+    print("  model_inputs: " + ", ".join(f"{k} {len(v)} rows" for k, v in frames.items()))
+
+
 def run_number(text: str | None) -> int | None:
     """GitHub's per-workflow run counter, or None. Not a credential: it is the
     number every run page shows. It only increases, so a carried ledger
@@ -466,6 +487,8 @@ def main(argv: list[str] | None = None) -> int:
                  carried=args.carried_history, run=run_number(os.environ.get("GITHUB_RUN_NUMBER")),
                  attempt=run_number(os.environ.get("GITHUB_RUN_ATTEMPT")),
                  bootstrap=args.player_map_bootstrap)
+    print("[pull] advanced-model inputs (read-only; gates nothing)")
+    pull_model_inputs(manifest, args.season, now, args.force)
     print("[pull] shadow projections (read-only; gates nothing)")
     pull_shadow(manifest, now, args.force)
     check_scoring_inputs(manifest)

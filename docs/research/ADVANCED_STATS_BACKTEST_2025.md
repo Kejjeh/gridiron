@@ -86,3 +86,28 @@ regression gives it the largest weight everywhere.
    add **stack** as a second shadow system beside Sleeper.
 3. Whichever of baseline / Sleeper / stack wins the live shoot-out drives
    the page's comparisons; usage trends, freshness gates and lock logic stay.
+
+## Update 2026-09-30 — practice reports, depth charts, and production
+
+The research script now builds every feature with the production builder
+(`gridiron.models.advanced.features_as_of`, one call per week, earlier weeks
+only) and compares four feature sets out of sample (train 2023-2024, test
+2025, 60,813 pairs):
+
+| set | adv start/sit | adv MAE | stack start/sit |
+|---|---|---|---|
+| core | 64.0% | 3.98 | 65.5% |
+| + practice participation / Questionable | 63.9% | 3.98 | 65.4% |
+| **+ depth-chart rank** | **64.0%** | **3.94** | 65.4% |
+| + both | 64.0% | 3.94 | 65.3% |
+
+Practice reports add nothing (the baseline already withholds Out players and
+Sleeper's designations carry the rest); depth-chart rank improves the point
+error. The winner, **core + depth**, beat the baseline in 13 of 15 test weeks
+and is what ships: `advanced_v1` (registered in
+`gridiron.models.validated_signals`, coefficients refit on 2023-2025 in
+`src/gridiron/models/advanced_weights.json`). The page now uses it from week
+4 on, when its inputs are present, and keeps the baseline — saying why —
+otherwise. The stack (advanced + Sleeper) is recorded as a live contender
+beside Sleeper and the old baseline, and the weekly shoot-out grades all of
+them on the same players.

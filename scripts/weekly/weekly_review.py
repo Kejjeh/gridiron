@@ -76,6 +76,11 @@ class Review:
         self.shadow = shadow.get("players") or {}
         self.shadow_at = shadow.get("fetched_at") or ""
 
+    def outside(self, sid: str) -> str:
+        """Sleeper / stack (advanced + Sleeper), shown for comparison only."""
+        stack = ((self.r.get("contenders") or {}).get("stack") or {}).get(sid)
+        return f"{self.sleeper(sid)} / {_fmt(stack)}"
+
     def sleeper(self, sid: str) -> str:
         """Sleeper's projection for this player, shown for comparison only."""
         hit = self.shadow.get(sid) or {}
@@ -125,6 +130,7 @@ def header(rv: Review) -> list[str]:
     out = [f"# Weekly review — {r.get('season')} week {r.get('week')} ({r.get('phase')})",
            "",
            f"- Record built **{r.get('generated')}**; usage through week {rv.through}.",
+           f"- Projection model: {r.get('projection_model') or r.get('baseline') or 'unstated'}.",
            f"- Page state: {'DEGRADED' if r.get('degraded') else 'all inputs current'}; "
            f"gates open: {', '.join(allowed) or 'none'}; "
            f"withheld: {', '.join(held) or 'none'}.",
@@ -198,14 +204,14 @@ def roster_usage(rv: Review) -> list[str]:
     rows = sorted(rv.roster.items(), key=lambda kv: (order.get(kv[1].get("lineup"), 3),
                                                      -(rv.ppg(kv[0]) or -1)))
     out = ["## My roster — actual usage", "", f"_{rv.usage_basis}_", "",
-           "| player | pos | lineup | this week proj | Sleeper proj | trend | season so far |",
+           "| player | pos | lineup | this week proj | Sleeper / stack | trend | season so far |",
            "|---|---|---|---|---|---|---|"]
     for sid, p in rows:
         if p.get("position") in ("K", "DEF"):
             continue
         why = rv.line(sid).get("trend_why") or ""
         out.append(f"| {p.get('name')} | {p.get('position')} | {p.get('lineup')} | "
-                   f"{_fmt(p.get('projected'))} | {rv.sleeper(sid)} | {rv.trend(sid)}"
+                   f"{_fmt(p.get('projected'))} | {rv.outside(sid)} | {rv.trend(sid)}"
                    f"{f' ({why})' if why and rv.trend(sid) != TOO_FEW else ''} | "
                    f"{rv.usage_cell(sid)} |")
     return out + [""]
@@ -218,7 +224,7 @@ def free_agents(rv: Review, watch: Sequence[str]) -> list[str]:
                              -(c.get("lineup_gain") or c.get("gap") or 0)))
     out += ["**The page's own verdicts** (this week's lineup only):", ""]
     if page:
-        out += ["| player | verdict | this week | our proj / Sleeper | actual usage |",
+        out += ["| player | verdict | this week | ours / Sleeper / stack | actual usage |",
                 "|---|---|---|---|---|"]
         for c in page[:TOP_N]:
             sid = normalize_id(c["id"])
@@ -226,7 +232,7 @@ def free_agents(rv: Review, watch: Sequence[str]) -> list[str]:
                     if c.get("verdict") == "LINEUP" else f"bench +{_fmt(c.get('gap'), 2)}")
             out.append(f"| {c.get('name')} ({c.get('position')}, {c.get('team')}) | "
                        f"{c.get('verdict')} | {gain} | {_fmt(c.get('projected'))} / "
-                       f"{rv.sleeper(sid)} | {rv.trend(sid)}; "
+                       f"{rv.outside(sid)} | {rv.trend(sid)}; "
                        f"{rv.usage_cell(sid)} |")
     else:
         out.append("None: no available player improves this week's lineup.")

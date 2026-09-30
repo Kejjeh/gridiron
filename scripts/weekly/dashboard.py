@@ -27,12 +27,13 @@ import pandas as pd
 from gridiron import ingest as ing
 from gridiron.dashboard import build_dashboard
 from gridiron.freshness import WeekContext
-from gridiron.ids import Crosswalk, sleeper_gsis_overlay
+from gridiron.ids import Crosswalk, nflverse_team, sleeper_gsis_overlay
 from gridiron.league_config import (MY_SLEEPER_USERNAME, SEASON_YEAR,
                                     SETTINGS_VERIFIED)
 from gridiron.livesync import current_snapshot
 from gridiron.paths import OUTPUTS, ensure_dirs
 from gridiron.scoring import ScoringCoverage, scoring_coverage
+from gridiron.models import advanced as adv_model
 from gridiron.shadow import read_shadow
 from gridiron.usage import player_weeks, weeks_present
 from gridiron.sleeper import player_map_status_note
@@ -194,6 +195,19 @@ def main(argv: list[str] | None = None) -> int:
         skill = weekly.loc[weekly["position"].isin(["QB", "RB", "WR", "TE", "K"])]
         weeks = player_weeks(skill, snaps, crosswalk)
 
+    # The advanced model (gridiron.models.advanced): its inputs sit beside the
+    # cache (the pull step writes them); missing inputs keep the baseline and
+    # the page says which model ran. Sleeper's team for each player overrides
+    # the last team in the box scores (a trade the frames have not seen).
+    teams = {}
+    for sid, rec in players.items():
+        gid = crosswalk.gsis(sid)
+        if gid and isinstance(rec, dict) and rec.get("team"):
+            teams[gid] = nflverse_team(rec.get("team"))
+    advanced = adv_model.build_context(
+        weeks=weeks, inputs=adv_model.load_inputs(directory, state_season),
+        injuries=injuries, schedule=schedule, week=report_week, teams=teams)
+
     owner_id = find_owner_id(snapshot, args.owner)
     if owner_id is None:
         print(f"Owner {args.owner!r} not found in the cached league users.",
@@ -210,11 +224,13 @@ def main(argv: list[str] | None = None) -> int:
         extra_notes=(player_map_status_note(directory),),
         # Sleeper's projection for the same players, recorded for weekly
         # grading only — not a manifest source, gates nothing (gridiron.shadow).
-        shadow=read_shadow(directory, season=state_season, week=report_week))
+        shadow=read_shadow(directory, season=state_season, week=report_week),
+        advanced=advanced)
 
     # Summary to stdout: no player names, so a log of this run exposes nothing.
     print(f"{ctx.headline()} | evidence boundary wk{ctx.evidence_boundary}")
     print("DEGRADED" if dash.degraded else "All inputs current.")
+    print(f"projection model: {advanced.status}")
     for n in dash.notes:
         print(f"  - {n}")
     print(f"projected roster rows: {sum(1 for p in dash.roster if p.projected)}/{len(dash.roster)}")

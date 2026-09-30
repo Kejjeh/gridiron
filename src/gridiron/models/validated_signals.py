@@ -25,11 +25,23 @@ from __future__ import annotations
 
 BASELINE = "usage_prior x positional_efficiency x line_multiplier"
 
-#: Signals layered on the baseline. Empty until one clears the gate.
-FEATS: tuple[str, ...] = ()
+#: Signals layered on the baseline.
+FEATS: tuple[str, ...] = ("advanced_v1",)
 
 #: feature name -> {"evidence": path, "weeks": (lo, hi), "mae_delta": float}
-VALIDATED: dict[str, dict] = {}
+VALIDATED: dict[str, dict] = {
+    # gridiron.models.advanced: the full baseline as an input plus expected
+    # fantasy points, snap/target/air-yards share, NGS, opponent, vacated
+    # opportunity and depth-chart rank. Trained 2023-2024, scored on 2025
+    # weeks 4-18 (4,798 player-weeks, 60,813 start/sit pairs): start/sit
+    # 64.0% vs the baseline's 63.1%, better in 13 of 15 weeks.
+    "advanced_v1": {
+        "evidence": "docs/research/ADVANCED_STATS_BACKTEST_2025.md",
+        "script": "scripts/research/advanced_model_backtest.py",
+        "season": 2025, "weeks": (4, 18),
+        "mae_delta": -0.074, "pairwise_delta": 0.0088,
+    },
+}
 
 _unvalidated = [f for f in FEATS if f not in VALIDATED]
 assert not _unvalidated, (

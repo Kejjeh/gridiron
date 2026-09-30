@@ -45,8 +45,12 @@ players every week (ledger columns `*_pairwise`, `*_mae`), and the weekly
 review shows Sleeper's number beside ours. Advanced-stats research:
 `docs/research/ADVANCED_STATS_BACKTEST_2025.md` — ours + advanced stats 64.0%
 start/sit vs baseline 63.1%, Sleeper 65.4%, stack 65.5% (2025, out of sample).
-Next: promote the advanced features through the rule #5 gate; add the stack
-as a second shadow system.
+Done since: `advanced_v1` promoted through the rule #5 gate and drives the
+page from week 4 (inputs fetched by the pull step outside the manifest;
+baseline + reason when missing); the stack and the old baseline are live
+contenders in the record; the shoot-out grades page / baseline_v1 / Sleeper
+/ blend / stack weekly. Practice-report features tested and dropped;
+depth-chart rank kept.
 
 ## Current state — release 63071af, schedule gaps (2026-09-25)
 

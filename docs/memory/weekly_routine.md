@@ -48,6 +48,10 @@ Sleeper's player map, or submits anything to the league.
   shoot-out — baseline vs Sleeper vs their average, start/sit pairwise rate
   and MAE on the same pre-kickoff players — and the season line accumulates
   it. This is the forward test that decides which projection drives the page.
+- **Projection model** (`gridiron.models.advanced`, `advanced_v1`): from week
+  4 the page's projection is the baseline refined by advanced stats; the
+  record's `projection_model` says which model ran, and `contenders` holds
+  the old baseline and the stack (advanced + Sleeper) for the shoot-out.
 
 ## First real grade (2026-09-30, week 3, board of 09-27 13:06Z)
 

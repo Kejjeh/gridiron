@@ -162,6 +162,19 @@ def test_the_weekly_grade_scores_all_three_on_the_same_players():
     out = gw.shootout(archive, actuals)
     # scored: 1, 2 (WR) and 5 (RB); 3 is withheld, 4 was captured after kickoff
     assert out["n"] == 3 and out["pairs"] == 1
-    assert out["sleeper_pairwise"] == 1.0 and out["baseline_pairwise"] == 0.0
-    assert out["baseline_mae"] == round((7 + 7 + 0) / 3, 3)
+    assert out["systems"] == ["page", "sleeper", "blend"]
+    assert out["sleeper_pairwise"] == 1.0 and out["page_pairwise"] == 0.0
+    assert out["page_mae"] == round((7 + 7 + 0) / 3, 3)
     assert gw.shootout({"roster": []}, actuals) is None
+
+    # with contenders: the old baseline and the stack join, on the same players
+    archive["contenders"] = {"baseline_v1": {"1": 10.0, "2": 11.0, "5": 9.0},
+                             "stack": {"1": 8.0, "2": 12.0}}
+    out = gw.shootout(archive, actuals)
+    assert out["systems"] == ["page", "baseline_v1", "sleeper", "blend", "stack"]
+    assert out["n"] == 2                     # player 5 has no stack number
+    assert out["stack_pairwise"] == 1.0 and out["baseline_v1_pairwise"] == 1.0
+    row = gw.aggregate(__import__("gridiron.decisions", fromlist=["x"]).grade_archive(
+        {"week": 3}, {}), 2026, Path("week03_20260927T130000Z.json"),
+        NOW, out)
+    assert row["stack_pairwise"] == 1.0 and row["page_pairwise"] == 0.0

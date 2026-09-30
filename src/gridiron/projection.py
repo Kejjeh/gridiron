@@ -321,6 +321,10 @@ class Projection:
             return "ABSTAINED: " + "; ".join(self.reasons)
         parts = [c.describe() for c in self.components]
         tail = f" | caveats: {'; '.join(self.reasons)}" if self.reasons else ""
+        base = self.inputs.get("baseline_mean")
+        if base is not None:
+            return (" + ".join(parts) + f" = {base:.2f} baseline -> {self.mean:.2f} "
+                    f"with advanced stats ± {self.sd:.2f}{tail}")
         return " + ".join(parts) + f" = {self.mean:.2f} ± {self.sd:.2f}{tail}"
 
 
