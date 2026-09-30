@@ -50,6 +50,9 @@ def tracked_outputs() -> list[str]:
     "data/outputs/dashboard/week03_dashboard.html",
     "data/outputs/dashboard/dashboard_latest.json",
     "data/ledger/decisions/season2026/week03_20260926T120000Z.json",
+    "data/outputs/cloud/0056_36733263178/outputs/dashboard/dashboard_latest.json",
+    "data/outputs/review/week04.md",
+    "data/outputs/review/ranks/trade_chart.csv",
 ])
 def test_a_rendered_weekly_report_is_ignored(pattern):
     """`git check-ignore` is the real answer to 'would this get committed?' —

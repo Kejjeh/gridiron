@@ -193,7 +193,9 @@ def test_the_rule_5_gate_fails_the_import_for_an_unvalidated_feature(monkeypatch
     src = Path(module.__file__).read_text(encoding="utf-8")
     assert "assert not _unvalidated" in src
     # Simulate a feature added without evidence: the module must not import.
-    bad = src.replace("FEATS: tuple[str, ...] = ()", 'FEATS: tuple[str, ...] = ("snap_trend",)')
+    bad = src.replace('FEATS: tuple[str, ...] = ("advanced_v1",)',
+                      'FEATS: tuple[str, ...] = ("advanced_v1", "snap_trend")')
+    assert bad != src, "the probe must actually add an unvalidated feature"
     ns: dict = {"__name__": "gate_probe"}
     with pytest.raises(AssertionError, match="rule #5"):
         exec(compile(bad, "gate_probe", "exec"), ns)

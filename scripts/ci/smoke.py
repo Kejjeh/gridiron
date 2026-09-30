@@ -60,6 +60,10 @@ IMPORTS = [
     "gridiron.dashboard",
     "gridiron.gameday",
     "gridiron.publication",
+    "gridiron.trends",
+    "gridiron.external_ranks",
+    "gridiron.shadow",
+    "gridiron.models.advanced",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on
@@ -101,6 +105,13 @@ PATTERNS = [
     "test_shrinkage.py",
     "test_vegas.py",
     "test_season.py",
+    "test_trends.py",
+    "test_external_ranks.py",
+    "test_weekly_review.py",
+    "test_grade_week.py",
+    "test_skill_registry.py",
+    "test_shadow.py",
+    "test_advanced_model.py",
 ]
 
 # Anti-vacuity floor: a glob typo must not silently shrink the smoke set.

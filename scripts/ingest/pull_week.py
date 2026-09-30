@@ -37,6 +37,8 @@ from gridiron.carryover import CARRIED_FORWARD
 from gridiron.freshness import CADENCES
 from gridiron.ids import CROSSWALK_URL
 from gridiron import livesync as ls
+from gridiron import shadow
+from gridiron.models import advanced as adv_model
 from gridiron.league_config import SEASON_YEAR
 from gridiron.paths import ensure_dirs
 from gridiron.scoring import scoring_coverage
@@ -244,6 +246,61 @@ def pull_player_map(manifest: ing.Manifest, client, now: datetime, *,
         print(f"  {name}: FAILED {err} — not retried for 24 h", file=sys.stderr)
 
 
+def pull_shadow(manifest: ing.Manifest, now: datetime, force: bool, *,
+                fetch=None) -> None:
+    """Record Sleeper's weekly projections beside the cache (gridiron.shadow).
+
+    Best effort and outside the manifest: a failure is logged and nothing
+    else changes, because the shadow gates nothing. The week is the one the
+    league snapshot's Sleeper state names (never the wall clock). Reused for
+    `shadow.REFRESH_HOURS` so a burst of runs does not re-download it."""
+    snap = manifest.read_json("sleeper_league") or {}
+    state = snap.get("state") if isinstance(snap, dict) else None
+    try:
+        season, week = int(state["season"]), int(state["week"])
+    except (TypeError, KeyError, ValueError):
+        print("  shadow_projections: skipped — no Sleeper state in the league snapshot")
+        return
+    if week < 1:
+        print(f"  shadow_projections: skipped — Sleeper state week {week}")
+        return
+    directory = manifest.directory
+    if not force and shadow.is_fresh(directory, season=season, week=week, now=now):
+        print(f"  shadow_projections: week {week} fetched under "
+              f"{shadow.REFRESH_HOURS:g} h ago, reused")
+        return
+    try:
+        blob = shadow.fetch_sleeper(season, week, now=now,
+                                    **({"fetch": fetch} if fetch else {}))
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  shadow_projections: FAILED {type(exc).__name__}: {exc} — the "
+              f"page is unaffected (shadow only)", file=sys.stderr)
+        return
+    shadow.write_shadow(directory, blob)
+    print(f"  shadow_projections: week {week}, {len(blob['players'])} players "
+          f"(Sleeper, shadow only)")
+
+
+def pull_model_inputs(manifest: ing.Manifest, season: int, now: datetime,
+                      force: bool, *, loaders=None) -> None:
+    """The advanced model's inputs (expected points, Next Gen Stats, depth
+    charts), normalised and written beside the cache
+    (`gridiron.models.advanced`). Best effort and outside the manifest: a
+    failure is logged, and the page keeps the baseline and says why."""
+    directory = manifest.directory
+    if not force and adv_model.inputs_fresh(directory, season, now):
+        print(f"  model_inputs: fetched under {adv_model.INPUT_REFRESH_HOURS:g} h ago, reused")
+        return
+    try:
+        frames = adv_model.fetch_inputs(season, loaders=loaders)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  model_inputs: FAILED {type(exc).__name__}: {exc} — the page "
+              f"keeps the baseline projection", file=sys.stderr)
+        return
+    adv_model.write_inputs(directory, season, frames, now)
+    print("  model_inputs: " + ", ".join(f"{k} {len(v)} rows" for k, v in frames.items()))
+
+
 def run_number(text: str | None) -> int | None:
     """GitHub's per-workflow run counter, or None. Not a credential: it is the
     number every run page shows. It only increases, so a carried ledger
@@ -430,6 +487,10 @@ def main(argv: list[str] | None = None) -> int:
                  carried=args.carried_history, run=run_number(os.environ.get("GITHUB_RUN_NUMBER")),
                  attempt=run_number(os.environ.get("GITHUB_RUN_ATTEMPT")),
                  bootstrap=args.player_map_bootstrap)
+    print("[pull] advanced-model inputs (read-only; gates nothing)")
+    pull_model_inputs(manifest, args.season, now, args.force)
+    print("[pull] shadow projections (read-only; gates nothing)")
+    pull_shadow(manifest, now, args.force)
     check_scoring_inputs(manifest)
     # Save under the same lock the sync uses, merging in anything a concurrent
     # writer committed while this pull was running. Without the merge, a long

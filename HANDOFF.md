@@ -1,5 +1,57 @@
 # HANDOFF
 
+## Weekly routine — skills, usage trends, grading (2026-09-30, draft)
+
+Branch `claude/compassionate-shannon-yq0hw5` (fast-forwarded to main
+`012a4aa`, no history rewritten), draft PR, not merged or deployed. What the
+owner and Claude did by hand on 09-30 — pull the latest record, compare an
+outside ranking image to the roster and free agents, look at the players the
+owner named, then set projections aside and read actual usage — is now four
+skills (`.claude/skills/`, rule #12's names) over three scripts, and the
+record itself carries the usage. Detail: `docs/memory/weekly_routine.md`.
+
+- `gridiron.trends` + record key `usage`: last 4 weeks of points, snap share,
+  opportunities, targets, target share, carries per rostered/available
+  player, and a volume-only trend label (rule #6). Record-only; no
+  projection, gate or page changes.
+- `scripts/weekly/fetch_record.py` (latest cloud artifact, read-only),
+  `scripts/weekly/weekly_review.py` (the weekly read, incl. `--ranks` CSVs
+  transcribed from screenshots and `--watch`), `scripts/weekly/grade_week.py`
+  (`grade_archive` every week; aggregate ledger `data/ledger/grades/`).
+- `gridiron.external_ranks`: the one name-to-id boundary (outside lists
+  carry names only); exact normalised name + position against roster and
+  available pool, ambiguity resolves to nobody. Rule #3 carve-out recorded
+  in DECISIONS.
+- First real grade (week 3): projection direction 8/24 on graded
+  comparisons, 0 endorsed (all withheld/unverified), roster MAE 7.44. One
+  week; not a reason to retune (rule #5).
+
+Pending review: Astra. Next candidates, not built: show the trend chip on
+the Board's roster rows; grade weekly in the cloud workflow.
+
+Projection research (same branch): `docs/research/PROJECTION_BACKTEST_2025.md`,
+`scripts/research/projection_backtest.py`. On 2025 (5,425 player-weeks, out
+of sample), Sleeper's weekly projections ordered start/sit pairs correctly
+65.2% of the time vs this repo's baseline 62.4% (MAE 3.77 vs 4.03), ahead in
+15 of 17 weeks; the historical endpoint may carry post-game revisions, so the
+next step is a forward shadow test (record Sleeper's pre-kickoff projection,
+grade weekly) before the page uses it (rule #5).
+
+Live Sleeper comparison (same branch): `gridiron.shadow` captures Sleeper's
+weekly projections in the pull step (best effort, outside the manifest,
+gates nothing), the record carries them as `shadow` with a pre-kickoff flag
+per player, `grade_week.py` scores baseline / Sleeper / blend on the same
+players every week (ledger columns `*_pairwise`, `*_mae`), and the weekly
+review shows Sleeper's number beside ours. Advanced-stats research:
+`docs/research/ADVANCED_STATS_BACKTEST_2025.md` — ours + advanced stats 64.0%
+start/sit vs baseline 63.1%, Sleeper 65.4%, stack 65.5% (2025, out of sample).
+Done since: `advanced_v1` promoted through the rule #5 gate and drives the
+page from week 4 (inputs fetched by the pull step outside the manifest;
+baseline + reason when missing); the stack and the old baseline are live
+contenders in the record; the shoot-out grades page / baseline_v1 / Sleeper
+/ blend / stack weekly. Practice-report features tested and dropped;
+depth-chart rank kept.
+
 ## Current state — release 63071af, schedule gaps (2026-09-25)
 
 **Production is main `63071af6bd5c8e629477f43ff49a8062aa36ce0a`**, the merge

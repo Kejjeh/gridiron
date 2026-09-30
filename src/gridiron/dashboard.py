@@ -46,6 +46,7 @@ from math import sqrt
 from pathlib import Path
 
 import pandas as pd
+from dataclasses import replace as dataclass_replace
 
 from gridiron.decisions import (
     MOVE_POINTS, Changes, archive_path, diff_archives, previous_archive,
@@ -66,6 +67,9 @@ from gridiron.projection import (
 )
 from gridiron.radar import RadarChanges, diff_radar, move_deadline, radar_record
 from gridiron.scoring import ScoringCoverage
+from gridiron.models.advanced import NAME as ADVANCED_NAME, AdvancedContext
+from gridiron.shadow import shadow_block
+from gridiron.trends import usage_block
 from gridiron import theme
 from gridiron.waivers import (
     BELOW, COVERAGE, LINEUP, RESEARCH, Candidate, WaiverBoard, available_ids,
@@ -142,6 +146,19 @@ class Dashboard:
     radar_changes: RadarChanges | None = None
     #: The snapshot as-of, as the page states it.
     snapshot_as_of: str = ""
+    #: What each rostered and available player has actually done, week by
+    #: week, with a volume-only trend (`gridiron.trends`). Record-only: the
+    #: weekly review and the grader read it; no projection does.
+    usage: Mapping[str, object] = field(default_factory=dict)
+    #: An outside system's projection for the same players, captured for
+    #: grading only (`gridiron.shadow`). Record-only; nothing reads it.
+    shadow: Mapping[str, object] | None = None
+    #: Which projection model produced the page's numbers, or why the
+    #: baseline stands (`gridiron.models.advanced`).
+    model_status: str = ""
+    #: Other systems' numbers for the same players, for weekly grading only:
+    #: the pre-advanced baseline and the stack (advanced + Sleeper).
+    contenders: Mapping[str, object] | None = None
 
     @property
     def degraded(self) -> bool:
@@ -230,6 +247,10 @@ class Dashboard:
                                   sources=self.sources, designations=self.designations),
             "radar_changes": (None if self.radar_changes is None
                               else self.radar_changes.record()),
+            "usage": dict(self.usage) if self.usage else None,
+            "shadow": dict(self.shadow) if self.shadow else None,
+            "projection_model": self.model_status or BASELINE_LABEL,
+            "contenders": dict(self.contenders) if self.contenders else None,
             "withheld_actions": list(self.gate.withheld),
             "gate": self.gate.record(),
             "locks": None if self.locks is None else {
@@ -279,6 +300,38 @@ def _covers(frame: pd.DataFrame | None, week: int, sources: Sequence[SourceFresh
     return bool((frame["week"] == int(week)).any())
 
 
+ADVANCED_LABEL = ("ADVANCED v1 (baseline + advanced stats) — beat the baseline out "
+                  "of sample, rule #5; P(win) still uncalibrated")
+
+
+def contenders_block(advanced: AdvancedContext | None,
+                     shadow: Mapping[str, object] | None,
+                     players: Sequence[Player]) -> dict | None:
+    """The numbers other systems give the same players, for the weekly
+    shoot-out only: `baseline_v1` (the model before advanced stats) and
+    `stack` (advanced + Sleeper's pre-kickoff projection). Nothing reads
+    these to project, rank, gate or recommend."""
+    base: dict[str, float] = {}
+    stack: dict[str, float] = {}
+    sleeper = (shadow or {}).get("players") or {}
+    for p in players:
+        proj = p.projection
+        if not proj.usable or proj.is_withheld:
+            continue
+        b = proj.inputs.get("baseline_mean", proj.mean)
+        base[p.sleeper_id] = round(float(b), 3)
+        hit = sleeper.get(p.sleeper_id)
+        if advanced is not None and hit and p.gsis_id:
+            st = advanced.stacked(p.gsis_id, p.position, float(b),
+                                  proj.inputs.get("ppg_to_date"), hit.get("points"))
+            if st is not None:
+                stack[p.sleeper_id] = st
+    if not base:
+        return None
+    return {"baseline_v1": base, "stack": stack,
+            "note": "grading only: never used by any projection, gate or action"}
+
+
 def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                     snapshot: Mapping[str, object],
                     sleeper_players: Mapping[str, Mapping[str, object]],
@@ -288,7 +341,9 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                     rules: ScoringRules = DEFAULT_SCORING,
                     archive_root: Path | None = None,
                     write_archive_file: bool = True,
-                    extra_notes: Sequence[str] = ()) -> Dashboard:
+                    extra_notes: Sequence[str] = (),
+                    shadow: Mapping[str, object] | None = None,
+                    advanced: AdvancedContext | None = None) -> Dashboard:
     week = context.report_week
     rosters = list(snapshot.get("rosters") or [])
     league = snapshot.get("league") or {}
@@ -306,6 +361,22 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
     designation_reason = "" if designation_fresh else (
         players_source.reason if players_source is not None
         else "the player dump's freshness was never assessed")
+
+    def refine(proj: Projection, gid: str, pos: str) -> Projection:
+        """The advanced model's mean in place of the baseline's, before any
+        withholding; the baseline's own number stays in `inputs`."""
+        if advanced is None or not proj.usable or not gid:
+            return proj
+        pe = evidence.players.get(gid)
+        ppg = (pe.points / pe.games) if pe is not None and pe.games else None
+        hit = advanced.refine(gid, pos, float(proj.mean), ppg)
+        if hit is None:
+            return proj
+        return dataclass_replace(
+            proj, mean=hit[0],
+            inputs={**proj.inputs, "baseline_mean": float(proj.mean),
+                    "advanced": ADVANCED_NAME, "ppg_to_date": ppg},
+            label=ADVANCED_LABEL)
 
     def make(sid: str, lineup: str) -> Player:
         sid = normalize_id(sid)
@@ -326,6 +397,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                            week=week, implied_total=implied, evidence=evidence)
         if not gid and not dst:
             proj = abstain("sleeper id unresolved against the crosswalk (never name-matched)")
+        proj = refine(proj, gid, pos)
         note = availability(gid, rec, inj, report_week=week,
                             covers_report_week=injuries_cover,
                             designation_fresh=designation_fresh,
@@ -415,8 +487,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             return abstain("sleeper id unresolved against the crosswalk")
         if not scoring.scorable(pos) and pos in ("QB", "K"):
             return abstain(f"scoring inputs incomplete for {pos}")
-        p = project(evidence.players.get(gid), position=pos, week=week,
-                    implied_total=game.implied_total, evidence=evidence)
+        p = refine(project(evidence.players.get(gid), position=pos, week=week,
+                           implied_total=game.implied_total, evidence=evidence), gid, pos)
         if p.usable and game is BYE:
             p = p.withheld("BYE week: projected 0")
         rec = sleeper_players.get(sid) or {}
@@ -511,7 +583,16 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                      plan, matchup, matchup_reason, board, evaluation,
                      tuple(unresolved), my_roster_id, gate, actions, None, kickoffs,
                      league_id=league_id, next=nxt, pool=tuple(pool), owned_ids=owned_ids,
-                     designations=designations, snapshot_as_of=snapshot_as_of)
+                     designations=designations, snapshot_as_of=snapshot_as_of,
+                     usage=usage_block(weeks, [(p.sleeper_id, p.gsis_id)
+                                               for p in (*roster, *pool)],
+                                       through_week=context.stats_through),
+                     shadow=shadow_block(shadow, [(p.sleeper_id, p.kickoff)
+                                                  for p in (*roster, *pool)]),
+                     model_status=(advanced.status if advanced is not None and advanced.active
+                                   else BASELINE_LABEL + (f" ({advanced.status})"
+                                                          if advanced is not None else "")),
+                     contenders=contenders_block(advanced, shadow, (*roster, *pool)))
 
     # What changed since the previous frozen page. Read-only: the diff never
     # feeds a projection, so yesterday's numbers cannot enter today's evidence.
@@ -2334,7 +2415,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         + f"<p class=\"small sub\">{_e(ctx.headline())} · evidence boundary week "
           f"{ctx.evidence_boundary}</p>"
         + theme.snapshot_strip_html()
-        + f"<p class=\"small sub\">{_e(BASELINE_LABEL)}</p>"
+        + f"<p class=\"small sub\">{_e(d.model_status or BASELINE_LABEL)}</p>"
         + "<p class=\"small sub\"><a href=\"#inputs\">Every input and what it is good "
           "enough for ↓</a></p>"))
 

@@ -33,16 +33,15 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   `gridiron.publication` packages exactly two allowlisted HTML files for
   GitHub Pages under the `GRIDIRON_PUBLIC_PUBLICATION` opt-in — never JSON,
   cache or archive — and artifacts, caches and logs are public too. A pickup
-  is a move ONLY if it improves THIS WEEK's lineup (`gridiron.waivers`): no
-  cross-position "depth", bench-only adds are research, an acquisition is
-  CONDITIONAL (availability UNVERIFIED); the Free Agent Radar (`gridiron.radar`,
-  under the Action Desk) verdicts every projected pool player; rollover = "no comparison". Game Day (`scripts/weekly/gameday.py`,
-  scenarios A-F in `gameday_scenarios.py --screenshot --browser`): platform
-  actuals only, game status OBSERVED or UNKNOWN (never inferred from the
-  clock), every archived move re-judged NOW by player id against freshness,
-  slot eligibility, designation, placement and lock (the archive's
-  ACTIONABLE is history, not authority), no live win odds, and a one-tap
-  read-only refresh inside the artifact file itself.
+  is a move ONLY if it improves THIS WEEK's lineup (`gridiron.waivers`); an
+  acquisition is CONDITIONAL; the Free Agent Radar verdicts every projected
+  pool player. Game Day (`scripts/weekly/gameday.py`): platform actuals only,
+  archived moves re-judged NOW by id, one-tap read-only refresh. Full board
+  and Game Day invariants: docs/memory/board.md.
+- Weekly routine (skills in `.claude/skills/`: roster-audit, waiver-board,
+  start-sit, decision-log): `scripts/weekly/fetch_record.py` ->
+  `weekly_review.py` (usage trends, `--ranks`, `--watch`), and after the week
+  `grade_week.py`. Detail: docs/memory/weekly_routine.md.
 - Settings drift check: `PYTHONPATH=src python scripts/verify_league_settings.py`.
 
 ## Rules (full text in docs/memory/rules.md — cite by number)
