@@ -29,6 +29,14 @@ record itself carries the usage. Detail: `docs/memory/weekly_routine.md`.
 Pending review: Astra. Next candidates, not built: show the trend chip on
 the Board's roster rows; grade weekly in the cloud workflow.
 
+Projection research (same branch): `docs/research/PROJECTION_BACKTEST_2025.md`,
+`scripts/research/projection_backtest.py`. On 2025 (5,425 player-weeks, out
+of sample), Sleeper's weekly projections ordered start/sit pairs correctly
+65.2% of the time vs this repo's baseline 62.4% (MAE 3.77 vs 4.03), ahead in
+15 of 17 weeks; the historical endpoint may carry post-game revisions, so the
+next step is a forward shadow test (record Sleeper's pre-kickoff projection,
+grade weekly) before the page uses it (rule #5).
+
 ## Current state — release 63071af, schedule gaps (2026-09-25)
 
 **Production is main `63071af6bd5c8e629477f43ff49a8062aa36ce0a`**, the merge
