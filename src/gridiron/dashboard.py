@@ -66,6 +66,7 @@ from gridiron.projection import (
 )
 from gridiron.radar import RadarChanges, diff_radar, move_deadline, radar_record
 from gridiron.scoring import ScoringCoverage
+from gridiron.shadow import shadow_block
 from gridiron.trends import usage_block
 from gridiron import theme
 from gridiron.waivers import (
@@ -147,6 +148,9 @@ class Dashboard:
     #: week, with a volume-only trend (`gridiron.trends`). Record-only: the
     #: weekly review and the grader read it; no projection does.
     usage: Mapping[str, object] = field(default_factory=dict)
+    #: An outside system's projection for the same players, captured for
+    #: grading only (`gridiron.shadow`). Record-only; nothing reads it.
+    shadow: Mapping[str, object] | None = None
 
     @property
     def degraded(self) -> bool:
@@ -236,6 +240,7 @@ class Dashboard:
             "radar_changes": (None if self.radar_changes is None
                               else self.radar_changes.record()),
             "usage": dict(self.usage) if self.usage else None,
+            "shadow": dict(self.shadow) if self.shadow else None,
             "withheld_actions": list(self.gate.withheld),
             "gate": self.gate.record(),
             "locks": None if self.locks is None else {
@@ -294,7 +299,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                     rules: ScoringRules = DEFAULT_SCORING,
                     archive_root: Path | None = None,
                     write_archive_file: bool = True,
-                    extra_notes: Sequence[str] = ()) -> Dashboard:
+                    extra_notes: Sequence[str] = (),
+                    shadow: Mapping[str, object] | None = None) -> Dashboard:
     week = context.report_week
     rosters = list(snapshot.get("rosters") or [])
     league = snapshot.get("league") or {}
@@ -520,7 +526,9 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                      designations=designations, snapshot_as_of=snapshot_as_of,
                      usage=usage_block(weeks, [(p.sleeper_id, p.gsis_id)
                                                for p in (*roster, *pool)],
-                                       through_week=context.stats_through))
+                                       through_week=context.stats_through),
+                     shadow=shadow_block(shadow, [(p.sleeper_id, p.kickoff)
+                                                  for p in (*roster, *pool)]))
 
     # What changed since the previous frozen page. Read-only: the diff never
     # feeds a projection, so yesterday's numbers cannot enter today's evidence.

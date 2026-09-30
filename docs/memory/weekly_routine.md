@@ -41,6 +41,13 @@ Sleeper's player map, or submits anything to the league.
   never merged: `agree/scorable` (advice the page endorsed) and
   `direction_agree/direction_n` (the projection's direction on every graded
   comparison, including withheld ones — the page withholds most of game day).
+- **Live Sleeper comparison** (`gridiron.shadow`): the pull step records
+  Sleeper's weekly projections (outside the manifest; gates nothing); the
+  record's `shadow` block holds each player's number and whether it was
+  captured before the player's kickoff; `grade_week.py` prints and stores a weekly
+  shoot-out — baseline vs Sleeper vs their average, start/sit pairwise rate
+  and MAE on the same pre-kickoff players — and the season line accumulates
+  it. This is the forward test that decides which projection drives the page.
 
 ## First real grade (2026-09-30, week 3, board of 09-27 13:06Z)
 

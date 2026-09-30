@@ -40,6 +40,10 @@ skill runs it every week so accuracy accumulates.
   UNVERIFIED). It is often empty: on game days the page withholds.
 - `direction_agree/direction_n` is the projection's directional hit rate on
   every graded comparison, advice or not — the model's report card.
+- The **shoot-out** line compares this repo's projection, Sleeper's
+  pre-kickoff projection and their average on the same players; report the
+  week and the season-to-date line — it decides which projection the page
+  should use (docs/research/PROJECTION_BACKTEST_2025.md).
 - A single week is noise. Do not retune anything from one week's grade;
   a model change needs an out-of-sample win over the full baseline (rule #5).
 

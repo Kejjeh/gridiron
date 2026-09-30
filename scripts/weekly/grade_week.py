@@ -45,7 +45,15 @@ from gridiron.trends import actuals_from_usage
 GRADES_DIR = LEDGER / "grades"
 FIELDS = ("season", "week", "archive", "archive_built", "graded", "ungradeable",
           "scorable", "agree", "direction_n", "direction_agree", "withheld",
-          "unverified", "decisions", "projection_mae", "projection_n", "graded_at")
+          "unverified", "decisions", "projection_mae", "projection_n",
+          "shootout_n", "shootout_pairs", "baseline_pairwise", "sleeper_pairwise",
+          "blend_pairwise", "baseline_mae", "sleeper_mae", "blend_mae", "graded_at")
+
+#: The systems the weekly shoot-out scores on identical players.
+SYSTEMS = ("baseline", "sleeper", "blend")
+#: Pairs are formed only among players the shadow projected at least this
+#: high — the same "fantasy-relevant" cut as the 2025 backtest.
+SHOOTOUT_MIN = 5.0
 
 
 def direction(grade: Grade) -> tuple[int, int]:
@@ -128,7 +136,64 @@ def actuals_from_nflverse(season: int, week: int) -> dict[str, float]:
             if g and p == p}
 
 
-def aggregate(grade: Grade, season: int, archive: Path, built: datetime) -> dict:
+def shootout(archive: Mapping[str, object], actuals: Mapping[str, float], *,
+             min_proj: float = SHOOTOUT_MIN) -> dict | None:
+    """Ours vs the shadow vs their average, on the SAME players, against
+    actual points: MAE, and the start/sit success rate — over every pair at
+    one position (both shadow-projected >= `min_proj`, actuals not tied),
+    the share each system ordered the way the points did.
+
+    Only players whose shadow number was captured before their kickoff, who
+    carry a projection of ours that was not withheld, and who have an actual
+    are scored. Returns None when the archive carries no shadow."""
+    shadow = archive.get("shadow") or {}
+    sp = shadow.get("players") if isinstance(shadow, Mapping) else None
+    if not sp:
+        return None
+    people = [(p.get("sleeper_id"), p) for p in archive.get("roster") or []]
+    radar = archive.get("radar") or {}
+    people += [(c.get("id"), c) for c in radar.get("candidates") or []]
+    rows, seen = [], set()
+    for sid, p in people:
+        sid = str(sid or "")
+        entry = sp.get(sid) if isinstance(sp, Mapping) else None
+        if not sid or sid in seen or not isinstance(entry, Mapping):
+            continue
+        seen.add(sid)
+        ours, theirs = p.get("projected"), entry.get("points")
+        actual = actuals.get(str(p.get("gsis_id") or ""))
+        if (not entry.get("pre_kickoff") or p.get("withheld") or ours is None
+                or theirs is None or actual is None
+                or str(p.get("position")) not in ("QB", "RB", "WR", "TE")):
+            continue
+        rows.append({"position": p.get("position"), "actual": float(actual),
+                     "baseline": float(ours), "sleeper": float(theirs),
+                     "blend": (float(ours) + float(theirs)) / 2.0})
+    if not rows:
+        return {"n": 0, "pairs": 0}
+    out: dict = {"n": len(rows)}
+    for sname in SYSTEMS:
+        out[f"{sname}_mae"] = round(sum(abs(r[sname] - r["actual"]) for r in rows)
+                                    / len(rows), 3)
+    hits, pairs = dict.fromkeys(SYSTEMS, 0), 0
+    rel = [r for r in rows if r["sleeper"] >= min_proj]
+    for i, a in enumerate(rel):
+        for b in rel[i + 1:]:
+            if a["position"] != b["position"] or a["actual"] == b["actual"]:
+                continue
+            pairs += 1
+            truth = a["actual"] > b["actual"]
+            for sname in SYSTEMS:
+                if a[sname] != b[sname] and (a[sname] > b[sname]) == truth:
+                    hits[sname] += 1
+    out["pairs"] = pairs
+    for sname in SYSTEMS:
+        out[f"{sname}_pairwise"] = round(hits[sname] / pairs, 4) if pairs else None
+    return out
+
+
+def aggregate(grade: Grade, season: int, archive: Path, built: datetime,
+              shoot: Mapping[str, object] | None = None) -> dict:
     agree, n = grade.agreement()
     d_agree, d_n = direction(grade)
     return {"season": season, "week": grade.week, "archive": archive.name,
@@ -140,6 +205,10 @@ def aggregate(grade: Grade, season: int, archive: Path, built: datetime) -> dict
             "decisions": len(grade.decisions),
             "projection_mae": "" if grade.projection_mae is None else grade.projection_mae,
             "projection_n": grade.projection_n,
+            "shootout_n": (shoot or {}).get("n", ""),
+            "shootout_pairs": (shoot or {}).get("pairs", ""),
+            **{f"{s}_{m}": "" if (shoot or {}).get(f"{s}_{m}") is None
+               else shoot[f"{s}_{m}"] for s in SYSTEMS for m in ("pairwise", "mae")},
             "graded_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
 
@@ -175,7 +244,20 @@ def season_line(rows: Sequence[Mapping[str, object]]) -> str:
             + (f" ({agree / n:.0%})" if n else "")
             + f"; projection direction on every graded comparison {d_agree}/{d_n}"
             + (f" ({d_agree / d_n:.0%})" if d_n else "")
-            + (f"; roster projection MAE {mae:.2f}" if mae is not None else ""))
+            + (f"; roster projection MAE {mae:.2f}" if mae is not None else "")
+            + shootout_line(rows))
+
+
+def shootout_line(rows: Sequence[Mapping[str, object]]) -> str:
+    """Season-to-date shoot-out, pairs-weighted, over weeks that have one."""
+    done = [r for r in rows if str(r.get("shootout_pairs") or "0") not in ("", "0")]
+    if not done:
+        return "; no shoot-out yet (archives carry no shadow projections)"
+    pairs = sum(int(r["shootout_pairs"]) for r in done)
+    rate = {s: sum(float(r[f"{s}_pairwise"]) * int(r["shootout_pairs"]) for r in done)
+            / pairs for s in SYSTEMS}
+    return ("; start/sit shoot-out over " + f"{pairs} pairs in {len(done)} week(s): "
+            + ", ".join(f"{s} {rate[s]:.1%}" for s in SYSTEMS))
 
 
 def render(grade: Grade, names: Mapping[str, str]) -> list[str]:
@@ -243,15 +325,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"# Week {args.week} grade — archive {path.name} (built {built.isoformat()}; "
           f"{why})\n")
     d_agree, d_n = direction(grade)
+    shoot = shootout(archive, actuals)
     print(grade.summary())
     print(f"projection direction on every graded comparison (advice or not): "
-          f"{d_agree}/{d_n}\n")
+          f"{d_agree}/{d_n}")
+    if shoot and shoot.get("pairs"):
+        print(f"shoot-out on {shoot['n']} players / {shoot['pairs']} start/sit pairs: "
+              + ", ".join(f"{s} {shoot[f'{s}_pairwise']:.1%} (MAE {shoot[f'{s}_mae']:.2f})"
+                          for s in SYSTEMS) + "\n")
+    else:
+        print("shoot-out: this archive carries no pre-kickoff shadow projections\n")
     print("\n".join(render(grade, names)) + "\n")
     for n in grade.notes:
         print(f"- {n}")
     if not args.no_save:
         rows = upsert(args.grades_dir / f"season{season}.csv",
-                      aggregate(grade, season, path, built))
+                      aggregate(grade, season, path, built, shoot))
         print(f"\n{season_line(rows)}")
         print(f"[grade] saved to {args.grades_dir / f'season{season}.csv'}", file=sys.stderr)
     return 0

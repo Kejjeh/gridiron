@@ -37,6 +37,17 @@ of sample), Sleeper's weekly projections ordered start/sit pairs correctly
 next step is a forward shadow test (record Sleeper's pre-kickoff projection,
 grade weekly) before the page uses it (rule #5).
 
+Live Sleeper comparison (same branch): `gridiron.shadow` captures Sleeper's
+weekly projections in the pull step (best effort, outside the manifest,
+gates nothing), the record carries them as `shadow` with a pre-kickoff flag
+per player, `grade_week.py` scores baseline / Sleeper / blend on the same
+players every week (ledger columns `*_pairwise`, `*_mae`), and the weekly
+review shows Sleeper's number beside ours. Advanced-stats research:
+`docs/research/ADVANCED_STATS_BACKTEST_2025.md` — ours + advanced stats 64.0%
+start/sit vs baseline 63.1%, Sleeper 65.4%, stack 65.5% (2025, out of sample).
+Next: promote the advanced features through the rule #5 gate; add the stack
+as a second shadow system.
+
 ## Current state — release 63071af, schedule gaps (2026-09-25)
 
 **Production is main `63071af6bd5c8e629477f43ff49a8062aa36ce0a`**, the merge

@@ -33,6 +33,7 @@ from gridiron.league_config import (MY_SLEEPER_USERNAME, SEASON_YEAR,
 from gridiron.livesync import current_snapshot
 from gridiron.paths import OUTPUTS, ensure_dirs
 from gridiron.scoring import ScoringCoverage, scoring_coverage
+from gridiron.shadow import read_shadow
 from gridiron.usage import player_weeks, weeks_present
 from gridiron.sleeper import player_map_status_note
 
@@ -206,7 +207,10 @@ def main(argv: list[str] | None = None) -> int:
         archive_root=args.archive_root, write_archive_file=not args.no_archive,
         # A player-map budget that needs a person (RECOVERY NEEDED) is said on
         # the page, not only in the pull step's log.
-        extra_notes=(player_map_status_note(directory),))
+        extra_notes=(player_map_status_note(directory),),
+        # Sleeper's projection for the same players, recorded for weekly
+        # grading only — not a manifest source, gates nothing (gridiron.shadow).
+        shadow=read_shadow(directory, season=state_season, week=report_week))
 
     # Summary to stdout: no player names, so a log of this run exposes nothing.
     print(f"{ctx.headline()} | evidence boundary wk{ctx.evidence_boundary}")

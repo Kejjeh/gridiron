@@ -106,7 +106,7 @@ def test_risers_watch_list_and_kickers():
     text = WR.build_review(_record(), watch=["90005"])
     risers = text.split("role is growing")[1].split("**Watch list")[0]
     assert "Tight Delta" in risers and "Back Epsilon" not in risers
-    assert "| Back Epsilon (RB) | available | RESEARCH | FALLING |" in text
+    assert "| Back Epsilon (RB) | available | RESEARCH | — | FALLING |" in text
     assert "Kicker Gamma" not in text.split("## My roster")[1].split("##")[0]
 
 
