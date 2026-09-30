@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -125,7 +125,7 @@ def depth_from_charts(charts: pd.DataFrame | None, schedule: pd.DataFrame | None
         return pd.DataFrame(columns=cols)
     d = charts.loc[charts["pos_abb"].isin(POSITIONS)].copy()
     d["when"] = pd.to_datetime(d["dt"], utc=True)
-    s = schedule.loc[schedule.get("game_type", "REG") == "REG"]
+    s = _regular(schedule, "game_type")
     first = pd.to_datetime(s["gameday"], utc=True).groupby(s["week"]).min()
     out = []
     for week, kickoff in first.items():
@@ -362,11 +362,14 @@ def fetch_inputs(season: int, *, loaders=None) -> dict[str, pd.DataFrame]:
                 [season], stat_type=k).to_pandas()) for k in NGS_COLUMNS},
             "depth_charts": lambda: nfl.load_depth_charts([season]).to_pandas(),
             "schedules": lambda: nfl.load_schedules([season]).to_pandas(),
+            "team_stats": lambda: nfl.load_team_stats([season],
+                                                      summary_level="week").to_pandas(),
         }
     raw = {name: fn() for name, fn in loaders.items()}
     return {"xfp": xfp_from_ff_opportunity(raw.get("ff_opportunity")),
             "ngs": ngs_from_nextgen({k: raw.get(f"ngs_{k}") for k in NGS_COLUMNS}),
-            "depth": depth_from_charts(raw.get("depth_charts"), raw.get("schedules"))}
+            "depth": depth_from_charts(raw.get("depth_charts"), raw.get("schedules")),
+            "defense": defense_history(raw.get("team_stats"), raw.get("schedules"))}
 
 
 def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame],
@@ -394,6 +397,9 @@ def load_inputs(directory: Path, season: int) -> dict | None:
         if int(meta.get("season") or 0) != int(season):
             return None
         frames = {k: pd.read_parquet(folder / f"{k}.parquet") for k in ("xfp", "ngs", "depth")}
+        dpath = folder / "defense.parquet"
+        frames["defense"] = (pd.read_parquet(dpath) if dpath.exists()
+                             else pd.DataFrame(columns=["team", "week"]))
     except (OSError, ValueError, KeyError):
         return None
     for df in frames.values():
@@ -428,6 +434,9 @@ class AdvancedContext:
     week: int
     status: str
     inputs_as_of: str = ""
+    #: team -> DEF features (team defenses have no gsis id; they are keyed
+    #: by team, which IS their stable id — gridiron.ids.is_dst_id).
+    defense: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
     @property
     def active(self) -> bool:
@@ -436,10 +445,11 @@ class AdvancedContext:
     def refine(self, gsis_id: str, position: str, baseline: float,
                ppg_to_date: float | None) -> tuple[float, dict] | None:
         """(advanced mean, the features used) or None to keep the baseline."""
-        if not self.active or position not in POSITIONS:
+        if not self.active or position not in (*POSITIONS, "K") \
+                or position not in self.model.adv:
             return None
         row = self.features.get(normalize_id(gsis_id))
-        if row is None:
+        if row is None or (row.get("_kind") == "K") != (position == "K"):
             return None
         full = {**row, "baseline": baseline,
                 "ppg_to_date": baseline if ppg_to_date is None else ppg_to_date}
@@ -448,15 +458,36 @@ class AdvancedContext:
 
     def stacked(self, gsis_id: str, position: str, baseline: float,
                 ppg_to_date: float | None, sleeper: float | None) -> float | None:
-        if not self.active or sleeper is None or position not in POSITIONS:
+        if not self.active or sleeper is None or position not in (*POSITIONS, "K") \
+                or position not in self.model.stack:
             return None
         row = self.features.get(normalize_id(gsis_id))
-        if row is None:
+        if row is None or (row.get("_kind") == "K") != (position == "K"):
             return None
         full = {**row, "baseline": baseline, "sleeper": sleeper,
                 "ppg_to_date": baseline if ppg_to_date is None else ppg_to_date}
         mean = self.model.predict(position, full, stacked=True)
         return None if mean is None else round(mean, 3)
+
+
+    def defense_projection(self, team: str) -> tuple[float, float] | None:
+        """(mean, sd) for a team defense this week, or None."""
+        if self.model is None or "DEF" not in self.model.adv:
+            return None
+        row = self.defense.get(str(team))
+        if row is None:
+            return None
+        mean = self.model.adv["DEF"].predict_row(row)
+        sd = float((self.model.meta.get("resid_sd") or {}).get("DEF") or 0.0)
+        return round(mean, 3), sd
+
+    def stacked_defense(self, team: str, sleeper: float | None) -> float | None:
+        if self.model is None or sleeper is None or "DEF" not in self.model.stack:
+            return None
+        row = self.defense.get(str(team))
+        if row is None:
+            return None
+        return round(self.model.stack["DEF"].predict_row({**row, "sleeper": sleeper}), 3)
 
 
 def build_context(*, weeks: pd.DataFrame | None, inputs: Mapping | None,
@@ -483,11 +514,147 @@ def build_context(*, weeks: pd.DataFrame | None, inputs: Mapping | None,
     feats = features_as_of(hist, int(week), schedule=schedule,
                            practice=practice_from_injuries(injuries),
                            depth=inputs["depth"], teams=teams)
-    rows = {gid: {c: r.get(c) for c in FEATURE_COLUMNS}
+    rows = {gid: {**{c: r.get(c) for c in FEATURE_COLUMNS}, "_kind": "skill"}
             for gid, r in zip(feats["gsis_id"], feats.to_dict("records"))}
+    dh = inputs.get("defense")
+    defense: dict[str, dict] = {}
+    if dh is not None and len(dh):
+        if "K" in weeks.get("position", pd.Series(dtype=str)).values:
+            k = weeks.loc[weeks["position"] == "K", ["gsis_id", "week", "team", "league_points"]]
+            k = k.assign(gsis_id=k["gsis_id"].map(normalize_id))
+            kf = kicker_features_as_of(k, dh, int(week), schedule, teams=teams)
+            for r in kf.to_dict("records"):
+                rows[r["gsis_id"]] = {**{c: r.get(c) for c in KICKER_FEATURES}, "_kind": "K"}
+        df = defense_features_as_of(dh, int(week), schedule)
+        defense = {r["team"]: {c: r.get(c) for c in DEFENSE_FEATURES}
+                   for r in df.to_dict("records")}
     as_of = str((inputs.get("meta") or {}).get("fetched_at") or "")
     ev = model.meta.get("evidence") or {}
     status = (f"{NAME}: baseline refined by advanced stats (out of sample "
               f"{ev.get('test')}: start/sit {float(ev.get('adv_pairwise', 0)):.1%} vs "
               f"baseline {float(ev.get('baseline_pairwise', 0)):.1%}); inputs as of {as_of}")
-    return AdvancedContext(model, rows, week, status, as_of)
+    return AdvancedContext(model, rows, week, status, as_of, defense)
+
+
+# ------------------------------------------------------- kickers & defenses
+
+KICKER_FEATURES = ("k_ppg_season", "k_ppg_l3", "team_fga_pg", "team_xpa_pg",
+                   "implied", "spread", "dome")
+DEFENSE_FEATURES = ("dst_ppg_season", "dst_ppg_l3", "sacks_pg", "takeaways_pg",
+                    "pa_pg", "opp_implied", "opp_sacks_allowed_pg",
+                    "opp_giveaways_pg", "home", "spread")
+
+
+def _regular(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """Regular-season rows; a frame without the column is taken as all regular."""
+    return df.loc[df[col] == "REG"] if col in df else df
+
+
+def schedule_context(schedule: pd.DataFrame | None, week: int) -> dict[str, dict]:
+    """team -> {opponent, home, spread (+ = favoured), implied, opp_implied, dome}."""
+    if schedule is None or len(schedule) == 0:
+        return {}
+    games = schedule_index(schedule, int(week))
+    s = _regular(schedule, "game_type")
+    s = s.loc[s["week"] == int(week)]
+    out: dict[str, dict] = {}
+    for r in s.to_dict("records"):
+        home, away = str(r["home_team"]), str(r["away_team"])
+        line = r.get("spread_line")
+        line = float(line) if line == line and line is not None else np.nan
+        dome = 1.0 if str(r.get("roof") or "").lower() in ("dome", "closed") else 0.0
+        for team, opp, is_home in ((home, away, 1.0), (away, home, 0.0)):
+            out[team] = {"opponent": opp, "home": is_home,
+                         "spread": line if is_home else -line,
+                         "implied": getattr(games.get(team), "implied_total", np.nan),
+                         "opp_implied": getattr(games.get(opp), "implied_total", np.nan),
+                         "dome": dome}
+    return out
+
+
+def defense_history(team_stats: pd.DataFrame | None,
+                    schedule: pd.DataFrame | None) -> pd.DataFrame:
+    """One row per team-week: the defense's league points (`defense_points`)
+    and the counting stats the features read."""
+    from gridiron.scoring import defense_points
+    cols = ["team", "week", "opponent_team", "dst_points", "sacks", "takeaways",
+            "points_allowed", "giveaways", "sacks_suffered", "fga", "xpa"]
+    if team_stats is None or len(team_stats) == 0:
+        return pd.DataFrame(columns=cols)
+    t = _regular(team_stats, "season_type").copy()
+    allowed: dict[tuple[int, str], float] = {}
+    if schedule is not None and len(schedule):
+        s = _regular(schedule, "game_type")
+        for r in s.itertuples():
+            if r.home_score == r.home_score and r.home_score is not None:
+                allowed[(int(r.week), str(r.home_team))] = float(r.away_score)
+                allowed[(int(r.week), str(r.away_team))] = float(r.home_score)
+    num = lambda c: pd.to_numeric(t[c], errors="coerce").fillna(0.0) if c in t else 0.0  # noqa: E731
+    out = pd.DataFrame({
+        "team": t["team"].astype(str), "week": t["week"].astype(int),
+        "opponent_team": t["opponent_team"].astype(str),
+        "points_allowed": [allowed.get((int(w), str(tm)), np.nan)
+                           for w, tm in zip(t["week"], t["team"])],
+        "sacks": num("def_sacks"),
+        "takeaways": num("def_interceptions") + num("fumble_recovery_opp"),
+        "giveaways": num("passing_interceptions") + num("sack_fumbles_lost")
+        + num("rushing_fumbles_lost") + num("receiving_fumbles_lost"),
+        "sacks_suffered": num("sacks_suffered"), "fga": num("fg_att"), "xpa": num("pat_att")})
+    out["dst_points"] = [defense_points(r, pa) for r, pa in
+                         zip(t.to_dict("records"), out["points_allowed"])]
+    return out[cols]
+
+
+def defense_features_as_of(dhist: pd.DataFrame, week: int,
+                           schedule: pd.DataFrame | None) -> pd.DataFrame:
+    """Per team: every DEF feature for `week` from earlier weeks only."""
+    past = dhist.loc[dhist["week"] < int(week)].sort_values("week")
+    ctx = schedule_context(schedule, week)
+    if len(past) == 0 or not ctx:
+        return pd.DataFrame(columns=["team", *DEFENSE_FEATURES])
+    g = past.groupby("team")
+    l3 = past.groupby("team").tail(3).groupby("team")
+    base = pd.DataFrame({"dst_ppg_season": g["dst_points"].mean(),
+                         "dst_ppg_l3": l3["dst_points"].mean(),
+                         "sacks_pg": g["sacks"].mean(), "takeaways_pg": g["takeaways"].mean(),
+                         "pa_pg": g["points_allowed"].mean(),
+                         "sacks_suffered_pg": g["sacks_suffered"].mean(),
+                         "giveaways_pg": g["giveaways"].mean()})
+    rows = []
+    for team, c in ctx.items():
+        if team not in base.index:
+            continue
+        own, opp = base.loc[team], (base.loc[c["opponent"]] if c["opponent"] in base.index else None)
+        rows.append({"team": team, **{k: own[k] for k in ("dst_ppg_season", "dst_ppg_l3",
+                                                           "sacks_pg", "takeaways_pg", "pa_pg")},
+                     "opp_implied": c["opp_implied"],
+                     "opp_sacks_allowed_pg": np.nan if opp is None else opp["sacks_suffered_pg"],
+                     "opp_giveaways_pg": np.nan if opp is None else opp["giveaways_pg"],
+                     "home": c["home"], "spread": c["spread"]})
+    return pd.DataFrame(rows)
+
+
+def kicker_features_as_of(kweeks: pd.DataFrame, dhist: pd.DataFrame, week: int,
+                          schedule: pd.DataFrame | None,
+                          teams: Mapping[str, str] | None = None) -> pd.DataFrame:
+    """Per kicker (gsis id): every K feature for `week` from earlier weeks.
+    `kweeks` are kicker player-weeks (gsis_id, week, team, league_points)."""
+    past = kweeks.loc[kweeks["week"] < int(week)].sort_values("week")
+    if len(past) == 0:
+        return pd.DataFrame(columns=["gsis_id", "team", *KICKER_FEATURES])
+    g = past.groupby("gsis_id")
+    l3 = past.groupby("gsis_id").tail(3).groupby("gsis_id")
+    f = pd.DataFrame({"team": g["team"].last(), "k_ppg_season": g["league_points"].mean(),
+                      "k_ppg_l3": l3["league_points"].mean()})
+    f.index.name = "gsis_id"
+    f = f.reset_index()
+    if teams:
+        f["team"] = [teams.get(gid) or t for gid, t in zip(f["gsis_id"], f["team"])]
+    tpast = dhist.loc[dhist["week"] < int(week)].groupby("team")
+    fga, xpa = tpast["fga"].mean(), tpast["xpa"].mean()
+    ctx = schedule_context(schedule, week)
+    f["team_fga_pg"] = [fga.get(t, np.nan) for t in f["team"]]
+    f["team_xpa_pg"] = [xpa.get(t, np.nan) for t in f["team"]]
+    for k in ("implied", "spread", "dome"):
+        f[k] = [ctx.get(str(t), {}).get(k, np.nan) for t in f["team"]]
+    return f

@@ -26,10 +26,11 @@ committed fixture):
     `players_points` for all 147 rostered offensive player-weeks, and
     `kicker_points` reproduces it for all 12 rostered kickers.
 
-Team defense (DEFENSE_SCORING) has no implementation yet — nflverse weekly
-data is player-level, so DST points have to be aggregated from team stats.
-Until that lands a DST row scores NOTHING here, and `gridiron.weekly` carries
-it with every points and usage cell BLANK: only the team, opponent, market
+Team defense (DEFENSE_SCORING): `defense_points` scores a team-week from
+nflverse TEAM weekly stats plus the opponent's score (2026-09-30; reconciled
+against Sleeper's own DEF points by scripts/research/defense_scoring_reconcile.py).
+The player-level weekly report still carries a DST row with every points and
+usage cell BLANK: only the team, opponent, market
 implied total and an explicit "n/a (team defense)" note. Nothing reads
 Sleeper's `players_points` back into the report — that endpoint was used once,
 offline, to reconcile the weights above, and wiring it in as a points source
@@ -143,6 +144,67 @@ def kicker_points(
         if not w:
             continue
         total += w * sum(_num(stats[c]) for c in cols if c in stats)
+    return total
+
+
+#: Reconciled on all 518 team-weeks of 2025 against Sleeper's own DEF points:
+#: exact on 67.8%, within one point on 95.4%, MAE 0.40, bias +0.19. The rest
+#: is Sleeper scoring special-teams forced fumbles and recoveries as separate
+#: one-point stats that nflverse folds into the defense's two-point ones.
+#: Points allowed is the opponent's final score (Sleeper's own definition
+#: excludes some return scores; excluding them matched worse overall).
+#: Sleeper team-defense stat -> nflverse TEAM weekly columns
+#: (`nflreadpy.load_team_stats(summary_level="week")`) that feed it. The
+#: reconciliation against Sleeper's own weekly DEF points is
+#: scripts/research/defense_scoring_reconcile.py; what nflverse does not
+#: carry separately (special-teams forced fumbles / recoveries by the
+#: defense's own unit) is absent and says so in `DEFENSE_UNSCORED`.
+_DEFENSE_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "sack": ("def_sacks",),
+    "int": ("def_interceptions",),
+    "fum_rec": ("fumble_recovery_opp",),
+    "ff": ("def_fumbles_forced",),
+    # nflverse's team `def_tds` leaves out fumble-recovery touchdowns, which
+    # Sleeper counts as defensive TDs (2025: 45 Sleeper def TDs; def_tds +
+    # fumble_recovery_tds disagrees on 0.4% of team-weeks).
+    "def_td": ("def_tds", "fumble_recovery_tds"),
+    "safe": ("def_safeties",),
+    # Sleeper's blocked kicks include blocked PATs (0 mismatches on 2025).
+    "blk_kick": ("def_punt_blocks", "def_fg_blocks", "def_pat_blocks"),
+    "def_st_td": ("special_teams_tds",),
+}
+DEFENSE_UNSCORED: tuple[str, ...] = ("def_st_ff", "def_st_fum_rec", "st_ff", "st_fum_rec")
+
+#: Sleeper's points-allowed tiers, lowest bound first.
+_PTS_ALLOW_TIERS = ((0, 0, "pts_allow_0"), (1, 6, "pts_allow_1_6"),
+                    (7, 13, "pts_allow_7_13"), (14, 20, "pts_allow_14_20"),
+                    (21, 27, "pts_allow_21_27"), (28, 34, "pts_allow_28_34"),
+                    (35, 10_000, "pts_allow_35p"))
+
+
+def points_allowed_tier(points_allowed: float) -> str:
+    pa = int(round(float(points_allowed)))
+    for lo, hi, key in _PTS_ALLOW_TIERS:
+        if lo <= pa <= hi:
+            return key
+    return "pts_allow_35p"
+
+
+def defense_points(stats: Mapping[str, float], points_allowed: float | None,
+                   weights: Mapping[str, float] | None = None) -> float:
+    """Score one TEAM DEFENSE week from nflverse team-weekly columns plus the
+    points the opponent scored. `weights` is keyed by Sleeper stat name
+    (league_config.DEFENSE_SCORING); this function owns the column mapping.
+    `points_allowed=None` scores the counting stats only (never guesses a
+    tier)."""
+    from gridiron.league_config import DEFENSE_SCORING
+    w = DEFENSE_SCORING if weights is None else weights
+    total = 0.0
+    for key, cols in _DEFENSE_COMPONENTS.items():
+        if w.get(key):
+            total += w[key] * sum(_num(stats[c]) for c in cols if c in stats)
+    if points_allowed is not None and points_allowed == points_allowed:
+        total += w.get(points_allowed_tier(points_allowed), 0.0)
     return total
 
 

@@ -52,6 +52,10 @@ Sleeper's player map, or submits anything to the league.
   4 the page's projection is the baseline refined by advanced stats; the
   record's `projection_model` says which model ran, and `contenders` holds
   the old baseline and the stack (advanced + Sleeper) for the shoot-out.
+  Kickers are refined the same way; team defenses are projected by team
+  (no baseline existed) and free-agent defenses join the radar pool.
+  `grade_week.py --actuals-nflverse` also grades K and DEF, each in its own
+  shoot-out (`k_*` / `def_*` ledger columns; DEF actuals keyed `DEF:<team>`).
 
 ## First real grade (2026-09-30, week 3, board of 09-27 13:06Z)
 

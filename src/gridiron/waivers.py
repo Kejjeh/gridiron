@@ -96,9 +96,12 @@ CANDIDATES_PER_POSITION = 12
 
 
 def available_ids(players: Mapping[str, Mapping[str, object]],
-                  rosters: Iterable[Mapping[str, object]]) -> tuple[str, ...]:
+                  rosters: Iterable[Mapping[str, object]], *,
+                  include_defense: bool = False) -> tuple[str, ...]:
     """Sleeper ids of active, teamed, projectable-position players held by
-    NO roster in the league. Team defenses are excluded (no projection)."""
+    NO roster in the league. Team defenses are included only when the caller
+    can project them (`include_defense`, the advanced model's DEF part);
+    otherwise an unknown value would be compared as if it were a number."""
     held: set[str] = set()
     for r in rosters:
         for sid in (r.get("players") or []):
@@ -106,10 +109,14 @@ def available_ids(players: Mapping[str, Mapping[str, object]],
     out = []
     for sid, rec in players.items():
         sid = normalize_id(sid)
-        if not sid or sid in held or is_dst_id(sid):
+        if not sid or sid in held:
             continue
         rec = rec or {}
         pos = str(rec.get("position") or "").upper()
+        if is_dst_id(sid) or pos in ("DEF", "DST"):
+            if include_defense and is_dst_id(sid):
+                out.append(sid)
+            continue
         if pos not in PROJECTABLE:
             continue
         if not rec.get("team"):
@@ -745,11 +752,15 @@ def pool_players(ids: Iterable[str], players: Mapping[str, Mapping[str, object]]
     for sid in ids:
         rec = players.get(sid) or {}
         pos = str(rec.get("position") or "").upper()
-        team = str(rec.get("team") or "")
+        team = str(rec.get("team") or (sid if is_dst_id(sid) else ""))
         gid = crosswalk.gsis(sid) or ""
         proj: Projection = projector(sid, gid, pos, team)
         lk = lock(team)
-        out.append(Player(sid, str(rec.get("full_name") or f"sleeper:{sid}"), pos,
+        if is_dst_id(sid):
+            pos = "DEF"
+        name = str(rec.get("full_name") or "") or (f"{team or sid} DST" if is_dst_id(sid)
+                                                    else f"sleeper:{sid}")
+        out.append(Player(sid, name, pos,
                           team, proj, "FA", lk.locked, lk.note, "", (), gid,
                           lk.known, lk.kickoff))
     return out

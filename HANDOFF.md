@@ -50,7 +50,13 @@ page from week 4 (inputs fetched by the pull step outside the manifest;
 baseline + reason when missing); the stack and the old baseline are live
 contenders in the record; the shoot-out grades page / baseline_v1 / Sleeper
 / blend / stack weekly. Practice-report features tested and dropped;
-depth-chart rank kept.
+depth-chart rank kept. Kickers and team defenses joined `advanced_v1`
+(`docs/research/K_DEF_BACKTEST_2025.md`; registered as `advanced_v1_k` /
+`advanced_v1_def`): K 56.8% start/sit vs baseline 53.6% and Sleeper 54.2%;
+DEF — which had no projection — 61.5% vs points-per-game 54.0% and Sleeper
+61.0% (2025, out of sample). DEF is scored by `scoring.defense_points`
+(95% of 2025 team-weeks within 1 pt of Sleeper). FA defenses now enter the
+radar pool; `grade_week.py` grades K and DEF in their own shoot-outs.
 
 ## Current state — release 63071af, schedule gaps (2026-09-25)
 

@@ -284,7 +284,7 @@ def pull_shadow(manifest: ing.Manifest, now: datetime, force: bool, *,
 def pull_model_inputs(manifest: ing.Manifest, season: int, now: datetime,
                       force: bool, *, loaders=None) -> None:
     """The advanced model's inputs (expected points, Next Gen Stats, depth
-    charts), normalised and written beside the cache
+    charts, team stats for kickers and defenses), normalised and written beside the cache
     (`gridiron.models.advanced`). Best effort and outside the manifest: a
     failure is logged, and the page keeps the baseline and says why."""
     directory = manifest.directory
