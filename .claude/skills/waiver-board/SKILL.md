@@ -32,7 +32,13 @@ description: Compare free agents against the owner's roster using three kinds of
    - the page's verdict (it counts THIS week's best legal lineup only; a
      bench-only add is research, and it does not price rest of season);
    - the usage trend (a RISING role beats a hot week of touchdowns);
-   - outside value (useful for rest of season and trade leverage).
+   - outside value (useful for rest of season and trade leverage);
+   - the record's own rest-of-season rank (`## Rest of season` in the
+     review; `gridiron.ros`, cross-validated): prefer it to an outside
+     list when they disagree, and say both. It is points, not ΔP(win).
+   Full ROS tables for every position:
+   `PYTHONPATH=src python scripts/weekly/ros_rankings.py --nflverse`
+   (writes `data/outputs/review/ros_weekNN.md`, gitignored).
    The drop is the lowest-value non-protected player on all three; never a
    player the page lists as protected (Out, IR, no projection).
 

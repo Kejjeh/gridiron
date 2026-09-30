@@ -56,6 +56,15 @@ Sleeper's player map, or submits anything to the league.
   (no baseline existed) and free-agent defenses join the radar pool.
   `grade_week.py --actuals-nflverse` also grades K and DEF, each in its own
   shoot-out (`k_*` / `def_*` ledger columns; DEF actuals keyed `DEF:<team>`).
+- **Rest of season** (`gridiron.ros`, `ros_v1`): every build's record carries
+  a `ros` block (top of every position + all of mine; other rosters shown as
+  `rostered`, never by manager). `weekly_review.py` shows a ROS column and a
+  `## Rest of season` section (mine vs the best free agents per position).
+  Full tables with managers' names, locally:
+  `PYTHONPATH=src python scripts/weekly/ros_rankings.py [--nflverse]` ->
+  `data/outputs/review/ros_weekNN.md/.csv` (gitignored). Method per
+  position chosen by season-fold CV (docs/research/ROS_BACKTEST.md); ROS is
+  points, not ΔP(win) — holds, drops and trades, never a lineup call.
 
 ## First real grade (2026-09-30, week 3, board of 09-27 13:06Z)
 

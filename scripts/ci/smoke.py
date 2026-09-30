@@ -113,6 +113,7 @@ PATTERNS = [
     "test_shadow.py",
     "test_advanced_model.py",
     "test_k_def.py",
+    "test_ros.py",
 ]
 
 # Anti-vacuity floor: a glob typo must not silently shrink the smoke set.

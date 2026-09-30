@@ -75,6 +75,17 @@ class Review:
         shadow = record.get("shadow") or {}
         self.shadow = shadow.get("players") or {}
         self.shadow_at = shadow.get("fetched_at") or ""
+        ros = record.get("ros") or {}
+        self.ros_status = str(ros.get("status") or "")
+        self.ros = {normalize_id(p.get("sleeper_id")): p for p in ros.get("players") or []
+                    if p.get("sleeper_id")}
+
+    def ros_cell(self, sid: str) -> str:
+        """Rest-of-season rank and points (gridiron.ros), or a dash."""
+        p = self.ros.get(sid)
+        if not p:
+            return "—"
+        return f"{p.get('position')}{p.get('pos_rank')} · {_fmt(p.get('ros'))}"
 
     def outside(self, sid: str) -> str:
         """Sleeper / stack (advanced + Sleeper), shown for comparison only."""
@@ -204,14 +215,15 @@ def roster_usage(rv: Review) -> list[str]:
     rows = sorted(rv.roster.items(), key=lambda kv: (order.get(kv[1].get("lineup"), 3),
                                                      -(rv.ppg(kv[0]) or -1)))
     out = ["## My roster — actual usage", "", f"_{rv.usage_basis}_", "",
-           "| player | pos | lineup | this week proj | Sleeper / stack | trend | season so far |",
-           "|---|---|---|---|---|---|---|"]
+           "| player | pos | lineup | this week proj | Sleeper / stack | ROS | trend | season so far |",
+           "|---|---|---|---|---|---|---|---|"]
     for sid, p in rows:
         if p.get("position") in ("K", "DEF"):
             continue
         why = rv.line(sid).get("trend_why") or ""
         out.append(f"| {p.get('name')} | {p.get('position')} | {p.get('lineup')} | "
-                   f"{_fmt(p.get('projected'))} | {rv.outside(sid)} | {rv.trend(sid)}"
+                   f"{_fmt(p.get('projected'))} | {rv.outside(sid)} | {rv.ros_cell(sid)} | "
+                   f"{rv.trend(sid)}"
                    f"{f' ({why})' if why and rv.trend(sid) != TOO_FEW else ''} | "
                    f"{rv.usage_cell(sid)} |")
     return out + [""]
@@ -247,14 +259,47 @@ def free_agents(rv: Review, watch: Sequence[str]) -> list[str]:
         out.append("None this week.")
     if watch:
         out += ["", "**Watch list:**", "",
-                "| player | held | page verdict | Sleeper proj | trend | actual usage |",
-                "|---|---|---|---|---|---|"]
+                "| player | held | page verdict | Sleeper proj | ROS | trend | actual usage |",
+                "|---|---|---|---|---|---|---|"]
         for sid in watch:
             held = "mine" if sid in rv.roster else "available" if sid in rv.pool else "not held"
             verdict = (rv.cand.get(sid) or {}).get("verdict") or "—"
             out.append(f"| {rv.name(sid)} ({rv.pos(sid)}) | {held} | {verdict} | "
-                       f"{rv.sleeper(sid)} | {rv.trend(sid)} | {rv.usage_cell(sid)} |")
+                       f"{rv.sleeper(sid)} | {rv.ros_cell(sid)} | {rv.trend(sid)} | "
+                       f"{rv.usage_cell(sid)} |")
     return out + [""]
+
+
+def rest_of_season(rv: Review) -> list[str]:
+    """Each of my players' ROS rank, and the best free agents by ROS at
+    each position with the gap to my lowest player there."""
+    if not rv.ros:
+        return ["## Rest of season", "",
+                (f"No ROS rankings in this record ({rv.ros_status})." if rv.ros_status
+                 else "No ROS rankings in this record (built before they existed)."), ""]
+    out = ["## Rest of season (points, not ΔP(win))", "", f"_{rv.ros_status}_", "",
+           "| pos | mine (rank · ROS) | best free agents (rank · ROS) | FA over my lowest |",
+           "|---|---|---|---|"]
+    for pos in ("QB", "RB", "WR", "TE", "K", "DEF"):
+        mine = sorted((p for p in rv.ros.values()
+                       if p.get("position") == pos and p.get("held_by") == "MINE"),
+                      key=lambda p: p.get("pos_rank") or 999)
+        fas = sorted((p for p in rv.ros.values()
+                      if p.get("position") == pos and p.get("held_by") == "FA"),
+                     key=lambda p: p.get("pos_rank") or 999)[:3]
+        if not mine and not fas:
+            continue
+        low = min((float(p.get("ros") or 0) for p in mine), default=None)
+        better = [p for p in fas if low is not None and float(p.get("ros") or 0) > low]
+        out.append(
+            f"| {pos} | " + "; ".join(f"{p.get('name')} {p.get('pos_rank')} · {_fmt(p.get('ros'))}"
+                                      for p in mine) +
+            " | " + ("; ".join(f"{p.get('name')} {p.get('pos_rank')} · {_fmt(p.get('ros'))}"
+                               for p in fas) or "—") +
+            " | " + (", ".join(f"{p.get('name')} +{_fmt(float(p['ros']) - low)}" for p in better)
+                     or "none") + " |")
+    return out + ["", "ROS ranks holds, drops and trades; this week's lineup and any add "
+                      "still go through the page's verdicts above.", ""]
 
 
 def rankings(rv: Review, ranks: Sequence[Sequence[RankRow]]) -> list[str]:
@@ -319,7 +364,8 @@ def build_review(record: Mapping[str, object], *,
                  watch: Sequence[str] = ()) -> str:
     rv = Review(record)
     parts = (header(rv) + actions(rv) + lineup_checks(rv) + roster_usage(rv)
-             + free_agents(rv, watch) + rankings(rv, ranks) + sleeper_checks(rv, watch))
+             + free_agents(rv, watch) + rest_of_season(rv) + rankings(rv, ranks)
+             + sleeper_checks(rv, watch))
     if not record.get("usage"):
         parts.insert(0, "> This record carries no usage block (built before "
                         "usage was recorded); trends read NO LINE.\n")

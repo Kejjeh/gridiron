@@ -28,7 +28,9 @@ reuse the same record.
    - starters whose trend is **FALLING** (quote the `why`: opportunities and
      snap share before -> after), players marked **TOO FEW GAMES**, and anyone
      Out / on IR;
-   - players whose trend is **RISING** on the bench.
+   - players whose trend is **RISING** on the bench;
+   - from `## Rest of season`: any position where a free agent's ROS beats
+     my lowest player there (a hold/drop question, not a lineup call).
 4. If the record says "no usage block", the record predates it: say so; do not
    pull stats by hand unless the owner asks.
 
