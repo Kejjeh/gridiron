@@ -58,7 +58,7 @@ def test_fetch_keeps_scored_players_and_refuses_an_empty_week():
     blob = SH.fetch_sleeper(2026, 4, fetch=fetch, now=NOW)
     assert set(blob["players"]) == {"100"}
     assert blob["players"]["100"]["points"] == 14.5
-    assert len(fetch.calls) == 4 and all("/2026/4?" in u for u in fetch.calls)
+    assert len(fetch.calls) == len(SH.POSITIONS) == 6 and all("/2026/4?" in u for u in fetch.calls)
     with pytest.raises(RuntimeError):
         SH.fetch_sleeper(2026, 4, fetch=_fake_fetch({}), now=NOW)
 
@@ -113,7 +113,7 @@ def test_the_pull_step_is_best_effort_and_outside_the_manifest(tmp_path, capsys)
     pw.pull_shadow(m, NOW, False, fetch=fetch)
     assert SH.read_shadow(tmp_path, season=2026, week=4)["players"]["100"]["points"] == 14.5
     pw.pull_shadow(m, NOW + timedelta(minutes=30), False, fetch=fetch)
-    assert len(fetch.calls) == 4                              # reused, not re-fetched
+    assert len(fetch.calls) == 6                              # reused, not re-fetched
     assert m.entries == before                                # gates nothing
 
 
@@ -178,3 +178,41 @@ def test_the_weekly_grade_scores_all_three_on_the_same_players():
         {"week": 3}, {}), 2026, Path("week03_20260927T130000Z.json"),
         NOW, out)
     assert row["stack_pairwise"] == 1.0 and row["page_pairwise"] == 0.0
+
+
+def test_kickers_and_defenses_are_graded_apart_and_keyed_by_team():
+    gw = _load("grade_week_kdef", "scripts/weekly/grade_week.py")
+
+    def p(sid, pos, proj, team="", gid=None):
+        return {"sleeper_id": sid, "id": sid, "gsis_id": gid or "", "position": pos,
+                "team": team, "projected": proj, "withheld": False}
+    archive = {
+        "roster": [p("1", "WR", 12.0, gid="g1"), p("2", "WR", 8.0, gid="g2"),
+                   p("k1", "K", 9.0, "AAA", "gk1"), p("AAA", "DEF", 7.0, "AAA")],
+        "radar": {"candidates": [p("k2", "K", 7.0, "BBB", "gk2"), p("BBB", "DEF", 9.0, "BBB")]},
+        "contenders": {"baseline_v1": {"1": 10.0, "2": 11.0, "k1": 8.0, "k2": 8.5},
+                       "stack": {"1": 8.0, "2": 12.0, "k1": 9.5, "k2": 7.5,
+                                 "AAA": 6.0, "BBB": 9.5}},
+        "shadow": {"players": {s: {"points": 8.0, "pre_kickoff": True}
+                               for s in ("1", "2", "k1", "k2", "AAA", "BBB")}}}
+    actuals = {"g1": 5.0, "g2": 15.0, "gk1": 12.0, "gk2": 3.0,
+               "DEF:AAA": 2.0, "DEF:BBB": 14.0}
+    skill = gw.shootout(archive, actuals)
+    assert skill["n"] == 2                        # K and DEF never enter the skill pool
+    sp = gw.special_shootouts(archive, actuals)
+    assert sp["k"]["n"] == 2 and sp["k"]["page_pairwise"] == 1.0
+    assert sp["k"]["baseline_v1_pairwise"] == 0.0 and sp["k"]["stack_pairwise"] == 1.0
+    # the old baseline never projected a defense, so it sits the DEF grade out
+    assert sp["def"]["systems"] == ["page", "sleeper", "blend", "stack"]
+    assert sp["def"]["n"] == 2 and sp["def"]["page_pairwise"] == 1.0
+    row = gw.aggregate(__import__("gridiron.decisions", fromlist=["x"]).grade_archive(
+        {"week": 3}, {}), 2026, Path("week03_20260927T130000Z.json"), NOW, skill, sp)
+    assert row["k_pairs"] == 1 and row["def_page_pairwise"] == 1.0
+    assert "def_baseline_v1_pairwise" not in row
+    import pandas as pd
+    dh = pd.DataFrame([{"team": "AAA", "week": 3, "points_allowed": 10.0, "dst_points": 6.0},
+                       {"team": "BBB", "week": 3, "points_allowed": float("nan"),
+                        "dst_points": 1.0}])
+    assert gw.defense_actuals(dh, 3) == {"DEF:AAA": 6.0}   # no final score, no grade
+    line = gw.shootout_line([{**{k: "" for k in gw.FIELDS}, **row}])
+    assert "K over 1 pairs" in line and "DEF over 1 pairs" in line

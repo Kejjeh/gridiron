@@ -26,7 +26,7 @@ from __future__ import annotations
 BASELINE = "usage_prior x positional_efficiency x line_multiplier"
 
 #: Signals layered on the baseline.
-FEATS: tuple[str, ...] = ("advanced_v1",)
+FEATS: tuple[str, ...] = ("advanced_v1", "advanced_v1_k", "advanced_v1_def")
 
 #: feature name -> {"evidence": path, "weeks": (lo, hi), "mae_delta": float}
 VALIDATED: dict[str, dict] = {
@@ -40,6 +40,27 @@ VALIDATED: dict[str, dict] = {
         "script": "scripts/research/advanced_model_backtest.py",
         "season": 2025, "weeks": (4, 18),
         "mae_delta": -0.074, "pairwise_delta": 0.0088,
+    },
+    # Kickers: the baseline kicker projection as an input plus the kicker's
+    # own points per game, his team's FG/PAT attempts per game, implied
+    # total, spread and dome. 2025 weeks 4-18 (427 kicker-weeks, 5,526
+    # pairs): start/sit 56.8% vs the baseline's 53.6%, better in 11 of 15.
+    "advanced_v1_k": {
+        "evidence": "docs/research/K_DEF_BACKTEST_2025.md",
+        "script": "scripts/research/k_def_backtest.py",
+        "season": 2025, "weeks": (4, 18),
+        "mae_delta": -0.097, "pairwise_delta": 0.0323,
+    },
+    # Team defenses had NO projection (the board abstained), so the full
+    # baseline is the defense's own points per game. Pressure, takeaways,
+    # points allowed, the opponent's implied total, sacks allowed and
+    # giveaways. 2025 weeks 4-18 (448 team-weeks, 6,138 pairs): start/sit
+    # 61.5% vs 54.0%, better in 13 of 15 weeks.
+    "advanced_v1_def": {
+        "evidence": "docs/research/K_DEF_BACKTEST_2025.md",
+        "script": "scripts/research/k_def_backtest.py",
+        "season": 2025, "weeks": (4, 18),
+        "mae_delta": -0.344, "pairwise_delta": 0.0751,
     },
 }
 

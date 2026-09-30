@@ -39,7 +39,7 @@ SHADOW_FILE = "shadow_projections.json"
 SOURCE = "sleeper"
 URL = ("https://api.sleeper.app/projections/nfl/{season}/{week}"
        "?season_type=regular&position%5B%5D={pos}")
-POSITIONS = ("QB", "RB", "WR", "TE")
+POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
 #: A shadow younger than this is reused by the next pull instead of fetched.
 REFRESH_HOURS = 2.0
 
@@ -69,9 +69,37 @@ def score_projection(stats: Mapping[str, object]) -> float | None:
     return round(fantasy_points(line), 2) if line else None
 
 
+def score_kicker_projection(stats: Mapping[str, object]) -> float | None:
+    """League points for a projected kicker line (Sleeper keys, league
+    KICKING_SCORING; every `fgmiss_*` bucket is a miss)."""
+    from gridiron.league_config import KICKING_SCORING as W
+    total, seen = 0.0, False
+    for k, v in stats.items():
+        x = _num(v)
+        if x is None:
+            continue
+        key = "fgmiss" if str(k).startswith("fgmiss") else str(k)
+        if key in W:
+            total += W[key] * x
+            seen = True
+    return round(total, 2) if seen else None
+
+
+def score_defense_projection(stats: Mapping[str, object]) -> float | None:
+    """League points for a projected team-defense line: Sleeper projects the
+    counting stats and a probability for each points-allowed tier, so the
+    weighted sum over the league's DEFENSE_SCORING keys is the expectation."""
+    from gridiron.league_config import DEFENSE_SCORING as W
+    hits = [(W[k], _num(v)) for k, v in stats.items() if k in W and _num(v) is not None]
+    return round(sum(w * x for w, x in hits), 2) if hits else None
+
+
+_SCORERS = {"K": score_kicker_projection, "DEF": score_defense_projection}
+
+
 def fetch_sleeper(season: int, week: int, *, fetch: Fetch = http_fetch,
                   now: datetime | None = None) -> dict:
-    """One week of Sleeper projections for QB/RB/WR/TE, scored. Raises when
+    """One week of Sleeper projections for every position (K and DEF too), scored. Raises when
     no position returned anything, so a failed fetch is never a blank file."""
     players: dict[str, dict] = {}
     for pos in POSITIONS:
@@ -80,7 +108,7 @@ def fetch_sleeper(season: int, week: int, *, fetch: Fetch = http_fetch,
                 continue
             sid = normalize_id(row.get("player_id"))
             stats = row.get("stats") if isinstance(row.get("stats"), Mapping) else {}
-            pts = score_projection(stats)
+            pts = _SCORERS.get(pos, score_projection)(stats)
             if not sid or pts is None:
                 continue
             players[sid] = {"points": pts, "position": pos,

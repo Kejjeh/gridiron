@@ -353,7 +353,9 @@ def project(ev: PlayerEvidence | None, *, position: str, week: int,
     pos = str(position or "").upper()
     if pos not in PROJECTABLE:
         return abstain(f"no projection model for {pos or 'unknown position'}"
-                       + (" — team defense has no scoring implementation" if pos in ("DST", "DEF") else ""))
+                       + (" — team defense is projected only by the advanced model "
+                          "(gridiron.models.advanced), not this baseline"
+                          if pos in ("DST", "DEF") else ""))
     if ev is None or ev.games <= 0:
         tw = evidence.through_week
         return abstain("no admissible box scores"

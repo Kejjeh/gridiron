@@ -110,7 +110,14 @@ def test_ridge_round_trips_and_fills_missing_inputs_like_training():
 
 def test_the_shipped_model_is_the_gated_one():
     model = A.AdvancedModel.load()
-    assert model is not None and set(model.adv) == set(A.POSITIONS) == set(model.stack)
+    assert model is not None and set(model.adv) == {*A.POSITIONS, "K", "DEF"} == set(model.stack)
+    assert set(model.adv["K"].cols) <= set(A.KICKER_FEATURES) | {"baseline"}
+    assert "baseline" in model.adv["K"].cols                  # measured against it
+    assert set(model.adv["DEF"].cols) <= set(A.DEFENSE_FEATURES)
+    assert model.meta["resid_sd"]["DEF"] > 0 and model.meta["resid_sd"]["K"] > 0
+    kev, dev = model.meta["k_def_evidence"]["K"], model.meta["k_def_evidence"]["DEF"]
+    assert kev["systems"]["adv"]["pairwise"] > kev["systems"]["baseline"]["pairwise"]
+    assert dev["systems"]["adv"]["pairwise"] > dev["systems"]["naive"]["pairwise"]
     allowed = set(A.FEATURE_COLUMNS) | {"baseline", "ppg_to_date"}
     for pos in A.POSITIONS:
         assert set(model.adv[pos].cols) <= allowed

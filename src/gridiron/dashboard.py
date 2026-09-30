@@ -318,14 +318,22 @@ def contenders_block(advanced: AdvancedContext | None,
         proj = p.projection
         if not proj.usable or proj.is_withheld:
             continue
+        hit = sleeper.get(p.sleeper_id)
+        st = None
+        if is_dst_id(p.sleeper_id):
+            # the baseline never projected a team defense: no baseline_v1 row
+            if advanced is not None and hit:
+                st = advanced.stacked_defense(p.team, hit.get("points"))
+            if st is not None:
+                stack[p.sleeper_id] = st
+            continue
         b = proj.inputs.get("baseline_mean", proj.mean)
         base[p.sleeper_id] = round(float(b), 3)
-        hit = sleeper.get(p.sleeper_id)
         if advanced is not None and hit and p.gsis_id:
             st = advanced.stacked(p.gsis_id, p.position, float(b),
                                   proj.inputs.get("ppg_to_date"), hit.get("points"))
-            if st is not None:
-                stack[p.sleeper_id] = st
+        if st is not None:
+            stack[p.sleeper_id] = st
     if not base:
         return None
     return {"baseline_v1": base, "stack": stack,
@@ -378,6 +386,18 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                     "advanced": ADVANCED_NAME, "ppg_to_date": ppg},
             label=ADVANCED_LABEL)
 
+    def defense(team: str) -> Projection | None:
+        """A team defense's projection from the advanced model, or None
+        (the board then keeps treating it as unknown, never as zero)."""
+        hit = advanced.defense_projection(team) if advanced is not None else None
+        if hit is None:
+            return None
+        mean, sd = hit
+        return Projection(mean, sd, (), ("team defense: advanced_v1 (opponent's "
+                                         "implied total, pressure, takeaways, "
+                                         "points allowed; league DEF scoring)",),
+                          {"advanced": ADVANCED_NAME}, ADVANCED_LABEL)
+
     def make(sid: str, lineup: str) -> Player:
         sid = normalize_id(sid)
         rec = sleeper_players.get(sid) or {}
@@ -398,6 +418,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         if not gid and not dst:
             proj = abstain("sleeper id unresolved against the crosswalk (never name-matched)")
         proj = refine(proj, gid, pos)
+        if dst:
+            proj = defense(team) or proj
         note = availability(gid, rec, inj, report_week=week,
                             covers_report_week=injuries_cover,
                             designation_fresh=designation_fresh,
@@ -478,11 +500,14 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             matchup = _matchup(int(opp.get("roster_id")), plan.current, opp_line)
 
     # ---- waivers
-    ids = available_ids(sleeper_players, rosters)
+    ids = available_ids(sleeper_players, rosters,
+                        include_defense=bool(advanced is not None and advanced.defense))
 
     def projector(sid: str, gid: str, pos: str, team: str) -> Projection:
         team = nflverse_team(team)
         game = games.get(team, BYE if schedule_cover else NO_SCHEDULE)
+        if is_dst_id(sid):
+            return defense(team) or abstain("no projection for this team defense")
         if not gid:
             return abstain("sleeper id unresolved against the crosswalk")
         if not scoring.scorable(pos) and pos in ("QB", "K"):
