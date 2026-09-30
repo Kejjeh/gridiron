@@ -66,6 +66,7 @@ from gridiron.projection import (
 )
 from gridiron.radar import RadarChanges, diff_radar, move_deadline, radar_record
 from gridiron.scoring import ScoringCoverage
+from gridiron.trends import usage_block
 from gridiron import theme
 from gridiron.waivers import (
     BELOW, COVERAGE, LINEUP, RESEARCH, Candidate, WaiverBoard, available_ids,
@@ -142,6 +143,10 @@ class Dashboard:
     radar_changes: RadarChanges | None = None
     #: The snapshot as-of, as the page states it.
     snapshot_as_of: str = ""
+    #: What each rostered and available player has actually done, week by
+    #: week, with a volume-only trend (`gridiron.trends`). Record-only: the
+    #: weekly review and the grader read it; no projection does.
+    usage: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def degraded(self) -> bool:
@@ -230,6 +235,7 @@ class Dashboard:
                                   sources=self.sources, designations=self.designations),
             "radar_changes": (None if self.radar_changes is None
                               else self.radar_changes.record()),
+            "usage": dict(self.usage) if self.usage else None,
             "withheld_actions": list(self.gate.withheld),
             "gate": self.gate.record(),
             "locks": None if self.locks is None else {
@@ -511,7 +517,10 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                      plan, matchup, matchup_reason, board, evaluation,
                      tuple(unresolved), my_roster_id, gate, actions, None, kickoffs,
                      league_id=league_id, next=nxt, pool=tuple(pool), owned_ids=owned_ids,
-                     designations=designations, snapshot_as_of=snapshot_as_of)
+                     designations=designations, snapshot_as_of=snapshot_as_of,
+                     usage=usage_block(weeks, [(p.sleeper_id, p.gsis_id)
+                                               for p in (*roster, *pool)],
+                                       through_week=context.stats_through))
 
     # What changed since the previous frozen page. Read-only: the diff never
     # feeds a projection, so yesterday's numbers cannot enter today's evidence.
