@@ -106,7 +106,7 @@ def test_risers_watch_list_and_kickers():
     text = WR.build_review(_record(), watch=["90005"])
     risers = text.split("role is growing")[1].split("**Watch list")[0]
     assert "Tight Delta" in risers and "Back Epsilon" not in risers
-    assert "| Back Epsilon (RB) | available | RESEARCH | — | FALLING |" in text
+    assert "| Back Epsilon (RB) | available | RESEARCH | — | — | FALLING |" in text
     assert "Kicker Gamma" not in text.split("## My roster")[1].split("##")[0]
 
 
@@ -164,3 +164,22 @@ def test_a_rendered_board_carries_the_usage_block(tmp_path):
     for line in usage["players"].values():
         assert all(w["week"] <= rec["stats_through"] for w in line["weeks"])
     assert WR.build_review(rec).startswith("# Weekly review")
+
+
+def test_rest_of_season_reads_the_records_ros_block():
+    assert "No ROS rankings in this record" in WR.build_review(_record())
+    ros = {"status": "advanced_v1 rates; ROS method by position: WR adv",
+           "players": [
+               {"sleeper_id": "90001", "name": "Wing Alpha", "position": "WR", "pos_rank": 30,
+                "held_by": "MINE", "ros": 90.0},
+               {"sleeper_id": "90005", "name": "Back Epsilon", "position": "RB", "pos_rank": 20,
+                "held_by": "FA", "ros": 110.0},
+               {"sleeper_id": "90009", "name": "Wing Free", "position": "WR", "pos_rank": 12,
+                "held_by": "FA", "ros": 120.0},
+               {"sleeper_id": "90010", "name": "Wing Held", "position": "WR", "pos_rank": 1,
+                "held_by": "rostered", "ros": 200.0}]}
+    text = WR.build_review(_record(ros=ros), watch=["90005"])
+    sec = text.split("## Rest of season")[1].split("\n## ")[0]
+    assert "| WR | Wing Alpha 30 · 90.0 | Wing Free 12 · 120.0 | Wing Free +30.0 |" in sec
+    assert "Wing Held" not in sec                        # held elsewhere: not an option
+    assert "RB20 · 110.0" in text.split("**Watch list")[1]

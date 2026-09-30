@@ -57,6 +57,12 @@ DEF — which had no projection — 61.5% vs points-per-game 54.0% and Sleeper
 61.0% (2025, out of sample). DEF is scored by `scoring.defense_points`
 (95% of 2025 team-weeks within 1 pt of Sleeper). FA defenses now enter the
 radar pool; `grade_week.py` grades K and DEF in their own shoot-outs.
+Rest-of-season rankings (`gridiron.ros`, registered `ros_v1`): every
+position ranked by points from the next week through week 17 (playoffs
+15-17 on their own), method per position chosen by season-fold CV over
+2023-2025 (`docs/research/ROS_BACKTEST.md`; points-per-game was weakest
+everywhere). In the record as `ros`, in `weekly_review.py`, and as full
+tables from `scripts/weekly/ros_rankings.py`.
 
 ## Current state — release 63071af, schedule gaps (2026-09-25)
 

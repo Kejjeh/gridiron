@@ -40,8 +40,8 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   and Game Day invariants: docs/memory/board.md.
 - Weekly routine (skills in `.claude/skills/`: roster-audit, waiver-board,
   start-sit, decision-log): `scripts/weekly/fetch_record.py` ->
-  `weekly_review.py` (usage trends, `--ranks`, `--watch`), and after the week
-  `grade_week.py`. Detail: docs/memory/weekly_routine.md.
+  `weekly_review.py` (usage trends, ROS, `--ranks`, `--watch`), and after the
+  week `grade_week.py`. ROS tables: `ros_rankings.py`. Detail: weekly_routine.md.
 - Settings drift check: `PYTHONPATH=src python scripts/verify_league_settings.py`.
 
 ## Rules (full text in docs/memory/rules.md — cite by number)

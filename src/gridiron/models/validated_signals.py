@@ -26,7 +26,7 @@ from __future__ import annotations
 BASELINE = "usage_prior x positional_efficiency x line_multiplier"
 
 #: Signals layered on the baseline.
-FEATS: tuple[str, ...] = ("advanced_v1", "advanced_v1_k", "advanced_v1_def")
+FEATS: tuple[str, ...] = ("advanced_v1", "advanced_v1_k", "advanced_v1_def", "ros_v1")
 
 #: feature name -> {"evidence": path, "weeks": (lo, hi), "mae_delta": float}
 VALIDATED: dict[str, dict] = {
@@ -61,6 +61,18 @@ VALIDATED: dict[str, dict] = {
         "script": "scripts/research/k_def_backtest.py",
         "season": 2025, "weeks": (4, 18),
         "mae_delta": -0.344, "pairwise_delta": 0.0751,
+    },
+    # Rest-of-season rankings (gridiron.ros): per position, the method that
+    # ordered players best in season-fold cross-validation over 2023-2025
+    # (cuts at weeks 4-14, through week 17) — advanced_v1 rates, schedule-
+    # nudged or combined; points per game so far was weakest everywhere.
+    # Spearman gain over ppg: QB +.059, RB +.019, WR +.052, TE +.075,
+    # K +.058, DEF +.077.
+    "ros_v1": {
+        "evidence": "docs/research/ROS_BACKTEST.md",
+        "script": "scripts/research/ros_backtest.py",
+        "season": (2023, 2025), "weeks": (4, 14),
+        "mae_delta": None, "pairwise_delta": 0.024,
     },
 }
 

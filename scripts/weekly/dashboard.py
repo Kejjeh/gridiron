@@ -25,6 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from gridiron import ingest as ing
+from gridiron import ros
 from gridiron.dashboard import build_dashboard
 from gridiron.freshness import WeekContext
 from gridiron.ids import Crosswalk, nflverse_team, sleeper_gsis_overlay
@@ -99,6 +100,49 @@ def kickoffs_for(schedule: pd.DataFrame | None, week: int) -> list[datetime]:
 
     idx = kickoff_index(schedule, week)
     return sorted(set(idx.kickoffs.values())) if idx else []
+
+
+#: How deep each position's ROS list goes in the record (plus every player
+#: of the owner's and every free agent in those depths).
+ROS_DEPTH = {"QB": 30, "RB": 60, "WR": 72, "TE": 30, "K": 24, "DEF": 32}
+
+
+def ros_block(*, weeks, schedule, injuries, directory, season, week, players, crosswalk,
+              snapshot, owner_id, teams) -> dict:
+    """The record's `ros` block: ranked rest-of-season lines by position.
+    Other rosters are labelled `rostered`, never by manager (the record is
+    public). Any failure is reported in the block, never raised."""
+    try:
+        positions = {}
+        for sid, rec in players.items():
+            gid = crosswalk.gsis(sid)
+            if gid and isinstance(rec, dict) and rec.get("position"):
+                positions[gid] = str(rec["position"]).upper()
+        out_ids = set()
+        if injuries is not None and len(injuries) and "report_status" in injuries:
+            wk = injuries.loc[(injuries["week"] == week)
+                              & (injuries["report_status"].astype(str).str.upper() == "OUT")]
+            out_ids = {str(g) for g in wk["gsis_id"].dropna()}
+        table, status = ros.build_table(
+            weeks=None if weeks is None else weeks.loc[weeks["week"] < week],
+            schedule=schedule, injuries=injuries,
+            inputs=adv_model.load_inputs(directory, season), week=week,
+            positions=positions, teams=teams, out=out_ids)
+        if len(table) == 0:
+            return {"status": status, "players": []}
+        table = ros.ownership(table, snapshot=snapshot, players=players,
+                              crosswalk=crosswalk, owner_id=owner_id)
+        keep = (table["pos_rank"] <= table["position"].map(ROS_DEPTH).fillna(30)) \
+            | (table["held_by"] == "MINE")
+        cols = ["sleeper_id", "gsis_id", "name", "position", "team", "held_by", "pos_rank",
+                "ros", "ros_pg", "playoff", "games_left", "byes", "method", "next_week"]
+        return {"status": status, "from_week": week, "through_week": ros.HORIZON_END,
+                "playoff_weeks": list(ros.PLAYOFF_WEEKS),
+                "note": "points, not ΔP(win): for holds, drops and trades; the page "
+                        "still makes every lineup call",
+                "players": table.loc[keep, cols].to_dict("records")}
+    except Exception as exc:                                  # noqa: BLE001
+        return {"status": f"ROS rankings failed: {type(exc).__name__}: {exc}", "players": []}
 
 
 def find_owner_id(snapshot: dict, owner: str) -> str | None:
@@ -253,10 +297,17 @@ def main(argv: list[str] | None = None) -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
         html = dash.to_html(include_names=not args.anonymous)
         import json
+        record = dash.record()
+        # Rest-of-season rankings (gridiron.ros) ride in the record for the
+        # weekly routine; best effort — they can never break or change the page.
+        record["ros"] = ros_block(
+            weeks=weeks, schedule=schedule, injuries=injuries, directory=directory,
+            season=state_season, week=report_week, players=players, crosswalk=crosswalk,
+            snapshot=snapshot, owner_id=owner_id, teams=teams)
         for stem in (f"week{report_week:02d}_dashboard", "dashboard_latest"):
             (out_dir / f"{stem}.html").write_text(html, encoding="utf-8")
             (out_dir / f"{stem}.json").write_text(
-                json.dumps(dash.record(), indent=1, default=str), encoding="utf-8")
+                json.dumps(record, indent=1, default=str), encoding="utf-8")
             print(f"[dashboard] wrote {out_dir / (stem + '.html')}", file=sys.stderr)
 
     return 1 if (args.fail_on_degraded and dash.degraded) else 0
