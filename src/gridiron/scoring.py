@@ -3,36 +3,337 @@
 The plv_clone scar (test_sp_fp_formula_copies / test_no_hardcoded_scoring
 _weights): scoring formulas copied into scripts drift silently. There is
 exactly one implementation, parameterized by league_config.ScoringRules.
+
+Stat keys follow nflverse weekly-data column names so scored frames need no
+renaming at the join boundary. nflverse renamed/split several of those
+columns in the stats rewrite shipped with nflreadpy 0.1.x:
+
+    interceptions          -> passing_interceptions
+    fumbles_lost           -> sack_ + rushing_ + receiving_fumbles_lost
+    two_point_conversions  -> passing_ + rushing_ + receiving_2pt_conversions
+
+so each scoring term names the CURRENT columns it sums plus the legacy key it
+replaced. A term reads the legacy key only when no current component is
+present, so a frame carrying both never double-counts.
+
+Verified 2026-09-17 against two independent ground truths on the 2026 week-1
+frame (see tests/test_scoring_nflverse.py, which pins the same numbers on a
+committed fixture):
+  * standard + full-PPR: `fantasy_points(row, ScoringRules(interception=-2.0,
+    reception=0.5))` reproduces (fantasy_points + fantasy_points_ppr) / 2
+    exactly for all 357 offensive player-weeks (max abs error 0.0).
+  * this league: the same call at DEFAULT_SCORING reproduces Sleeper's own
+    `players_points` for all 147 rostered offensive player-weeks, and
+    `kicker_points` reproduces it for all 12 rostered kickers.
+
+Team defense (DEFENSE_SCORING): `defense_points` scores a team-week from
+nflverse TEAM weekly stats plus the opponent's score (2026-09-30; reconciled
+against Sleeper's own DEF points by scripts/research/defense_scoring_reconcile.py).
+The player-level weekly report still carries a DST row with every points and
+usage cell BLANK: only the team, opponent, market
+implied total and an explicit "n/a (team defense)" note. Nothing reads
+Sleeper's `players_points` back into the report — that endpoint was used once,
+offline, to reconcile the weights above, and wiring it in as a points source
+is an open decision, not current behavior.
+(Pinned by tests/test_weekly.py::test_team_defenses_are_carried_not_dropped.)
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 
-from gridiron.league_config import DEFAULT_SCORING, ScoringRules
+from gridiron.league_config import DEFAULT_SCORING, KICKING_SCORING, ScoringRules
 
-# Stat keys follow nflverse weekly-data column names so scored frames need
-# no renaming at the join boundary.
-_STAT_WEIGHTS: tuple[tuple[str, str], ...] = (
-    ("passing_yards", "pass_yd"),
-    ("passing_tds", "pass_td"),
-    ("interceptions", "interception"),
-    ("rushing_yards", "rush_yd"),
-    ("rushing_tds", "rush_td"),
-    ("receptions", "reception"),
-    ("receiving_yards", "rec_yd"),
-    ("receiving_tds", "rec_td"),
-    ("fumbles_lost", "fumble_lost"),
-    ("two_point_conversions", "two_pt"),
+
+@dataclass(frozen=True)
+class _Term:
+    """One scoring line: a ScoringRules weight and the columns it multiplies."""
+
+    rule_field: str
+    #: current nflverse weekly columns, summed
+    components: tuple[str, ...]
+    #: pre-rewrite column names; read ONLY when no component key is present
+    legacy: tuple[str, ...] = field(default=())
+
+
+_TERMS: tuple[_Term, ...] = (
+    _Term("pass_yd", ("passing_yards",)),
+    _Term("pass_td", ("passing_tds",)),
+    _Term("interception", ("passing_interceptions",), ("interceptions",)),
+    _Term("rush_yd", ("rushing_yards",)),
+    _Term("rush_td", ("rushing_tds",)),
+    _Term("reception", ("receptions",)),
+    _Term("rec_yd", ("receiving_yards",)),
+    _Term("rec_td", ("receiving_tds",)),
+    # nflverse counts only offensive lost fumbles here. fumbles_lost_total
+    # also carries return fumbles and does NOT reconcile (2 mismatches on the
+    # 2026 week-1 frame) — do not substitute it.
+    _Term(
+        "fumble_lost",
+        ("sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost"),
+        ("fumbles_lost",),
+    ),
+    _Term(
+        "two_pt",
+        ("passing_2pt_conversions", "rushing_2pt_conversions",
+         "receiving_2pt_conversions"),
+        ("two_point_conversions",),
+    ),
 )
+
+#: Sleeper kicking stat -> nflverse weekly columns that feed it. fgm_50p is
+#: one Sleeper bucket over two nflverse buckets. Blocked kicks (fg_blocked,
+#: pat_blocked) are deliberately absent: whether Sleeper scores a blocked
+#: attempt as a miss is UNVERIFIED (no blocked kick in the 2026 week-1
+#: reconciliation), and guessing would silently change kicker points.
+_KICK_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "fgm_0_19": ("fg_made_0_19",),
+    "fgm_20_29": ("fg_made_20_29",),
+    "fgm_30_39": ("fg_made_30_39",),
+    "fgm_40_49": ("fg_made_40_49",),
+    "fgm_50p": ("fg_made_50_59", "fg_made_60_"),
+    "xpm": ("pat_made",),
+    "fgmiss": ("fg_missed",),
+    "xpmiss": ("pat_missed",),
+}
+
+
+def _num(value: object) -> float:
+    """nflverse frames carry nulls/NaN; both score as zero."""
+    if value is None:
+        return 0.0
+    f = float(value)  # type: ignore[arg-type]
+    return 0.0 if f != f else f  # NaN
+
+
+def _term_value(stats: Mapping[str, float], term: _Term) -> float:
+    keys = [k for k in term.components if k in stats]
+    if not keys:
+        keys = [k for k in term.legacy if k in stats]
+    return sum(_num(stats[k]) for k in keys)
 
 
 def fantasy_points(
     stats: Mapping[str, float],
     rules: ScoringRules = DEFAULT_SCORING,
 ) -> float:
-    """Score one player-week stat line. Missing stat keys count as zero;
-    unknown extra keys are ignored (frames carry many non-scoring columns)."""
+    """Score one OFFENSIVE player-week stat line (QB/RB/WR/TE).
+
+    Missing stat keys count as zero; unknown extra keys are ignored (frames
+    carry many non-scoring columns). Kickers go through `kicker_points`.
+    """
     return sum(
-        float(stats.get(stat_key, 0.0)) * getattr(rules, rule_field)
-        for stat_key, rule_field in _STAT_WEIGHTS
+        _term_value(stats, term) * getattr(rules, term.rule_field)
+        for term in _TERMS
     )
+
+
+def kicker_points(
+    stats: Mapping[str, float],
+    weights: Mapping[str, float] = KICKING_SCORING,
+) -> float:
+    """Score one KICKER player-week from nflverse weekly columns.
+
+    `weights` is keyed by Sleeper stat name (league_config.KICKING_SCORING);
+    this function owns the mapping from those names onto nflverse columns so
+    no script has to know it.
+    """
+    total = 0.0
+    for sleeper_key, cols in _KICK_COMPONENTS.items():
+        w = weights.get(sleeper_key)
+        if not w:
+            continue
+        total += w * sum(_num(stats[c]) for c in cols if c in stats)
+    return total
+
+
+#: Reconciled on all 518 team-weeks of 2025 against Sleeper's own DEF points:
+#: exact on 67.8%, within one point on 95.4%, MAE 0.40, bias +0.19. The rest
+#: is Sleeper scoring special-teams forced fumbles and recoveries as separate
+#: one-point stats that nflverse folds into the defense's two-point ones.
+#: Points allowed is the opponent's final score (Sleeper's own definition
+#: excludes some return scores; excluding them matched worse overall).
+#: Sleeper team-defense stat -> nflverse TEAM weekly columns
+#: (`nflreadpy.load_team_stats(summary_level="week")`) that feed it. The
+#: reconciliation against Sleeper's own weekly DEF points is
+#: scripts/research/defense_scoring_reconcile.py; what nflverse does not
+#: carry separately (special-teams forced fumbles / recoveries by the
+#: defense's own unit) is absent and says so in `DEFENSE_UNSCORED`.
+_DEFENSE_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "sack": ("def_sacks",),
+    "int": ("def_interceptions",),
+    "fum_rec": ("fumble_recovery_opp",),
+    "ff": ("def_fumbles_forced",),
+    # nflverse's team `def_tds` leaves out fumble-recovery touchdowns, which
+    # Sleeper counts as defensive TDs (2025: 45 Sleeper def TDs; def_tds +
+    # fumble_recovery_tds disagrees on 0.4% of team-weeks).
+    "def_td": ("def_tds", "fumble_recovery_tds"),
+    "safe": ("def_safeties",),
+    # Sleeper's blocked kicks include blocked PATs (0 mismatches on 2025).
+    "blk_kick": ("def_punt_blocks", "def_fg_blocks", "def_pat_blocks"),
+    "def_st_td": ("special_teams_tds",),
+}
+DEFENSE_UNSCORED: tuple[str, ...] = ("def_st_ff", "def_st_fum_rec", "st_ff", "st_fum_rec")
+
+#: Sleeper's points-allowed tiers, lowest bound first.
+_PTS_ALLOW_TIERS = ((0, 0, "pts_allow_0"), (1, 6, "pts_allow_1_6"),
+                    (7, 13, "pts_allow_7_13"), (14, 20, "pts_allow_14_20"),
+                    (21, 27, "pts_allow_21_27"), (28, 34, "pts_allow_28_34"),
+                    (35, 10_000, "pts_allow_35p"))
+
+
+def points_allowed_tier(points_allowed: float) -> str:
+    pa = int(round(float(points_allowed)))
+    for lo, hi, key in _PTS_ALLOW_TIERS:
+        if lo <= pa <= hi:
+            return key
+    return "pts_allow_35p"
+
+
+def defense_points(stats: Mapping[str, float], points_allowed: float | None,
+                   weights: Mapping[str, float] | None = None) -> float:
+    """Score one TEAM DEFENSE week from nflverse team-weekly columns plus the
+    points the opponent scored. `weights` is keyed by Sleeper stat name
+    (league_config.DEFENSE_SCORING); this function owns the column mapping.
+    `points_allowed=None` scores the counting stats only (never guesses a
+    tier)."""
+    from gridiron.league_config import DEFENSE_SCORING
+    w = DEFENSE_SCORING if weights is None else weights
+    total = 0.0
+    for key, cols in _DEFENSE_COMPONENTS.items():
+        if w.get(key):
+            total += w[key] * sum(_num(stats[c]) for c in cols if c in stats)
+    if points_allowed is not None and points_allowed == points_allowed:
+        total += w.get(points_allowed_tier(points_allowed), 0.0)
+    return total
+
+
+def scoring_inputs() -> frozenset[str]:
+    """Every column name this module will read. Ingest uses it to assert a
+    pulled frame can actually be scored before anything downstream trusts the
+    numbers. Legacy aliases are excluded on purpose: they are a read-side
+    fallback, not a contract an ingest must satisfy."""
+    cols: set[str] = set()
+    for term in _TERMS:
+        cols.update(term.components)
+    for comps in _KICK_COMPONENTS.values():
+        cols.update(comps)
+    return frozenset(cols)
+
+
+# --- can this frame be scored at all? ----------------------------------------
+#
+# `fantasy_points` treats an absent key as zero, and that contract is correct
+# for a CELL: nflverse leaves a running back's `passing_interceptions` null,
+# and null really does mean zero picks. It is catastrophic for a COLUMN. If
+# the interceptions column is missing from the frame entirely, every
+# quarterback silently scores two points per pick too high — a plausible
+# number, which is far worse than a blank one, because nothing downstream can
+# tell it from a real one.
+#
+# So the missing-key-is-zero contract stays exactly as it is, and this is the
+# gate that stops it reaching a reader: callers ask whether the COLUMNS a
+# frame carries can support the scoring rules before they publish any points.
+
+
+@dataclass(frozen=True)
+class ColumnGap:
+    """One scoring line the frame's columns cannot support."""
+
+    rule: str                 # ScoringRules field, or Sleeper kicking stat key
+    group: str                # "offense" (fantasy_points) | "kicking"
+    missing: tuple[str, ...]  # the columns that are absent
+    #: True when SOME components are present and others are not. A partial
+    #: term is the nastiest case: it sums the columns it has and returns a
+    #: number that looks right (lost fumbles minus the sack fumbles).
+    partial: bool = False
+
+    def describe(self) -> str:
+        kind = "partially present" if self.partial else "absent"
+        return f"{self.rule} [{self.group}] {kind}: {', '.join(self.missing)}"
+
+
+@dataclass(frozen=True)
+class ScoringCoverage:
+    """Whether a frame's columns can back the league's scoring rules."""
+
+    gaps: tuple[ColumnGap, ...] = field(default=())
+    #: Terms satisfied through a pre-rewrite column name. Not a defect — the
+    #: aliases exist precisely so an older frame still scores — but worth
+    #: naming, because it says which nflverse schema this cache came from.
+    legacy_used: tuple[str, ...] = field(default=())
+
+    @property
+    def complete(self) -> bool:
+        return not self.gaps
+
+    @property
+    def missing_columns(self) -> tuple[str, ...]:
+        return tuple(sorted({c for g in self.gaps for c in g.missing}))
+
+    @property
+    def affected_groups(self) -> frozenset[str]:
+        return frozenset(g.group for g in self.gaps)
+
+    def scorable(self, position: str) -> bool:
+        """Can a player at this position be scored from this frame?
+
+        Kickers and everyone else go through different halves of this module,
+        so a hole in the field-goal buckets must not blank a wide receiver's
+        points, and vice versa.
+        """
+        group = "kicking" if str(position or "").upper() == "K" else "offense"
+        return group not in self.affected_groups
+
+    def reason(self) -> str:
+        return "; ".join(g.describe() for g in self.gaps)
+
+
+def scoring_coverage(
+    columns: Iterable[str],
+    *,
+    rules: ScoringRules = DEFAULT_SCORING,
+    kicking: Mapping[str, float] = KICKING_SCORING,
+) -> ScoringCoverage:
+    """Check a frame's COLUMN NAMES against the scoring rules.
+
+    Reports only what cannot be scored. Specifically NOT reported:
+
+    * a term whose weight is zero — it cannot move a point total, so a
+      missing column for it is not a defect;
+    * a legacy alias standing in for the current columns — that is the
+      documented fallback path, and it is recorded rather than flagged;
+    * a column that is present but null for some rows. That is a missing
+      CELL, and zero is the right reading of it (`_num`). This function
+      never looks at values, only at the schema.
+    """
+    cols = {str(c) for c in columns}
+    gaps: list[ColumnGap] = []
+    legacy: list[str] = []
+
+    for term in _TERMS:
+        if not getattr(rules, term.rule_field):
+            continue
+        have = [c for c in term.components if c in cols]
+        if len(have) == len(term.components):
+            continue
+        if have:
+            # Partial: `_term_value` would sum the present components only.
+            gaps.append(ColumnGap(
+                term.rule_field, "offense",
+                tuple(c for c in term.components if c not in cols), True))
+        elif any(k in cols for k in term.legacy):
+            legacy.extend(k for k in term.legacy if k in cols)
+        else:
+            gaps.append(ColumnGap(term.rule_field, "offense", term.components))
+
+    for sleeper_key, comps in _KICK_COMPONENTS.items():
+        if not kicking.get(sleeper_key):
+            continue
+        absent = tuple(c for c in comps if c not in cols)
+        if not absent:
+            continue
+        gaps.append(ColumnGap(sleeper_key, "kicking", absent,
+                              partial=len(absent) < len(comps)))
+
+    return ScoringCoverage(tuple(gaps), tuple(sorted(set(legacy))))

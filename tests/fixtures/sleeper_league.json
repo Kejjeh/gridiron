@@ -1,0 +1,157 @@
+{
+ "as_of": "2026-09-17T13:00:00+00:00",
+ "league_id": "TESTLEAGUE",
+ "week": 2,
+ "state": {
+  "season": 2026,
+  "week": 2,
+  "display_week": 2,
+  "season_type": "regular",
+  "season_start_date": "2026-09-09"
+ },
+ "league": {
+  "name": "Fixture League",
+  "status": "in_season",
+  "total_rosters": 2,
+  "roster_positions": [
+   "QB",
+   "RB",
+   "RB",
+   "WR",
+   "WR",
+   "TE",
+   "FLEX",
+   "FLEX",
+   "K",
+   "DEF",
+   "BN",
+   "BN",
+   "BN",
+   "BN",
+   "BN"
+  ]
+ },
+ "users": [
+  {
+   "user_id": "U1",
+   "display_name": "fixture_owner"
+  },
+  {
+   "user_id": "U2",
+   "display_name": "rival"
+  }
+ ],
+ "rosters": [
+  {
+   "roster_id": 1,
+   "owner_id": "U1",
+   "co_owners": null,
+   "starters": [
+    "3161",
+    "3198",
+    "6790",
+    "6794",
+    "8167",
+    "3271",
+    "8151",
+    "9997",
+    "1945",
+    "SEA"
+   ],
+   "players": [
+    "3161",
+    "3198",
+    "6790",
+    "6794",
+    "8167",
+    "3271",
+    "8151",
+    "9997",
+    "1945",
+    "SEA",
+    "5022",
+    "4892",
+    "4984",
+    "8131"
+   ],
+   "reserve": [
+    "8131"
+   ],
+   "settings": {
+    "wins": 1,
+    "losses": 0
+   }
+  },
+  {
+   "roster_id": 2,
+   "owner_id": "U9",
+   "co_owners": [
+    "U2"
+   ],
+   "starters": [],
+   "players": [],
+   "reserve": [],
+   "settings": {
+    "wins": 0,
+    "losses": 1
+   }
+  }
+ ],
+ "matchups": [
+  {
+   "roster_id": 1,
+   "matchup_id": 1,
+   "points": 0.0,
+   "starters": [
+    "3161",
+    "3198",
+    "6790",
+    "6794",
+    "8167",
+    "3271",
+    "8151",
+    "9997",
+    "1945",
+    "SEA"
+   ],
+   "players": [
+    "3161",
+    "3198",
+    "6790",
+    "6794",
+    "8167",
+    "3271",
+    "8151",
+    "9997",
+    "1945",
+    "SEA",
+    "5022",
+    "4892",
+    "4984",
+    "8131"
+   ],
+   "starters_points": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "players_points": {}
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 1,
+   "points": 0.0,
+   "starters": [],
+   "players": [],
+   "starters_points": [],
+   "players_points": {}
+  }
+ ]
+}

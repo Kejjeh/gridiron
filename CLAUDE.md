@@ -19,10 +19,35 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   (never run bare pytest into agent context — the summary wrapper exists so
   output doesn't flood the window).
 - Behavior-preserving refactors: `python scripts/ci/golden_run.py` A/B.
+- Weekly (in-season): `PYTHONPATH=src python scripts/ingest/pull_week.py` then
+  `PYTHONPATH=src python scripts/weekly/report.py --write`. Report reads the
+  cache only — offline, and it states every input's as-of week and staleness.
+- Decision board (offline): `PYTHONPATH=src python scripts/weekly/dashboard.py
+  --write`; scenarios + phone-fit check: `scripts/weekly/dashboard_scenarios.py
+  --screenshot`. Freshness GATES actions (`gridiron.gating`), locks are
+  three-valued, absence is NEVER a bye unless the schedule declares one, and
+  the board is built in the cloud every 15 min (best effort, never real
+  time) with its records AND last-good inputs carried between runs by
+  `gridiron.carryover` (an Actions cache, not durable storage). The repo and
+  the personalised pages are PUBLIC by owner decision (2026-09-21):
+  `gridiron.publication` packages exactly two allowlisted HTML files for
+  GitHub Pages under the `GRIDIRON_PUBLIC_PUBLICATION` opt-in — never JSON,
+  cache or archive — and artifacts, caches and logs are public too. A pickup
+  is a move ONLY if it improves THIS WEEK's lineup (`gridiron.waivers`); an
+  acquisition is CONDITIONAL; the Free Agent Radar verdicts every projected
+  pool player. Game Day (`scripts/weekly/gameday.py`): platform actuals only,
+  archived moves re-judged NOW by id, one-tap read-only refresh. Full board
+  and Game Day invariants: docs/memory/board.md.
+- Weekly routine (skills in `.claude/skills/`: roster-audit, waiver-board,
+  start-sit, decision-log): `scripts/weekly/fetch_record.py` ->
+  `weekly_review.py` (usage trends, ROS, `--ranks`, `--watch`), and after the
+  week `grade_week.py`. ROS tables: `ros_rankings.py`. Detail: weekly_routine.md.
+- Settings drift check: `PYTHONPATH=src python scripts/verify_league_settings.py`.
 
 ## Rules (full text in docs/memory/rules.md — cite by number)
-1. League settings are UNVERIFIED placeholders (`league_config.SETTINGS_VERIFIED`).
-   Nothing ships outputs until they're pulled from the platform and the flag flips.
+1. League settings are VERIFIED (2026-09-08, re-verified 2026-09-17: 55/55
+   constants, `scripts/verify_league_settings.py`). Engines still gate on
+   `SETTINGS_VERIFIED`; never flip a flag to unblock a run.
 2. Scoring has ONE implementation: `gridiron.scoring.fantasy_points`. Never
    copy a weight into a script.
 3. Every join anchors on a stable player id (nflverse `gsis_id`/`player_id`;
@@ -40,8 +65,9 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
    (the week has a shape: Wed waivers, Fri designations, Sun inactives).
 9. Credentials live in `.env` (gitignored) only, prefix `GRIDIRON_`, read via
    `gridiron.config`. Never write a credential into a tracked file.
-10. Don't commit bulk data (`data/research/cache/` is ignored); DO commit the
-    small weekly projection/ledger CSVs in `data/outputs/` and `data/ledger/`.
+10. Don't commit bulk data (`data/research/cache/` ignored) or roster-bearing
+    weekly reports (`data/outputs/week*_report.*` ignored — they name the
+    owner's players); DO commit the small projection/ledger CSVs.
 11. "Questionable" ≠ out; "on roster" ≠ startable. No convenience accessor
     that makes the wrong call easy.
 12. Start with 5 skills max (roster-audit, waiver-board, start-sit, matchup,

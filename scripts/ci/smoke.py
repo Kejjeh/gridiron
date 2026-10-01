@@ -42,11 +42,58 @@ IMPORTS = [
     "gridiron.season",
     "gridiron.draft",
     "gridiron.ledger",
+    "gridiron.ids",
+    "gridiron.freshness",
+    "gridiron.sleeper",
+    "gridiron.ingest",
+    "gridiron.usage",
+    "gridiron.weekly",
+    "gridiron.livesync",
+    "gridiron.models.validated_signals",
+    "gridiron.projection",
+    "gridiron.gating",
+    "gridiron.lineup",
+    "gridiron.waivers",
+    "gridiron.evaluate",
+    "gridiron.decisions",
+    "gridiron.carryover",
+    "gridiron.dashboard",
+    "gridiron.gameday",
+    "gridiron.publication",
+    "gridiron.trends",
+    "gridiron.external_ranks",
+    "gridiron.shadow",
+    "gridiron.models.advanced",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on
 # the day they are written.
 PATTERNS = [
+    "test_ids.py",
+    "test_freshness.py",
+    "test_sleeper.py",
+    "test_ingest.py",
+    "test_livesync.py",
+    "test_lock_and_drop_regressions.py",
+    "test_report_cli.py",
+    "test_dashboard_cli.py",
+    "test_projection.py",
+    "test_lineup.py",
+    "test_waivers.py",
+    "test_radar.py",
+    "test_radar_validity.py",
+    "test_player_map_budget.py",
+    "test_drop_legality.py",
+    "test_action_desk.py",
+    "test_open_roster_spot.py",
+    "test_evaluate.py",
+    "test_decisions.py",
+    "test_carryover.py",
+    "test_workflow_inputs.py",
+    "test_publication.py",
+    "test_next_decision.py",
+    "test_scoring_nflverse.py",
+    "test_verify_league_settings.py",
     "test_ledger*.py",
     "test_draft*.py",
     "test_claude_md_budget.py",
@@ -58,11 +105,20 @@ PATTERNS = [
     "test_shrinkage.py",
     "test_vegas.py",
     "test_season.py",
+    "test_trends.py",
+    "test_external_ranks.py",
+    "test_weekly_review.py",
+    "test_grade_week.py",
+    "test_skill_registry.py",
+    "test_shadow.py",
+    "test_advanced_model.py",
+    "test_k_def.py",
+    "test_ros.py",
 ]
 
 # Anti-vacuity floor: a glob typo must not silently shrink the smoke set.
 # Raise this as smoke tests are added (plv_clone ended at 8+).
-MIN_FILES = 11
+MIN_FILES = 20
 
 
 def main() -> int:

@@ -1,0 +1,13 @@
+player_id,player_display_name,position,team,season,week,fg_made_0_19,fg_made_20_29,fg_made_30_39,fg_made_40_49,fg_made_50_59,fg_made_60_,fg_missed,fg_blocked,pat_made,pat_missed,sleeper_points
+00-0031136,Chris Boswell,K,PIT,2026,1,0,1,0,1,0,0,1,0,2,0,8.0
+00-0031492,Jason Myers,K,SEA,2026,1,0,1,1,0,0,0,0,0,1,0,7.0
+00-0032726,Ka'imi Fairbairn,K,HOU,2026,1,0,0,0,0,1,0,0,0,4,0,9.0
+00-0035358,Chase McLaughlin,K,TB,2026,1,0,0,1,0,1,0,0,0,3,0,11.0
+00-0036854,Evan McPherson,K,CIN,2026,1,0,1,1,0,2,0,0,0,3,0,19.0
+00-0037224,Cameron Dicker,K,LAC,2026,1,0,0,0,0,0,0,0,0,2,0,2.0
+00-0037692,Brandon Aubrey,K,DAL,2026,1,0,0,0,0,0,0,0,0,2,1,1.0
+00-0039172,Jake Bates,K,DET,2026,1,0,1,0,0,0,0,0,0,4,0,7.0
+00-0039404,Will Reichard,K,MIN,2026,1,0,0,1,0,0,0,0,0,4,0,7.0
+00-0039409,Cam Little,K,JAX,2026,1,0,0,0,2,0,0,0,0,4,0,12.0
+00-0039498,Harrison Mevis,K,LA,2026,1,0,0,0,0,0,0,0,0,1,0,1.0
+00-0040074,Tyler Loop,K,BAL,2026,1,0,0,0,1,1,0,0,0,5,0,14.0

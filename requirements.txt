@@ -5,8 +5,15 @@ pydantic-settings>=2.0
 pytest>=8.0
 numpy>=2.0            # research sims (scripts/research/)
 
-pandas>=2.2           # draft board, ledger, and production draft math
-requests>=2.32       # research data pulls
-nflreadpy>=0.1.5      # nflverse ingest
-pyarrow>=18          # nflreadpy to pandas conversion
-lxml>=5              # FantasyPros HTML table parser
+# Build step 2 (ingest), landed 2026-09-17:
+nflreadpy>=0.1.5      # polars-native; NOT the deprecated nfl_data_py
+pandas>=2.2,<4        # draft board, ledger, draft math; tested on 3.x
+pyarrow>=18           # parquet cache: NaN stays NaN, counts stay ints
+
+# Research-only pulls (scripts/research/, draft 2026):
+requests>=2.32        # research data pulls
+lxml>=5               # FantasyPros HTML table parser
+
+# Not needed: espn-api (the league is on Sleeper, whose read API needs no
+# auth — gridiron.sleeper uses stdlib urllib). No markdown/table library:
+# gridiron.weekly renders its own table.
