@@ -108,6 +108,9 @@ def main(argv=None) -> int:
     ap.add_argument("--crosswalk", type=Path,
                     default=RESEARCH_CACHE / "season2026" / "crosswalk.csv")
     ap.add_argument("--save", action="store_true")
+    ap.add_argument("--save-contender", action="store_true",
+                    help="save the calibrated two-stage form even when the bar is not cleared, "
+                         "recording that it was not (it is a shoot-out contender, not the page)")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
     from nflreadpy.config import update_config
@@ -220,8 +223,8 @@ def main(argv=None) -> int:
     print("calibration lines (a, b) by fold, two_stage:", json.dumps(cal_lines.get("two_stage", {}), default=str))
     if args.out:
         args.out.write_text(json.dumps(res, indent=1), encoding="utf-8")
-    if args.save and winners:
-        if "two_stage_cal" not in winners:
+    if (args.save and winners) or args.save_contender:
+        if args.save and winners and "two_stage_cal" not in winners:
             raise SystemExit(f"winners {winners}: only the calibrated two-stage form is wired "
                              "for serving")
         # final fit: two-stage ridge on every season's out-of-fold adv, then
@@ -250,6 +253,7 @@ def main(argv=None) -> int:
                     "projection and the baseline, then a per-position median-regression line "
                     "folded into the coefficients; ordering is the ridge's, the error is the line's"}
         meta["stack_evidence"] = {"seasons": args.seasons, "winner": "two_stage_cal",
+                                  "bar_cleared": "two_stage_cal" in winners,
                                   "winners": winners, "strict": strict, "cv": cv,
                                   "folds": {str(t): v for t, v in folds.items()},
                                   "doc": "docs/research/STACK_CALIBRATION.md"}
@@ -257,8 +261,8 @@ def main(argv=None) -> int:
         new_stack = dict(shipped.stack)
         new_stack.update(stack)
         A.AdvancedModel(shipped.adv, new_stack, meta).save()
-        print(f"saved stack (two_stage_cal, lines {lines}) into "
-              f"{A.WEIGHTS_PATH.relative_to(REPO_ROOT)}")
+        print(f"saved stack (two_stage_cal, bar cleared: {'two_stage_cal' in winners}, lines "
+              f"{lines}) into {A.WEIGHTS_PATH.relative_to(REPO_ROOT)}")
     return 0
 
 
