@@ -292,7 +292,9 @@ def pull_model_inputs(manifest: ing.Manifest, season: int, now: datetime,
         print(f"  model_inputs: fetched under {adv_model.INPUT_REFRESH_HOURS:g} h ago, reused")
         return
     try:
-        frames = adv_model.fetch_inputs(season, loaders=loaders)
+        frames = adv_model.fetch_inputs(
+            season, loaders=loaders,
+            log=lambda m: print(f"  model_inputs: {m} (optional; left unknown)", file=sys.stderr))
     except Exception as exc:                                  # noqa: BLE001
         print(f"  model_inputs: FAILED {type(exc).__name__}: {exc} — the page "
               f"keeps the baseline projection", file=sys.stderr)

@@ -602,9 +602,27 @@ INPUT_META = "meta.json"
 INPUT_REFRESH_HOURS = 6.0
 
 
-def fetch_inputs(season: int, *, loaders=None) -> dict[str, pd.DataFrame]:
-    """Download and normalise the three advanced inputs for one season.
-    `loaders` (for tests) maps name -> zero-arg callable returning pandas."""
+#: Inputs nothing reads for a number yet (docs/research/FEATURE_EXPANSION.md):
+#: PFR advanced stats, play-by-play and participation (routes). Fetched only
+#: when asked — play-by-play is tens of MB and participation is published
+#: for finished seasons only, so a live build must never depend on them.
+EXPANSION_LOADERS = ("pfr_rec", "pfr_rush", "pfr_pass", "participation", "pbp")
+#: Inputs the page's number does not depend on: when one is down the others
+#: are still written and the page says nothing is missing. A CORE input
+#: (expected points, Next Gen Stats, depth charts, schedules, team stats)
+#: failing fails the refresh instead, so the page keeps the baseline and says
+#: why rather than modelling on training means.
+OPTIONAL_LOADERS = ("rosters", *EXPANSION_LOADERS)
+
+
+def fetch_inputs(season: int, *, loaders=None, expansion: bool = False,
+                 log=None) -> dict[str, pd.DataFrame]:
+    """Download and normalise the advanced inputs for one season. `loaders`
+    (for tests) maps name -> zero-arg callable returning pandas. An
+    `OPTIONAL_LOADERS` source that is down or not yet published leaves its
+    input empty (unknown, never 0) and the others intact — `log` (a callable
+    taking a string) hears which; a core source failing raises. `expansion`
+    adds `EXPANSION_LOADERS`."""
     if loaders is None:
         import nflreadpy as nfl
         loaders = {
@@ -622,7 +640,19 @@ def fetch_inputs(season: int, *, loaders=None) -> dict[str, pd.DataFrame]:
             "participation": lambda: nfl.load_participation([season]).to_pandas(),
             "pbp": lambda: nfl.load_pbp([season]).to_pandas(),
         }
-    raw = {name: fn() for name, fn in loaders.items()}
+        if not expansion:
+            loaders = {k: v for k, v in loaders.items() if k not in EXPANSION_LOADERS}
+    raw: dict[str, pd.DataFrame | None] = {}
+    for name, fn in loaders.items():
+        if name not in OPTIONAL_LOADERS:
+            raw[name] = fn()
+            continue
+        try:
+            raw[name] = fn()
+        except Exception as exc:                                  # noqa: BLE001
+            raw[name] = None
+            if log is not None:
+                log(f"model input {name} unavailable: {type(exc).__name__}: {exc}")
     return {"xfp": xfp_from_ff_opportunity(raw.get("ff_opportunity")),
             "ngs": ngs_from_nextgen({k: raw.get(f"ngs_{k}") for k in NGS_COLUMNS}),
             "depth": depth_from_charts(raw.get("depth_charts"), raw.get("schedules")),

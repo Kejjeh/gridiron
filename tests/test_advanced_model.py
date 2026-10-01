@@ -235,6 +235,26 @@ def test_routes_run_come_from_participation_joined_to_dropbacks():
     assert np.isnan(f.loc["wr2", "routes_l3"])                            # no participation: unknown
 
 
+def test_an_optional_input_fails_on_its_own_and_a_core_one_fails_the_refresh():
+    heard = []
+
+    def boom():
+        raise ValueError("Season must be between 2016 and 2025")
+    good = lambda: pd.DataFrame([{"player_id": "g1", "week": 1, "receptions_exp": 2}])  # noqa: E731
+    got = A.fetch_inputs(2026, loaders={"ff_opportunity": good, "participation": boom, "pbp": boom,
+                                        "rosters": boom, "depth_charts": lambda: None,
+                                        "schedules": lambda: None}, log=heard.append)
+    assert got["xfp"]["xfp"].tolist() == [1.0]                 # the good input survived
+    assert got["routes"].empty and got["reserve"].empty       # the bad ones are unknown, not 0
+    assert len(heard) == 3 and all("unavailable" in h for h in heard)
+    with pytest.raises(ValueError):                           # a core input down: no refresh
+        A.fetch_inputs(2026, loaders={"ff_opportunity": boom}, log=heard.append)
+    # the live default never asks for the expansion inputs at all
+    import inspect
+    assert "participation" in A.EXPANSION_LOADERS and "pbp" in A.EXPANSION_LOADERS
+    assert inspect.signature(A.fetch_inputs).parameters["expansion"].default is False
+
+
 def test_depth_rank_from_both_nflverse_layouts():
     weekly = pd.DataFrame([
         {"week": 3.0, "formation": "Offense", "depth_position": "WR", "depth_team": "2",
