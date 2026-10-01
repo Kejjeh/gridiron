@@ -66,10 +66,29 @@ NGS_COLUMNS = {"receiving": {"avg_separation": "ngs_sep",
 #: Every feature `features_as_of` produces, before the caller adds the two
 #: projection-side columns (`baseline`, `ppg_to_date`) and, for the stack,
 #: `sleeper`.
+#: The role-change block: the player's LAST game against his trailing
+#: average, his share of his team's position-group opportunities in the
+#: team's last game, and the volume of teammates who have gone missing from
+#: the box score (an IR stash never appears on the weekly injury report, so
+#: `vacated_pickup` — Out/Doubtful this week — goes quiet the week after a
+#: season-ending injury while the beneficiary's role is already real).
+#: Each is a fast opportunity read (rule #6); the ridge decides its weight.
+ROLE_FEATURES = ("xfp_last", "opp_last", "snap_last", "opp_share_last", "opp_jump",
+                 "snap_jump", "absent_pickup", "reserve_pickup", "xfp_ewm", "opp_ewm",
+                 "snap_ewm")
+#: Recency weight of the exponentially weighted averages: the last game
+#: counts 1, the one before 1/2, then 1/4 ...
+EWM_HALFLIFE = 1.0
+#: Weekly-roster statuses that mean "not playing for weeks": injured
+#: reserve (which covers PUP and NFI once the season starts) and the exempt
+#: list. INA is the game-day inactive list — known 90 minutes before kickoff,
+#: never a feature.
+RESERVE_STATUSES = ("RES", "EXE")
 FEATURE_COLUMNS = ("xfp_l3", "xfp_season", "fpoe_season", "snap_l3", "tgt_share_l3",
                    "ay_share_l3", "carries_l3", "opp_l3", "ngs_sep", "ngs_yacoe",
                    "ngs_ryoe", "ngs_cpoe", "implied", "def_allowed", "vacated_pickup",
-                   "practice_dnp", "practice_limited", "questionable", "depth_rank")
+                   "practice_dnp", "practice_limited", "questionable", "depth_rank",
+                   *ROLE_FEATURES)
 
 
 # ------------------------------------------------------------------ inputs
@@ -186,11 +205,14 @@ def features_as_of(history: pd.DataFrame, week: int, *,
                    schedule: pd.DataFrame | None = None,
                    practice: pd.DataFrame | None = None,
                    depth: pd.DataFrame | None = None,
-                   teams: Mapping[str, str] | None = None) -> pd.DataFrame:
+                   teams: Mapping[str, str] | None = None,
+                   reserve: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every feature for `week`, from history before `week` only; one row
     per gsis id that has at least one earlier game. `teams` (gsis -> team)
     overrides the last team seen in history (a trade the box scores have not
-    caught up with)."""
+    caught up with). `reserve` (week, gsis_id: players on a reserve list,
+    `reserve_from_rosters`) is read at the latest week it covers up to
+    `week` — a reserve stint persists, so the last known status stands."""
     past = history.loc[history["week"] < int(week)].sort_values("week")
     if len(past) == 0:
         return pd.DataFrame(columns=["gsis_id", "position", "team", *FEATURE_COLUMNS])
@@ -242,7 +264,83 @@ def features_as_of(history: pd.DataFrame, week: int, *,
     dep = depth.loc[depth["week"] == int(week)].set_index("gsis_id")["depth_rank"] \
         if depth is not None and len(depth) else pd.Series(dtype=float)
     f["depth_rank"] = [dep.get(gid, np.nan) for gid in f["gsis_id"]]
-    return f
+    quest = set(prac.loc[prac["questionable"] > 0, "gsis_id"]) if prac is not None else set()
+    return f.merge(role_features(past, out_ids | quest, reserve_ids(reserve, int(week))),
+                   on="gsis_id", how="left")
+
+
+def reserve_from_rosters(rosters: pd.DataFrame | None) -> pd.DataFrame:
+    """(week, gsis_id) of every player on a reserve list that week, from the
+    nflverse weekly rosters (`RESERVE_STATUSES`). Skill positions only."""
+    cols = ["week", "gsis_id"]
+    if rosters is None or len(rosters) == 0 or "status" not in rosters:
+        return pd.DataFrame(columns=cols)
+    r = _regular(rosters, "game_type")
+    r = r.loc[r["status"].isin(RESERVE_STATUSES) & r["position"].isin(POSITIONS)
+              & r["week"].notna() & r["gsis_id"].notna()]
+    out = pd.DataFrame({"week": r["week"].astype(int), "gsis_id": r["gsis_id"].map(normalize_id)})
+    return out.loc[out["gsis_id"] != ""].drop_duplicates()[cols]
+
+
+def reserve_ids(reserve: pd.DataFrame | None, week: int) -> set[str] | None:
+    """Who is on a reserve list as of `week`: the latest roster week at or
+    before it. None when the frame covers nothing that early (then the
+    feature is unknown, not 0)."""
+    if reserve is None or len(reserve) == 0:
+        return None
+    known = reserve.loc[reserve["week"] <= int(week), "week"]
+    if len(known) == 0:
+        return None
+    latest = int(known.max())
+    return {str(g) for g in reserve.loc[reserve["week"] == latest, "gsis_id"]}
+
+
+def role_features(past: pd.DataFrame, maybe_back: set[str] = frozenset(),
+                  on_reserve: set[str] | None = None) -> pd.DataFrame:
+    """The role-change block from the box scores before the week (`past`,
+    sorted by week; see `ROLE_FEATURES`). A teammate counts as ABSENT when he
+    played for the team earlier this season, has no stat line in the team's
+    most recent game, and is not in `maybe_back` (this week's report: Out or
+    Doubtful is already `vacated_pickup`; Questionable may play — rule #11,
+    neither is priced as missing here). His per-game opportunities are
+    handed to the players who DID play the team's last game, by their share
+    of that game. `on_reserve` (gsis ids on a reserve list this week, or
+    None when unknown) drives `reserve_pickup` the same way — the confirmed
+    version of the same fact."""
+    past = past.reset_index(drop=True)
+    last_rows = past.groupby("gsis_id").tail(1)
+    last = last_rows.set_index("gsis_id")
+    prev = past.drop(last_rows.index).groupby("gsis_id").tail(3).groupby("gsis_id")
+    f = pd.DataFrame({"xfp_last": last["xfp"], "opp_last": last["opps"],
+                      "snap_last": last["offense_pct"],
+                      "opp_jump": last["opps"] - prev["opps"].mean(),
+                      "snap_jump": last["offense_pct"] - prev["offense_pct"].mean()})
+    team_last = past.groupby("team")["week"].max()
+    game = past.loc[past["week"] == past["team"].map(team_last)]
+    total = game.groupby(["team", "position"])["opps"].transform("sum")
+    share = (game["opps"] / total.where(total > 0)).groupby(game["gsis_id"]).first()
+    f["opp_share_last"] = share.reindex(f.index).fillna(0.0)   # not in the last game: 0
+    seen = pd.DataFrame({"team": last["team"], "position": last["position"],
+                         "opp_pg": past.groupby("gsis_id")["opps"].mean(),
+                         "last_week": last["week"]})
+    absent = seen.loc[(seen["last_week"] < seen["team"].map(team_last))
+                      & ~seen.index.isin(list(maybe_back))]
+    freed = absent.groupby(["team", "position"])["opp_pg"].sum()
+    f["absent_pickup"] = [
+        float(freed.get((t, p), 0.0)) * float(s) for t, p, s in
+        zip(last["team"], last["position"], f["opp_share_last"])]
+    if on_reserve is None:
+        f["reserve_pickup"] = np.nan
+    else:
+        held = seen.loc[seen.index.isin(list(on_reserve))].groupby(["team", "position"])["opp_pg"].sum()
+        f["reserve_pickup"] = [
+            0.0 if g in on_reserve else float(held.get((t, p), 0.0)) * float(s) for g, t, p, s in
+            zip(f.index, last["team"], last["position"], f["opp_share_last"])]
+    g = past.groupby("gsis_id")
+    for col, name in (("xfp", "xfp_ewm"), ("opps", "opp_ewm"), ("offense_pct", "snap_ewm")):
+        f[name] = g[col].apply(lambda v: v.ewm(halflife=EWM_HALFLIFE, ignore_na=True).mean().iloc[-1])
+    f.index.name = "gsis_id"
+    return f.reset_index()
 
 
 def _opponents(schedule: pd.DataFrame | None, week: int) -> dict[str, str]:
@@ -364,12 +462,14 @@ def fetch_inputs(season: int, *, loaders=None) -> dict[str, pd.DataFrame]:
             "schedules": lambda: nfl.load_schedules([season]).to_pandas(),
             "team_stats": lambda: nfl.load_team_stats([season],
                                                       summary_level="week").to_pandas(),
+            "rosters": lambda: nfl.load_rosters_weekly([season]).to_pandas(),
         }
     raw = {name: fn() for name, fn in loaders.items()}
     return {"xfp": xfp_from_ff_opportunity(raw.get("ff_opportunity")),
             "ngs": ngs_from_nextgen({k: raw.get(f"ngs_{k}") for k in NGS_COLUMNS}),
             "depth": depth_from_charts(raw.get("depth_charts"), raw.get("schedules")),
-            "defense": defense_history(raw.get("team_stats"), raw.get("schedules"))}
+            "defense": defense_history(raw.get("team_stats"), raw.get("schedules")),
+            "reserve": reserve_from_rosters(raw.get("rosters"))}
 
 
 def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame],
@@ -390,7 +490,7 @@ def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame
 
 def load_inputs(directory: Path, season: int) -> dict | None:
     """The saved inputs for `season`, or None when absent or for another
-    season. Returns {"xfp", "ngs", "depth", "meta"}."""
+    season. Returns {"xfp", "ngs", "depth", "defense", "reserve", "meta"}."""
     folder = Path(directory) / INPUT_DIR
     try:
         meta = json.loads((folder / INPUT_META).read_text(encoding="utf-8"))
@@ -400,6 +500,9 @@ def load_inputs(directory: Path, season: int) -> dict | None:
         dpath = folder / "defense.parquet"
         frames["defense"] = (pd.read_parquet(dpath) if dpath.exists()
                              else pd.DataFrame(columns=["team", "week"]))
+        rpath = folder / "reserve.parquet"
+        frames["reserve"] = (pd.read_parquet(rpath) if rpath.exists()
+                             else pd.DataFrame(columns=["week", "gsis_id"]))
     except (OSError, ValueError, KeyError):
         return None
     for df in frames.values():
@@ -513,7 +616,7 @@ def build_context(*, weeks: pd.DataFrame | None, inputs: Mapping | None,
     hist = history_frame(weeks, inputs["xfp"], inputs["ngs"])
     feats = features_as_of(hist, int(week), schedule=schedule,
                            practice=practice_from_injuries(injuries),
-                           depth=inputs["depth"], teams=teams)
+                           depth=inputs["depth"], teams=teams, reserve=inputs.get("reserve"))
     rows = {gid: {**{c: r.get(c) for c in FEATURE_COLUMNS}, "_kind": "skill"}
             for gid, r in zip(feats["gsis_id"], feats.to_dict("records"))}
     dh = inputs.get("defense")

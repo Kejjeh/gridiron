@@ -58,6 +58,11 @@ MATCHUP_FEATURES: dict[str, tuple[str, ...]] = {
 }
 #: Set by the out-of-sample test (docs/research/ROS_BACKTEST.md).
 SCHEDULE_ADJUST = True
+#: NFL rule: a player placed on injured reserve misses at least this many
+#: GAMES before he may be activated. The weekly roster (official, public)
+#: says who is on a reserve list and since when; those games are 0. Beyond
+#: them nothing is guessed — the stint is flagged (rule #11).
+IR_MIN_GAMES = 4
 #: The chosen method per position and the learned combination, written by
 #: scripts/research/ros_backtest.py --save.
 WEIGHTS_PATH = Path(__file__).resolve().parent / "models" / "ros_weights.json"
@@ -166,6 +171,29 @@ def matchup_values(position: str, ctx: Mapping[str, object] | None,
     return {c: vals[c] for c in MATCHUP_FEATURES.get(position, ())}
 
 
+def reserve_stints(reserve: pd.DataFrame | None, week: int) -> dict[str, int]:
+    """gsis id -> the first week of his CURRENT reserve-list stint: the
+    consecutive roster weeks on a reserve list (`reserve`: week, gsis_id —
+    `gridiron.models.advanced.reserve_from_rosters`) that end at the latest
+    roster week at or before `week`. A player activated since is not in it."""
+    if reserve is None or len(reserve) == 0:
+        return {}
+    known = reserve.loc[reserve["week"] <= int(week)]
+    if len(known) == 0:
+        return {}
+    latest = int(known["week"].max())
+    on = {(int(w), str(g)) for w, g in zip(known["week"], known["gsis_id"])}
+    out: dict[str, int] = {}
+    for w, g in on:
+        if w != latest:
+            continue
+        start = w
+        while (start - 1, g) in on:
+            start -= 1
+        out[g] = start
+    return out
+
+
 def slopes(ridge, position: str) -> dict[str, float]:
     """Raw-unit slope of each matchup feature in a fitted `Ridge` (0 when the
     model does not use it)."""
@@ -205,6 +233,23 @@ class Schedule:
         #: weeks the schedule has NO games for: not declared, so not a bye —
         #: every team is counted as playing at its plain rate, and said so
         self.uncovered = tuple(v for v, c in self.contexts.items() if not c)
+        #: team -> every week the schedule gives it a game (the whole season,
+        #: for counting games already missed)
+        self.game_weeks: dict[str, tuple[int, ...]] = {}
+        if schedule is not None and len(schedule):
+            s = _regular(schedule)
+            by: dict[str, set[int]] = {}
+            for w, h, a in zip(s["week"], s["home_team"], s["away_team"]):
+                by.setdefault(str(h), set()).add(int(w))
+                by.setdefault(str(a), set()).add(int(w))
+            self.game_weeks = {t: tuple(sorted(v)) for t, v in by.items()}
+
+    def reserve_weeks(self, team: str, since: int, games: int = IR_MIN_GAMES) -> tuple[int, ...]:
+        """The weeks of `team`'s first `games` games from `since` on — what a
+        player placed on injured reserve in week `since` must miss — that
+        fall at or after this schedule's week."""
+        missed = [w for w in self.game_weeks.get(str(team), ()) if w >= int(since)][:int(games)]
+        return tuple(w for w in missed if w >= self.week)
 
     def project(self, position: str, team: str, rate: float, *, ridge=None,
                 adjust: bool = SCHEDULE_ADJUST, skip: Iterable[int] = (),
@@ -260,7 +305,8 @@ def build_table(*, weeks: pd.DataFrame | None, schedule: pd.DataFrame | None,
                 positions: Mapping[str, str] | None = None,
                 teams: Mapping[str, str] | None = None, model=None,
                 weights: Mapping | None = None,
-                out: Iterable[str] = ()) -> tuple[pd.DataFrame, str]:
+                out: Iterable[str] = (),
+                reserve: pd.DataFrame | None = None) -> tuple[pd.DataFrame, str]:
     """Every projectable player's ROS line, keyed by gsis id (team
     defenses by `DEF:<team>`).
 
@@ -273,14 +319,18 @@ def build_table(*, weeks: pd.DataFrame | None, schedule: pd.DataFrame | None,
     learned combination is `ros_model`). `positions` (gsis -> the platform's
     eligibility tag) overrides the box-score position; `teams` overrides the
     last team seen (a trade); `out` (gsis ids ruled Out for `week`) are
-    credited 0 that week — never beyond it. Returns (table, status)."""
+    credited 0 that week — never beyond it. `reserve` (week, gsis_id: the
+    weekly roster's reserve lists) zeroes the `IR_MIN_GAMES` games from the
+    stint's first week that are still ahead — the NFL minimum, a fact — and
+    flags the stint (`reserve_since`); a return after them is never guessed.
+    Returns (table, status)."""
     from gridiron.models import advanced as A
     from gridiron.projection import build_evidence, project
     from gridiron.weekly import schedule_index
 
     cols = ["gsis_id", "position", "team", "method", "rate", "next_week", "source",
             "ppg", "games_played", "games_left", "byes", "ros", "ros_pg", "playoff",
-            "depth_rank", "weeks"]
+            "depth_rank", "reserve_since", "weeks"]
     if weeks is None or len(weeks) == 0:
         return pd.DataFrame(columns=cols), "no box scores to project from"
     weights = weights if weights is not None else (load_weights() or {})
@@ -292,10 +342,13 @@ def build_table(*, weeks: pd.DataFrame | None, schedule: pd.DataFrame | None,
                           week=int(week), teams=teams, model=model)
     sched = Schedule(schedule, int(week), weeks)
     out_ids = {str(g) for g in out}
+    stints = reserve_stints(reserve, int(week))
     positions, teams = positions or {}, teams or {}
 
     def finish(gid, pos, team, cand, *, ridge, source, played, clip=True, ref_week=None):
-        skip = (int(week),) if gid in out_ids else ()
+        skip = {int(week)} if gid in out_ids else set()
+        if gid in stints:
+            skip |= set(sched.reserve_weeks(team, stints[gid]))
         sch = sched.project(pos, team, cand["adv"], ridge=ridge, adjust=True, clip=clip,
                             ref_week=ref_week)
         cand["sched"] = (sch.ros / sch.games) if sch.games else cand["adv"]
@@ -314,7 +367,8 @@ def build_table(*, weeks: pd.DataFrame | None, schedule: pd.DataFrame | None,
             line = sched.project(pos, team, rate, adjust=False, skip=skip, clip=clip)
         return {**_row(gid, pos, team, line, source, cand.get("ppg"), played),
                 "method": method, "rate": round(float(rate), 3),
-                "next_week": round(float(cand["adv"]), 3)}
+                "next_week": round(float(cand["adv"]), 3),
+                "reserve_since": stints.get(gid)}
 
     rows = []
     for gid, pe in ev.players.items():
@@ -364,6 +418,11 @@ def build_table(*, weeks: pd.DataFrame | None, schedule: pd.DataFrame | None,
                    f"{', '.join(map(str, sched.uncovered))} — counted as played, NOT as byes")
     if choice:
         status += "; ROS method by position: " + ", ".join(f"{p} {m}" for p, m in choice.items())
+    flagged = int(table["reserve_since"].notna().sum()) if len(table) else 0
+    if flagged:
+        status += (f"; {flagged} ranked player(s) on a reserve list per the weekly roster: "
+                   f"the first {IR_MIN_GAMES} games of the stint are 0 (NFL minimum), "
+                   f"a return after them is flagged, never guessed")
     return rank(table), status
 
 

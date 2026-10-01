@@ -195,6 +195,38 @@ def test_the_table_ranks_by_the_chosen_method_and_zeroes_only_the_out_week():
     assert empty.empty and "no box scores" in why
 
 
+def test_a_reserve_list_stint_zeroes_the_nfl_minimum_and_flags_the_rest():
+    # wr1 (AAA): ACT weeks 1-3, on injured reserve from week 4; wr2 was on
+    # a reserve list in week 2 only and has been activated since
+    reserve = pd.DataFrame([{"week": 4, "gsis_id": "wr1"}, {"week": 2, "gsis_id": "wr2"}])
+    assert R.reserve_stints(reserve, 5) == {"wr1": 4}
+    assert R.reserve_stints(reserve, 3) == {"wr2": 2}           # last known roster (wk 2) stands
+    assert R.reserve_stints(reserve, 1) == {}                    # nothing known that early
+    assert R.reserve_stints(pd.DataFrame([{"week": 3, "gsis_id": "g"}, {"week": 4, "gsis_id": "g"},
+                                          {"week": 5, "gsis_id": "g"}]), 6) == {"g": 3}
+    assert R.reserve_stints(None, 5) == {}
+    sched = _schedule()
+    S = R.Schedule(sched, 5)
+    assert S.reserve_weeks("AAA", 4) == (5, 7, 8)                # game 4 missed; wk 6 no game
+    assert S.reserve_weeks("CCC", 5) == (5, 7, 8, 9)             # CCC's week-6 bye is not a game
+    assert S.reserve_weeks("AAA", 1) == ()                       # the four games are behind us
+    common = dict(weeks=_weeks(), schedule=sched, injuries=None, inputs=None, week=5,
+                  weights={"choice": {"WR": "ppg", "K": "ppg"}})
+    plain, _ = R.build_table(**common)
+    table, status = R.build_table(**common, reserve=reserve)
+    wr1, wr2 = table.set_index("gsis_id").loc["wr1"], table.set_index("gsis_id").loc["wr2"]
+    p1 = plain.set_index("gsis_id").loc["wr1"]
+    assert wr1["reserve_since"] == 4 and wr2["reserve_since"] != wr2["reserve_since"]  # NaN
+    assert wr1["games_left"] == p1["games_left"] - 3
+    assert wr1["ros"] == pytest.approx(p1["ros"] - 3 * 12.0)     # 3 games zero, week 9 on stands
+    assert wr1["weeks"].startswith("5:BBB:0 7:BBB:0 8:CCC:0 9:BBB:12")
+    assert "1 ranked player(s) on a reserve list" in status and "never guessed" in status
+    # the CLI flags the stint beside the row
+    rr = _load("ros_cli2", "scripts/weekly/ros_rankings.py")
+    assert rr._flag({"injury": "IR", "depth_rank": None, "reserve_since": 4}) \
+        == f" (IR; IR since wk4: {R.IR_MIN_GAMES} games 0)"
+
+
 def test_the_shipped_ros_weights_are_the_cross_validated_ones():
     w = R.load_weights()
     assert w is not None and set(w["choice"]) == {"QB", "RB", "WR", "TE", "K", "DEF"}

@@ -26,7 +26,8 @@ from __future__ import annotations
 BASELINE = "usage_prior x positional_efficiency x line_multiplier"
 
 #: Signals layered on the baseline.
-FEATS: tuple[str, ...] = ("advanced_v1", "advanced_v1_k", "advanced_v1_def", "ros_v1")
+FEATS: tuple[str, ...] = ("advanced_v1", "advanced_v1_k", "advanced_v1_def", "ros_v1",
+                          "role_change_v1")
 
 #: feature name -> {"evidence": path, "weeks": (lo, hi), "mae_delta": float}
 VALIDATED: dict[str, dict] = {
@@ -73,6 +74,22 @@ VALIDATED: dict[str, dict] = {
         "script": "scripts/research/ros_backtest.py",
         "season": (2023, 2025), "weeks": (4, 14),
         "mae_delta": None, "pairwise_delta": 0.024,
+    },
+    # The role-change block inside advanced_v1 (gridiron.models.advanced
+    # ROLE_FEATURES): the player's LAST game — expected points,
+    # opportunities, snap share — beside the trailing averages, so a backup
+    # who carried the team's last game is priced on it the next week.
+    # Season-fold CV 2023-2025, weeks 4-18 (14,115 player-weeks, 178,947
+    # pairs), against the shipped set (all existing features): start/sit
+    # 63.72% vs 63.62%, MAE 3.983 vs 3.997, better on BOTH in every fold.
+    # Tested and not shipped: team-share and jump features, teammates
+    # missing from the box score, teammates on a reserve list (the depth
+    # chart already carries that), exponential averages (a tie with +last).
+    "role_change_v1": {
+        "evidence": "docs/research/ROLE_CHANGE_BACKTEST.md",
+        "script": "scripts/research/role_change_backtest.py",
+        "season": (2023, 2025), "weeks": (4, 18),
+        "mae_delta": -0.014, "pairwise_delta": 0.0010,
     },
 }
 

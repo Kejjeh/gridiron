@@ -21,8 +21,10 @@ Inputs:
 What it is not: a trade chart. A ROS number is points, not ΔP(win) (rule
 #7) — a start/sit or add still goes through the page. Injury: a player
 ruled Out for `--week` on the official injury report is credited 0 that
-week only; IR and longer absences are FLAGGED from the player map, never
-guessed into the number (rule #11).
+week only; a player on a reserve list per the official weekly roster is 0
+for the first four games of the stint (the NFL minimum) and FLAGGED after;
+the player map's IR tag and longer absences are flags, never guessed into
+the number (rule #11).
 """
 from __future__ import annotations
 
@@ -107,8 +109,10 @@ def render(table: pd.DataFrame, *, week: int, status: str, depth: dict,
              f"ROS = projected league points over the games left (byes from the "
              f"schedule); playoffs = weeks {R.PLAYOFF_WEEKS[0]}-{R.PLAYOFF_WEEKS[-1]}. "
              "Points, not ΔP(win) — a lineup call still goes through the page. "
-             "Out this week = 0 this week only; IR / longer absences are flagged, "
-             "never guessed. `depth N` = not first on the depth chart before the week: "
+             "Out this week = 0 this week only; a reserve-list stint on the weekly "
+             f"roster = 0 for its first {R.IR_MIN_GAMES} games (the NFL minimum) and a flag "
+             "after that; the player map's IR tag is a flag only. `depth N` = not first on "
+             "the depth chart before the week: "
              "the number assumes he keeps playing — a shared or lost job is flagged, "
              "not priced.", ""]
     mine = table.loc[table["held_by"] == "MINE"].sort_values(["position", "pos_rank"])
@@ -149,6 +153,9 @@ def _flag(r) -> str:
     dr = r.get("depth_rank")
     if dr == dr and dr is not None and int(dr) > 1:
         bits.append(f"depth {int(dr)}")
+    rs = r.get("reserve_since")
+    if rs == rs and rs is not None:
+        bits.append(f"IR since wk{int(rs)}: {R.IR_MIN_GAMES} games 0")
     return f" ({'; '.join(bits)})" if bits else ""
 
 
@@ -207,7 +214,8 @@ def main(argv=None) -> int:
     out_ids, flags = out_for_week(cache["injuries"], players, crosswalk, week)
     table, status = R.build_table(weeks=weeks, schedule=cache["schedule"],
                                   injuries=cache["injuries"], inputs=cache["inputs"],
-                                  week=week, positions=positions, teams=teams, out=out_ids)
+                                  week=week, positions=positions, teams=teams, out=out_ids,
+                                  reserve=(cache["inputs"] or {}).get("reserve"))
     if len(table) == 0:
         print(f"Nothing to rank: {status}", file=sys.stderr)
         return 2

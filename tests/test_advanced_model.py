@@ -81,6 +81,84 @@ def test_a_teammate_ruled_out_hands_his_volume_to_the_active_ones():
     assert f.loc["wr2", "practice_dnp"] == 1.0
 
 
+def _role_hist():
+    """rb1 starts weeks 1-3, then vanishes (an IR stash is never on the
+    weekly report); rb2 carries the team's week-4 game."""
+    rows = []
+    for w in (1, 2, 3):
+        rows += [{"gsis_id": "rb1", "week": w, "team": "MIA", "opponent_team": "NYJ",
+                  "position": "RB", "league_points": 15.0, "offense_pct": 0.7,
+                  "target_share": 0.1, "air_yards_share": 0.0, "carries": 15.0, "targets": 4.0},
+                 {"gsis_id": "rb2", "week": w, "team": "MIA", "opponent_team": "NYJ",
+                  "position": "RB", "league_points": 4.0, "offense_pct": 0.3,
+                  "target_share": 0.05, "air_yards_share": 0.0, "carries": 5.0, "targets": 1.0}]
+    rows.append({"gsis_id": "rb2", "week": 4, "team": "MIA", "opponent_team": "BUF",
+                 "position": "RB", "league_points": 14.0, "offense_pct": 0.8,
+                 "target_share": 0.15, "air_yards_share": 0.0, "carries": 18.0, "targets": 5.0})
+    xfp = pd.DataFrame([{"gsis_id": r["gsis_id"], "week": r["week"], "xfp": r["league_points"]}
+                        for r in rows])
+    return A.history_frame(pd.DataFrame(rows), xfp, pd.DataFrame(columns=["gsis_id", "week"]))
+
+
+def test_a_starter_missing_from_the_box_score_hands_his_role_to_who_played():
+    f = A.features_as_of(_role_hist(), 5).set_index("gsis_id")
+    # the trailing average still calls rb2 a backup; the role block does not
+    assert f.loc["rb2", "opp_l3"] == pytest.approx((6 + 6 + 23) / 3)
+    assert f.loc["rb2", "opp_last"] == 23.0 and f.loc["rb2", "opp_share_last"] == 1.0
+    assert f.loc["rb2", "opp_jump"] == pytest.approx(17.0)
+    assert f.loc["rb2", "snap_jump"] == pytest.approx(0.5)
+    assert f.loc["rb2", "absent_pickup"] == pytest.approx(19.0)     # rb1's 19 per game
+    assert f.loc["rb2", "vacated_pickup"] == 0.0                     # rb1 is NOT on the report
+    assert f.loc["rb1", "opp_share_last"] == 0.0 and f.loc["rb1", "absent_pickup"] == 0.0
+    # before the injury nothing fires
+    before = A.features_as_of(_role_hist(), 4).set_index("gsis_id")
+    assert before["absent_pickup"].eq(0.0).all() and before["opp_jump"].eq(0.0).all()
+    assert before.loc["rb1", "opp_share_last"] == pytest.approx(19 / 25)
+
+
+def test_a_questionable_teammate_is_not_counted_as_missing():
+    practice = A.practice_from_injuries(pd.DataFrame([
+        {"week": 5, "gsis_id": "rb1", "team": "MIA", "position": "RB",
+         "report_status": "Questionable",
+         "practice_status": "Limited Participation in Practice"}]))
+    f = A.features_as_of(_role_hist(), 5, practice=practice).set_index("gsis_id")
+    assert f.loc["rb2", "absent_pickup"] == 0.0                       # rule #11: he may play
+    assert f.loc["rb2", "opp_share_last"] == 1.0                      # what he DID do stands
+    ruled_out = A.practice_from_injuries(pd.DataFrame([
+        {"week": 5, "gsis_id": "rb1", "team": "MIA", "position": "RB",
+         "report_status": "Out", "practice_status": "Did Not Participate In Practice"}]))
+    g = A.features_as_of(_role_hist(), 5, practice=ruled_out).set_index("gsis_id")
+    assert g.loc["rb2", "vacated_pickup"] > 0 and g.loc["rb2", "absent_pickup"] == 0.0
+
+
+def test_a_teammate_on_a_reserve_list_is_the_confirmed_version(tmp_path):
+    rosters = pd.DataFrame([
+        {"week": 4, "gsis_id": "rb1", "position": "RB", "status": "ACT", "game_type": "REG"},
+        {"week": 5, "gsis_id": "rb1", "position": "RB", "status": "RES", "game_type": "REG"},
+        {"week": 5, "gsis_id": "rb2", "position": "RB", "status": "ACT", "game_type": "REG"},
+        {"week": 5, "gsis_id": "lb9", "position": "LB", "status": "RES", "game_type": "REG"},
+        {"week": 5, "gsis_id": "wr7", "position": "WR", "status": "INA", "game_type": "REG"}])
+    reserve = A.reserve_from_rosters(rosters)
+    assert reserve.to_dict("records") == [{"week": 5, "gsis_id": "rb1"}]   # INA never counts
+    assert A.reserve_ids(reserve, 4) is None                     # nothing known that early
+    assert A.reserve_ids(reserve, 5) == {"rb1"} == A.reserve_ids(reserve, 7)   # last known stands
+    f = A.features_as_of(_role_hist(), 5, reserve=reserve).set_index("gsis_id")
+    assert f.loc["rb2", "reserve_pickup"] == pytest.approx(19.0)
+    assert f.loc["rb1", "reserve_pickup"] == 0.0
+    unknown = A.features_as_of(_role_hist(), 5).set_index("gsis_id")
+    assert np.isnan(unknown.loc["rb2", "reserve_pickup"])         # no rosters: unknown, not 0
+    # the exponentially weighted averages lean on the last game
+    assert 11.7 < f.loc["rb2", "opp_ewm"] < 23.0 and f.loc["rb2", "opp_ewm"] > f.loc["rb2", "opp_l3"]
+    # the pull step saves it beside the other inputs and the context reads it
+    A.write_inputs(tmp_path, 2026, {"xfp": pd.DataFrame(columns=["gsis_id", "week", "xfp"]),
+                                    "ngs": pd.DataFrame(columns=["gsis_id", "week"]),
+                                    "depth": pd.DataFrame(columns=["week", "gsis_id", "depth_rank"]),
+                                    "reserve": reserve}, datetime(2026, 10, 1, tzinfo=UTC))
+    assert A.load_inputs(tmp_path, 2026)["reserve"]["gsis_id"].tolist() == ["rb1"]
+    fetched = A.fetch_inputs(2026, loaders={"rosters": lambda: rosters})
+    assert fetched["reserve"]["gsis_id"].tolist() == ["rb1"] and len(fetched["defense"]) == 0
+
+
 def test_depth_rank_from_both_nflverse_layouts():
     weekly = pd.DataFrame([
         {"week": 3.0, "formation": "Offense", "depth_position": "WR", "depth_team": "2",
@@ -125,6 +203,15 @@ def test_the_shipped_model_is_the_gated_one():
         assert set(model.stack[pos].cols) <= allowed | {"sleeper"}
     ev = model.meta["evidence"]
     assert ev["adv_pairwise"] > ev["baseline_pairwise"] and ev["adv_mae"] < ev["baseline_mae"]
+    # the role-change block ships only with its own cross-validated win
+    role = model.meta["role_change_evidence"]
+    used = {c for pos in A.POSITIONS for c in model.adv[pos].cols} & set(A.ROLE_FEATURES)
+    assert used and used == set(V.VALIDATED["role_change_v1"]["role_features"]) \
+        if "role_features" in V.VALIDATED["role_change_v1"] else used
+    cv = role["cv"]["systems"]
+    win = cv[f"adv{role['winner']}"]
+    assert win["pairwise"] > cv["advshipped"]["pairwise"] and win["mae"] < cv["advshipped"]["mae"]
+    assert role["winner"] in role["eligible"] and "role_change_v1" in V.FEATS
     assert A.NAME in V.FEATS and A.NAME in V.VALIDATED
     assert (ROOT / V.VALIDATED[A.NAME]["evidence"]).is_file()
     assert (ROOT / V.VALIDATED[A.NAME]["script"]).is_file()

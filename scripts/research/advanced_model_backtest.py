@@ -70,7 +70,11 @@ def _bt():
     return mod
 
 
-def season_table(season: int, cw: Crosswalk, bt) -> pd.DataFrame:
+def season_table(season: int, cw: Crosswalk, bt, *, reserve_lag: bool = False) -> pd.DataFrame:
+    """One row per scored player-week with every feature. `reserve_lag` adds
+    `reserve_pickup_lag`: the reserve-list feature read from the roster of
+    the week BEFORE (what a build that runs before the week's rosters are
+    posted would see)."""
     import nflreadpy as nfl
     weekly = nfl.load_player_stats([season], summary_level="week").to_pandas()
     weekly = weekly.loc[(weekly["season_type"] == "REG") & weekly["position"].isin(A.POSITIONS)]
@@ -84,10 +88,17 @@ def season_table(season: int, cw: Crosswalk, bt) -> pd.DataFrame:
                               for k in A.NGS_COLUMNS})
     practice = A.practice_from_injuries(nfl.load_injuries([season]).to_pandas())
     depth = A.depth_from_charts(nfl.load_depth_charts([season]).to_pandas(), sched)
+    reserve = A.reserve_from_rosters(nfl.load_rosters_weekly([season]).to_pandas())
     hist = A.history_frame(frame, xfp, ngs)
     feats = []
     for w in sorted(rows["week"].unique()):
-        f = A.features_as_of(hist, int(w), schedule=sched, practice=practice, depth=depth)
+        f = A.features_as_of(hist, int(w), schedule=sched, practice=practice, depth=depth,
+                             reserve=reserve)
+        if reserve_lag:
+            lag = A.role_features(hist.loc[hist["week"] < int(w)].sort_values("week"), set(),
+                                  A.reserve_ids(reserve, int(w) - 1))
+            f = f.merge(lag[["gsis_id", "reserve_pickup"]].rename(
+                columns={"reserve_pickup": "reserve_pickup_lag"}), on="gsis_id", how="left")
         feats.append(f.drop(columns=["position", "team"]).assign(week=int(w)))
     out = rows.merge(pd.concat(feats), on=["gsis_id", "week"], how="left")
     sl = bt.sleeper_projections(season, sorted(out["week"].unique().tolist()), cw)

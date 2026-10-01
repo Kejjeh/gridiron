@@ -123,11 +123,12 @@ def ros_block(*, weeks, schedule, injuries, directory, season, week, players, cr
             wk = injuries.loc[(injuries["week"] == week)
                               & (injuries["report_status"].astype(str).str.upper() == "OUT")]
             out_ids = {str(g) for g in wk["gsis_id"].dropna()}
+        inputs = adv_model.load_inputs(directory, season)
         table, status = ros.build_table(
             weeks=None if weeks is None else weeks.loc[weeks["week"] < week],
-            schedule=schedule, injuries=injuries,
-            inputs=adv_model.load_inputs(directory, season), week=week,
-            positions=positions, teams=teams, out=out_ids)
+            schedule=schedule, injuries=injuries, inputs=inputs, week=week,
+            positions=positions, teams=teams, out=out_ids,
+            reserve=(inputs or {}).get("reserve"))
         if len(table) == 0:
             return {"status": status, "players": []}
         table = ros.ownership(table, snapshot=snapshot, players=players,
@@ -135,7 +136,8 @@ def ros_block(*, weeks, schedule, injuries, directory, season, week, players, cr
         keep = (table["pos_rank"] <= table["position"].map(ROS_DEPTH).fillna(30)) \
             | (table["held_by"] == "MINE")
         cols = ["sleeper_id", "gsis_id", "name", "position", "team", "held_by", "pos_rank",
-                "ros", "ros_pg", "playoff", "games_left", "byes", "method", "next_week"]
+                "ros", "ros_pg", "playoff", "games_left", "byes", "method", "next_week",
+                "reserve_since"]
         return {"status": status, "from_week": week, "through_week": ros.HORIZON_END,
                 "playoff_weeks": list(ros.PLAYOFF_WEEKS),
                 "note": "points, not ΔP(win): for holds, drops and trades; the page "

@@ -58,12 +58,16 @@ never by one test season.
 
 ## Results (cross-validated mean, 2023–2025)
 
+Re-run 2026-09-30 after the weekly model gained the last-game block
+(`docs/research/ROLE_CHANGE_BACKTEST.md`); the method per position was
+re-chosen on the new rates.
+
 | pos | ppg | base | adv | adv_sched | ros_model | **shipped** | gain vs ppg |
 |---|---|---|---|---|---|---|---|
-| QB | .491 | .505 | .500 | .521 | **.550** | ros_model | +.059 |
-| RB | .661 | .646 | .671 | **.680** | .673 | adv_sched | +.019 |
-| WR | .551 | .551 | **.603** | .601 | .596 | adv | +.052 |
-| TE | .402 | .407 | .472 | **.477** | .475 | adv_sched | +.075 |
+| QB | .494 | .509 | .504 | .520 | **.553** | ros_model | +.059 |
+| RB | .661 | .646 | .672 | **.678** | .676 | adv_sched | +.017 |
+| WR | .555 | .555 | .604 | **.604** | .603 | adv_sched | +.049 |
+| TE | .397 | .406 | .467 | .473 | **.479** | ros_model | +.082 |
 | K | .135 | .160 | .130 | **.193** | .188 | adv_sched | +.058 |
 | DEF | .110 | .110 | .161 | .186 | **.187** | ros_model | +.077 |
 
@@ -71,12 +75,17 @@ Pairwise order, shipped method vs ppg:
 
 | pos | shipped | ppg |
 |---|---|---|
-| QB | 70.0% | 68.1% |
-| RB | 74.8% | 74.0% |
-| WR | 71.6% | 69.2% |
-| TE | 67.1% | 63.8% |
+| QB | 69.9% | 68.1% |
+| RB | 74.6% | 74.0% |
+| WR | 71.8% | 69.3% |
+| TE | 67.2% | 63.7% |
 | K | 56.2% | 53.7% |
 | DEF | 56.5% | 53.3% |
+
+WR `adv` and `adv_sched` tie (.604); TE's learned combination leads the
+schedule-nudged rate by .006. Both are hairline calls and could flip on
+another season; the first run (before the last-game block) chose WR `adv`
+and TE `adv_sched`.
 
 Per-fold tables are saved in `src/gridiron/models/ros_weights.json` under
 `evidence.folds`.
@@ -89,12 +98,12 @@ Per-fold tables are saved in `src/gridiron/models/ros_weights.json` under
   about 0.19. A ROS K or DEF ranking is a weak tiebreaker. The weekly
   streaming call (`advanced_v1` K/DEF) is where the edge is.
 - **The schedule nudge helps where the weekly model leans on the matchup**
-  (K, DEF, TE, RB) and is neutral for WR.
-- **The learned combination wins only at QB and DEF.**
+  (K, DEF, TE, RB) and is neutral for WR (a tie, resolved to it).
+- **The learned combination wins at QB, TE and DEF.**
   - QB: it rewards a longer track record. Games played carries weight, a
     proxy for job security.
   - DEF: it leans on the schedule-nudged rate.
-  - DEF's lead over `adv_sched` is a tie (.187 vs .186).
+  - DEF's lead over `adv_sched` is a tie (.187 vs .186); TE's is .006.
 - **Playoff-week (15–17) ordering is weaker than full-ROS ordering** at every
   position. It is shown as a separate column, not ranked on.
 - **ROS is points, not ΔP(win) (rule #7).** It is for holds, drops and
@@ -107,8 +116,12 @@ Per-fold tables are saved in `src/gridiron/models/ros_weights.json` under
     played and stated.
   - A player ruled Out on the week's official report gets 0 for that week
     only.
-  - IR and other player-map statuses are flags and never change the number
-    (rule #11).
+  - A player on a reserve list per the official weekly roster is credited 0
+    for the first four games of the stint (`IR_MIN_GAMES`, the NFL minimum
+    before activation) and flagged; a return after them is never guessed
+    (added 2026-09-30, `docs/research/ROLE_CHANGE_BACKTEST.md`).
+  - The player map's IR tag and other statuses are flags and never change
+    the number (rule #11).
 - **Weights:** `src/gridiron/models/ros_weights.json`.
   - The chosen method per position.
   - The learned combination, fit on every season's out-of-fold rows.

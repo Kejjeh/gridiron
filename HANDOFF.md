@@ -1,5 +1,43 @@
 # HANDOFF
 
+## Role-change signal + reserve-list rule (2026-09-30)
+
+Branch `claude/compassionate-shannon-yq0hw5` on top of main `8a6a3ee`.
+The owner's ask: catch a starter's injury faster (a Miami backup stayed
+priced as a backup for two weeks after the starter's ACL). Two things ship,
+both under rule #5's bar or as a rule of the game:
+
+- **`role_change_v1`** inside `advanced_v1`: the player's LAST game (expected
+  points, opportunities, snap share) beside the trailing averages. Season-
+  fold CV 2023-2025 against the shipped set: start/sit 63.72% vs 63.62%, MAE
+  3.983 vs 3.997, better on both in every fold; the eligible set with the
+  fewest features. Weights refit on 2023-2025 (`feature_set` `+depth+last`).
+  Tested and not shipped: team-share/jump, missing teammates, reserve-list
+  teammates (the depth chart already carries it), exponential averages.
+  `docs/research/ROLE_CHANGE_BACKTEST.md`, `scripts/research/role_change_backtest.py`.
+- **Reserve lists in ROS** (`gridiron.ros.reserve_stints`, `IR_MIN_GAMES`):
+  the pull step now fetches the official weekly roster (`reserve.parquet`
+  beside the other model inputs); a player on `RES`/`EXE` is 0 for the first
+  four games of the stint (NFL minimum) and flagged in `ros_rankings.py`,
+  the record's `ros` block (`reserve_since`) and the review; never priced
+  beyond that (rule #11). The ROS methods were re-chosen on the new weekly
+  rates (`ros_backtest.py --save`, see ROS_BACKTEST.md for the table).
+
+Also checked: ridge strength (`scripts/research/ridge_strength_sweep.py`,
+same folds) is flat from 1 to 40 — 63.71% to 63.74% start/sit, MAE 3.983
+throughout — so 5.0 stays. Live week-5 read on fresh nflverse data: the
+Miami starter is flagged `IR since wk4` with his next four games zeroed; his
+backup is priced on his last game (84% snaps, 20 touches) at about 8 points
+a game, RB29 — the linear weights move him, not far. The live depth chart
+still lists the third back first, so "the depth chart carries the news" from
+history does not hold this week.
+
+Not done / next: the live shoot-out is the scoreboard for the new weights
+(first graded week: 5); a non-linear learner (interactions such as last-game
+share x starter missing) needs a dependency — none is installed — and the
+owner's call.
+
+
 ## Weekly routine — skills, usage trends, grading (2026-09-30, draft)
 
 Branch `claude/compassionate-shannon-yq0hw5` (fast-forwarded to main
