@@ -98,7 +98,13 @@ def season_table(season: int, cw: Crosswalk, bt, *, reserve_lag: bool = False) -
             print(f"  {season}: PFR {kind} unavailable ({type(exc).__name__})", file=sys.stderr)
             return None
     pfr = A.pfr_from_advstats({k: pfr_frame(k) for k in A.PFR_COLUMNS})
-    hist = A.history_frame(frame, xfp, ngs, pfr)
+    try:
+        routes = A.routes_from_participation(nfl.load_participation([season]).to_pandas(),
+                                             nfl.load_pbp([season]).to_pandas())
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"  {season}: participation unavailable ({type(exc).__name__})", file=sys.stderr)
+        routes = None
+    hist = A.history_frame(frame, xfp, ngs, pfr, routes)
     feats = []
     for w in sorted(rows["week"].unique()):
         f = A.features_as_of(hist, int(w), schedule=sched, practice=practice, depth=depth,

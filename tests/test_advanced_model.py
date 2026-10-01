@@ -207,6 +207,34 @@ def test_the_feature_frame_carries_every_expansion_column_and_reads_only_earlier
     assert np.isnan(wr1["spread"]) and not np.isnan(wr1["team_epa_l3"])
 
 
+def test_routes_run_come_from_participation_joined_to_dropbacks():
+    part = pd.DataFrame([
+        {"nflverse_game_id": "G1", "play_id": 1, "offense_players": "wr1;wr2;qb1"},
+        {"nflverse_game_id": "G1", "play_id": 2, "offense_players": "wr1;qb1"},
+        {"nflverse_game_id": "G1", "play_id": 3, "offense_players": "wr1;wr2;qb1"},   # a run
+        {"nflverse_game_id": "G2", "play_id": 9, "offense_players": "wr1"}])          # postseason
+    pbp = pd.DataFrame([
+        {"game_id": "G1", "play_id": 1, "week": 3, "posteam": "NYJ", "qb_dropback": 1, "season_type": "REG"},
+        {"game_id": "G1", "play_id": 2, "week": 3, "posteam": "NYJ", "qb_dropback": 1, "season_type": "REG"},
+        {"game_id": "G1", "play_id": 3, "week": 3, "posteam": "NYJ", "qb_dropback": 0, "season_type": "REG"},
+        {"game_id": "G2", "play_id": 9, "week": 19, "posteam": "NYJ", "qb_dropback": 1, "season_type": "POST"}])
+    r = A.routes_from_participation(part, pbp).set_index("gsis_id")
+    assert r.loc["wr1"].to_dict() == {"week": 3, "routes": 2, "team_routes": 2, "route_share": 1.0}
+    assert r.loc["wr2"]["routes"] == 1 and r.loc["wr2"]["route_share"] == 0.5
+    assert "19" not in set(r["week"].astype(str))
+    assert A.routes_from_participation(None, pbp).empty
+    h = _hist()
+    routes = pd.DataFrame([{"gsis_id": "wr1", "week": w, "routes": 30 + w, "team_routes": 40,
+                            "route_share": (30 + w) / 40} for w in (1, 2, 3, 4)])
+    hist = A.history_frame(h.rename(columns={"xfp": "_x"}), h[["gsis_id", "week", "xfp"]],
+                           pd.DataFrame(columns=["gsis_id", "week"]), None, routes)
+    f = A.features_as_of(hist, 4).set_index("gsis_id")
+    assert f.loc["wr1", "routes_l3"] == 32.0 and f.loc["wr1", "routes_last"] == 33.0
+    assert f.loc["wr1", "route_share_l3"] == pytest.approx(0.8)
+    assert f.loc["wr1", "tprr_season"] == pytest.approx(24 / 96)         # 8 targets x 3 / routes
+    assert np.isnan(f.loc["wr2", "routes_l3"])                            # no participation: unknown
+
+
 def test_depth_rank_from_both_nflverse_layouts():
     weekly = pd.DataFrame([
         {"week": 3.0, "formation": "Offense", "depth_position": "WR", "depth_team": "2",

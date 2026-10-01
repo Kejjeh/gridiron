@@ -13,6 +13,8 @@ metrics as every other backtest here: weeks 4-18, players Sleeper projected).
 2. MORE METRICS. Blocks of new features (`gridiron.models.advanced
    .EXPANSION_FEATURES`) on top of the shipped set, each season held out in
    turn and all others training:
+     +routes  routes run (participation x play-by-play), route share, last
+              game's routes, targets per route (RB/WR/TE)
      +xtd     expected touchdowns (last 3, season) and the player's share of
               his team's expected points (role)
      +epa     EPA per game, season (efficiency — slow, rule #6)
@@ -47,6 +49,9 @@ from gridiron.models import advanced as A
 from gridiron.paths import RESEARCH_CACHE, REPO_ROOT
 
 BLOCKS = {
+    "+routes": {"QB": [], "RB": ["routes_l3", "route_share_l3", "routes_last", "tprr_season"],
+                "WR": ["routes_l3", "route_share_l3", "routes_last", "tprr_season"],
+                "TE": ["routes_l3", "route_share_l3", "routes_last", "tprr_season"]},
     "+xtd": ["xtd_l3", "xtd_season", "xfp_share_l3"],
     "+epa": ["epa_pg"],
     "+ngs2": {"QB": ["ngs_ttt", "ngs_aggr"], "RB": ["ngs_box8", "ngs_rush_eff"],

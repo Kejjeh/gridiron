@@ -104,7 +104,11 @@ RESERVE_STATUSES = ("RES", "EXE")
 #:   team_*           the offense's plays, pass rate and EPA per game (last 3);
 #:   pfr_*            Pro Football Reference: drops, yards before and after
 #:                    contact, pressure and bad-throw rates (season).
-EXPANSION_FEATURES = ("xtd_l3", "xtd_season", "xfp_share_l3", "epa_pg",
+#:   routes_* / tprr    routes run (dropbacks the player was on the field for,
+#:                      nflverse participation x play-by-play), his share of the
+#:                      team's, and targets per route (efficiency, slow).
+ROUTE_FEATURES = ("routes_l3", "route_share_l3", "routes_last", "tprr_season")
+EXPANSION_FEATURES = (*ROUTE_FEATURES, "xtd_l3", "xtd_season", "xfp_share_l3", "epa_pg",
                       "ngs_adot", "ngs_iay_share", "ngs_cushion", "ngs_box8", "ngs_rush_eff",
                       "ngs_ttt", "ngs_aggr", "spread", "wind", "temp",
                       "team_plays_l3", "team_pass_rate_l3", "team_epa_l3",
@@ -261,8 +265,39 @@ def pfr_from_advstats(frames: Mapping[str, pd.DataFrame | None]) -> pd.DataFrame
     return out.loc[out["pfr_id"] != ""].groupby(["pfr_id", "week"], as_index=False).mean(numeric_only=True)
 
 
+def routes_from_participation(participation: pd.DataFrame | None,
+                              pbp: pd.DataFrame | None) -> pd.DataFrame:
+    """(gsis_id, week, routes, team_routes, route_share): dropbacks the player
+    was on the field for, per game. Participation lists the offense's players
+    per play (gsis ids); play-by-play says which plays were dropbacks and the
+    week. Regular season only; a game missing from either source is absent,
+    never 0."""
+    cols = ["gsis_id", "week", "routes", "team_routes", "route_share"]
+    if participation is None or pbp is None or len(participation) == 0 or len(pbp) == 0:
+        return pd.DataFrame(columns=cols)
+    gid_col = "nflverse_game_id" if "nflverse_game_id" in participation else "game_id"
+    plays = _regular(pbp, "season_type")
+    plays = plays.loc[plays["qb_dropback"] == 1, ["game_id", "play_id", "week", "posteam"]]
+    part = participation.loc[participation["offense_players"].notna(),
+                             [gid_col, "play_id", "offense_players"]]
+    m = plays.merge(part, left_on=["game_id", "play_id"], right_on=[gid_col, "play_id"], how="inner")
+    if len(m) == 0:
+        return pd.DataFrame(columns=cols)
+    team = m.groupby(["posteam", "week"]).size().rename("team_routes")
+    ex = m.assign(gsis_id=m["offense_players"].str.split(";")).explode("gsis_id")
+    ex["gsis_id"] = ex["gsis_id"].map(normalize_id)
+    ex = ex.loc[ex["gsis_id"] != ""]
+    out = (ex.groupby(["gsis_id", "week", "posteam"]).size().rename("routes").reset_index()
+           .merge(team.reset_index(), on=["posteam", "week"], how="left"))
+    out["route_share"] = out["routes"] / out["team_routes"].where(out["team_routes"] > 0)
+    out = out.sort_values("routes", ascending=False).drop_duplicates(["gsis_id", "week"])
+    out["week"] = out["week"].astype(int)
+    return out[cols]
+
+
 def history_frame(weeks: pd.DataFrame, xfp: pd.DataFrame, ngs: pd.DataFrame,
-                  pfr: pd.DataFrame | None = None) -> pd.DataFrame:
+                  pfr: pd.DataFrame | None = None,
+                  routes: pd.DataFrame | None = None) -> pd.DataFrame:
     """Scored player-weeks (`gridiron.usage.player_weeks`) + expected points
     + NGS (+ PFR through the player's pfr id), one row per player-week that
     has a stat line."""
@@ -283,7 +318,11 @@ def history_frame(weeks: pd.DataFrame, xfp: pd.DataFrame, ngs: pd.DataFrame,
     if pfr is not None and len(pfr) and "pfr_id" in pfr:
         h["pfr_id"] = h["pfr_id"].fillna("").astype(str)
         h = h.merge(pfr, on=["pfr_id", "week"], how="left")
-    for c in (*NGS_ALL, *XFP_COLUMNS, *(n for v in PFR_COLUMNS.values() for n in v.values())):
+    if routes is not None and len(routes):
+        h = h.merge(routes[["gsis_id", "week", "routes", "route_share"]], on=["gsis_id", "week"],
+                    how="left")
+    for c in (*NGS_ALL, *XFP_COLUMNS, *(n for v in PFR_COLUMNS.values() for n in v.values()),
+              "routes", "route_share"):
         if c not in h.columns:
             h[c] = np.nan
     h["fpoe"] = h["league_points"] - h["xfp"]
@@ -321,6 +360,9 @@ def features_as_of(history: pd.DataFrame, week: int, *,
         "carries_l3": last3["carries"].mean(), "opp_l3": last3["opps"].mean(),
         "ngs_sep": g["ngs_sep"].mean(), "ngs_yacoe": g["ngs_yacoe"].mean(),
         "ngs_ryoe": g["ngs_ryoe"].mean(), "ngs_cpoe": g["ngs_cpoe"].mean(),
+        "routes_l3": last3["routes"].mean(), "route_share_l3": last3["route_share"].mean(),
+        "routes_last": g["routes"].last(),
+        "tprr_season": g["targets"].sum() / g["routes"].sum().where(g["routes"].sum() > 0),
         "xtd_l3": last3["xtd"].mean(), "xtd_season": g["xtd"].mean(),
         "xfp_share_l3": last3["xfp_share"].mean(), "epa_pg": g["epa"].mean(),
         **{c: g[c].mean() for c in ("ngs_adot", "ngs_iay_share", "ngs_cushion", "ngs_box8",
@@ -577,6 +619,8 @@ def fetch_inputs(season: int, *, loaders=None) -> dict[str, pd.DataFrame]:
             "rosters": lambda: nfl.load_rosters_weekly([season]).to_pandas(),
             **{f"pfr_{k}": (lambda k=k: nfl.load_pfr_advstats(
                 [season], stat_type=k, summary_level="week").to_pandas()) for k in PFR_COLUMNS},
+            "participation": lambda: nfl.load_participation([season]).to_pandas(),
+            "pbp": lambda: nfl.load_pbp([season]).to_pandas(),
         }
     raw = {name: fn() for name, fn in loaders.items()}
     return {"xfp": xfp_from_ff_opportunity(raw.get("ff_opportunity")),
@@ -585,7 +629,8 @@ def fetch_inputs(season: int, *, loaders=None) -> dict[str, pd.DataFrame]:
             "defense": defense_history(raw.get("team_stats"), raw.get("schedules")),
             "reserve": reserve_from_rosters(raw.get("rosters")),
             "offense": offense_history(raw.get("team_stats")),
-            "pfr": pfr_from_advstats({k: raw.get(f"pfr_{k}") for k in PFR_COLUMNS})}
+            "pfr": pfr_from_advstats({k: raw.get(f"pfr_{k}") for k in PFR_COLUMNS}),
+            "routes": routes_from_participation(raw.get("participation"), raw.get("pbp"))}
 
 
 def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame],
@@ -607,7 +652,7 @@ def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame
 def load_inputs(directory: Path, season: int) -> dict | None:
     """The saved inputs for `season`, or None when absent or for another
     season. Returns {"xfp", "ngs", "depth", "defense", "reserve", "offense",
-    "pfr", "meta"}."""
+    "pfr", "routes", "meta"}."""
     folder = Path(directory) / INPUT_DIR
     try:
         meta = json.loads((folder / INPUT_META).read_text(encoding="utf-8"))
@@ -620,7 +665,8 @@ def load_inputs(directory: Path, season: int) -> dict | None:
         rpath = folder / "reserve.parquet"
         frames["reserve"] = (pd.read_parquet(rpath) if rpath.exists()
                              else pd.DataFrame(columns=["week", "gsis_id"]))
-        for name, cols in (("offense", ["team", "week"]), ("pfr", ["pfr_id", "week"])):
+        for name, cols in (("offense", ["team", "week"]), ("pfr", ["pfr_id", "week"]),
+                           ("routes", ["gsis_id", "week"])):
             path = folder / f"{name}.parquet"
             frames[name] = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=cols)
     except (OSError, ValueError, KeyError):
@@ -736,7 +782,8 @@ def build_context(*, weeks: pd.DataFrame | None, inputs: Mapping | None,
     if weeks is None or len(weeks) == 0:
         return AdvancedContext(model, {}, week, "baseline: no box scores to build "
                                "advanced features from")
-    hist = history_frame(weeks, inputs["xfp"], inputs["ngs"], inputs.get("pfr"))
+    hist = history_frame(weeks, inputs["xfp"], inputs["ngs"], inputs.get("pfr"),
+                         inputs.get("routes"))
     feats = features_as_of(hist, int(week), schedule=schedule,
                            practice=practice_from_injuries(injuries),
                            depth=inputs["depth"], teams=teams, reserve=inputs.get("reserve"),
