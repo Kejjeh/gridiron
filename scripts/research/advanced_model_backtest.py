@@ -61,13 +61,11 @@ DEPTH = ["depth_rank"]
 SETS = {"core": [], "+practice": PRACTICE, "+depth": DEPTH, "+both": PRACTICE + DEPTH}
 
 
+from research_common import load_script  # noqa: E402
+
+
 def _bt():
-    spec = importlib.util.spec_from_file_location(
-        "projection_backtest", REPO_ROOT / "scripts" / "research" / "projection_backtest.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["projection_backtest"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_script("projection_backtest", "scripts/research/projection_backtest.py")
 
 
 def season_table(season: int, cw: Crosswalk, bt, *, reserve_lag: bool = False) -> pd.DataFrame:

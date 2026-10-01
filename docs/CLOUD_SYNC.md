@@ -20,8 +20,9 @@ budget stops usage at the included allowance (no paid overages). Do not assume
 the workflow timeout enforces a billing cap; it only bounds a single job.
 Manual dispatch has the same gates.
 
-Every five minutes is 288 scheduled runs/day, approximately 8,640/30 days.
-Hourly is 24/day, approximately 720/30 days. These are run counts, not a billing
+The sync runs hourly (24/day, about 720 per 30 days); the dashboard workflow
+runs every 15 minutes (96/day, about 2,880 per 30 days) and refreshes the
+Sleeper snapshot itself. These are run counts, not a billing
 quote: runner time and account plan determine actual usage. Scheduled runs can
 be delayed or dropped under load; neither cadence is a real-time guarantee.
 
@@ -54,8 +55,10 @@ The artifact contains the season folder with a manifest, the referenced
 immutable snapshot and sync state. Check the manifest's as_of before use.
 Download from a laptop or any authenticated device without the desktop running.
 
-This collects cloud snapshots. The dashboard workflow consumes them hourly
-(best effort) and, under the same publication opt-in, publishes exactly two
+This collects cloud snapshots. The dashboard workflow runs every 15 minutes
+(best effort), refreshes the snapshot itself, carries its records and last-good
+inputs between runs in an Actions cache (`gridiron.carryover`) and, under the
+same publication opt-in, publishes exactly two
 HTML pages to GitHub Pages at https://kejjeh.github.io/gridiron/ (root opens
 Game Day; the pages link to each other). Snapshot timestamps are preserved:
 the packager copies bytes and restamps nothing. GitHub Pages from a PRIVATE

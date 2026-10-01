@@ -37,7 +37,7 @@ from gridiron.scoring import ScoringCoverage, scoring_coverage
 from gridiron.models import advanced as adv_model
 from gridiron.shadow import read_shadow
 from gridiron.usage import player_weeks, weeks_present
-from gridiron.sleeper import player_map_status_note
+from gridiron.sleeper import find_owner_id, player_map_status_note
 
 #: Every source this dashboard READS (same rule as report.py: if a value
 #: from a source reaches the page, its as-of line is on the page).
@@ -150,15 +150,6 @@ def ros_block(*, weeks, schedule, injuries, directory, season, week, players, cr
         return {"status": f"ROS rankings failed: {type(exc).__name__}: {exc}", "players": []}
 
 
-def find_owner_id(snapshot: dict, owner: str) -> str | None:
-    """The ONE place a human handle is used; it resolves to an id at once."""
-    owner = str(owner)
-    for u in snapshot.get("users") or []:
-        if str(u.get("user_id")) == owner:
-            return owner
-        if str(u.get("display_name") or "").lower() == owner.lower():
-            return str(u.get("user_id"))
-    return None
 
 
 def main(argv: list[str] | None = None) -> int:

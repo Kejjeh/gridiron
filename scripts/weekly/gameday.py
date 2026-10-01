@@ -31,7 +31,7 @@ from gridiron.league_config import (MY_SLEEPER_USERNAME, SEASON_YEAR,
                                     SETTINGS_VERIFIED)
 from gridiron.livesync import GAME_STATUS_NAME, current_snapshot
 from gridiron.paths import OUTPUTS, ensure_dirs
-from gridiron.sleeper import resolve_league_id
+from gridiron.sleeper import find_owner_id, resolve_league_id
 
 #: Every source this page READS. If a value from a source reaches the page,
 #: its as-of line is on the page (tests/test_gameday_cli.py re-derives this
@@ -41,15 +41,6 @@ SOURCES = ("sleeper_league", "sleeper_players", "schedules", GAME_STATUS_NAME)
 DASHBOARD_DIR = OUTPUTS / "dashboard"
 
 
-def find_owner_id(snapshot: dict, owner: str) -> str | None:
-    """The ONE place a human handle is used; it resolves to an id at once."""
-    owner = str(owner)
-    for u in snapshot.get("users") or []:
-        if str(u.get("user_id")) == owner:
-            return owner
-        if str(u.get("display_name") or "").lower() == owner.lower():
-            return str(u.get("user_id"))
-    return None
 
 
 def _read_previous(out_dir: Path, week: int) -> dict | None:

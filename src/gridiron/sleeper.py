@@ -1,6 +1,6 @@
 """Read-only Sleeper adapter — the ONE place the league is talked to.
 
-`espn.py` says a Sleeper league gets a sibling module; this is it. The league
+The league connector (the ESPN module it was once a sibling of is gone). The league
 lives on Sleeper (league_config.PLATFORM) and Sleeper's read API needs no
 auth, so nothing here reads a credential.
 
@@ -167,6 +167,24 @@ def resolve_league_id() -> str:
               f"using the verified constant", file=sys.stderr)
         configured = None
     return str(configured or SLEEPER_LEAGUE_ID)
+
+
+def find_owner_id(snapshot: Mapping[str, object], owner: str) -> str | None:
+    """Resolve the configured owner handle to a Sleeper user id, once, from a
+    league snapshot's `users`. The ONE place a human handle is used (rule #3):
+    an exact user id wins; otherwise an exact, case-insensitive display name
+    that matches exactly ONE user. Two users sharing a display name resolve
+    to nobody, never to the first one listed."""
+    owner = str(owner or "").strip()
+    users = [u for u in (snapshot.get("users") or []) if isinstance(u, dict)]
+    if not owner:
+        return None
+    for u in users:
+        if str(u.get("user_id")) == owner:
+            return owner
+    named = [str(u.get("user_id")) for u in users
+             if str(u.get("display_name") or "").strip().lower() == owner.lower()]
+    return named[0] if len(named) == 1 else None
 
 
 def owner_roster(rosters: list[dict], owner_id: str) -> dict | None:

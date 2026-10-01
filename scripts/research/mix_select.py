@@ -31,12 +31,7 @@ KS = (0.3, 0.5, 0.7)
 WS = (0.25, 0.5, 0.75)
 
 
-def _load(name, rel):
-    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / rel)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+from research_common import load_script as _load  # noqa: E402
 
 
 def mix(b: pd.DataFrame, k: float, w: float) -> pd.Series:

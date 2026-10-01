@@ -82,8 +82,8 @@ docs/BOOTSTRAP_FROM_PLV.md for the full history.
 
 9. **Credential hygiene.** `.env` at repo root, gitignored; `.env.example`
    committed; prefix `GRIDIRON_`; read exclusively via `gridiron.config.
-   get_settings()`. League auth constructed only in `gridiron/espn.py` (or a
-   future `sleeper.py`).
+   get_settings()`. League access constructed only in `gridiron/sleeper.py`
+   (the ESPN module was removed as dead in 2026-10).
 
 10. **Data commit policy.** `data/research/cache/` (bulk pulls) is
     gitignored. `data/outputs/` weekly projection CSVs and `data/ledger/`
@@ -110,4 +110,5 @@ docs/BOOTSTRAP_FROM_PLV.md for the full history.
 12. **Skill discipline.** plv_clone grew 94 skills organically (with a
     registry test keeping them honest). Start here with five: roster-audit,
     waiver-board, start-sit, matchup, decision-log — plus the registry test
-    from the first skill onward.
+    from the first skill onward. (Four exist; `matchup` is not written until
+    a weekly need for it appears — DECISIONS 2026-09-30.)

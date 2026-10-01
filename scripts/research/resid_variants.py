@@ -36,12 +36,7 @@ from gridiron.paths import RESEARCH_CACHE, REPO_ROOT
 GAP = ["sleeper", "gap_base", "gap_adv"]
 
 
-def _load(name, rel):
-    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / rel)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+from research_common import load_script as _load  # noqa: E402
 
 
 def demean(df: pd.DataFrame, cols) -> pd.DataFrame:

@@ -42,6 +42,7 @@ from gridiron.league_config import MY_SLEEPER_USERNAME, SEASON_YEAR
 from gridiron.models import advanced as A
 from gridiron.paths import OUTPUTS
 from gridiron.usage import player_weeks
+from gridiron.sleeper import find_owner_id
 
 OUT_DIR = OUTPUTS / "review"
 POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
@@ -50,12 +51,6 @@ POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
 DEPTH = {"QB": 30, "RB": 60, "WR": 72, "TE": 30, "K": 24, "DEF": 32}
 
 
-def find_owner_id(snapshot: dict, owner: str) -> str | None:
-    for u in snapshot.get("users") or []:
-        if str(u.get("user_id")) == str(owner) \
-                or str(u.get("display_name") or "").lower() == str(owner).lower():
-            return str(u.get("user_id"))
-    return None
 
 
 def load_cache(directory: Path, season: int) -> dict:

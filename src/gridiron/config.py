@@ -20,7 +20,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ESPN league auth (cookies) — used only by gridiron.espn
+    # ESPN league auth (cookies). Kept for an ESPN league; NO code reads
+    # them today — the league is on Sleeper and gridiron/espn.py was removed
+    # as dead on 2026-10-01.
     espn_league_id: int | None = None
     espn_s2: str | None = None
     espn_swid: str | None = None

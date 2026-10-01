@@ -73,12 +73,7 @@ def block_cols(name: str, pos: str) -> list[str]:
     return list(b[pos] if isinstance(b, dict) else b)
 
 
-def _load(name: str, rel: str):
-    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / rel)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+from research_common import load_script as _load  # noqa: E402
 
 
 def fit_predict(train, test, cols):

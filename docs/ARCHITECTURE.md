@@ -12,7 +12,7 @@ docs/BOOTSTRAP_FROM_PLV.md — this file tracks what actually exists.
    read-only Sleeper snapshot into `data/research/cache/season{YEAR}/`, with
    a manifest recording each source's pull time, rows and covered weeks.
    `gridiron/ids.py` is the one crosswalk, `gridiron/sleeper.py` the one
-   league connector (GET-only; `espn.py` stays for an ESPN league).
+   league connector (GET-only; the ESPN module was removed as dead in 2026-10).
    `gridiron/freshness.py` turns manifest timestamps into cadence-aware
    FRESH/STALE/MISSING, and `gridiron/weekly.py` + `scripts/weekly/report.py`
    render the roster evidence table offline. *(built, step 2)*
@@ -43,7 +43,7 @@ pages + screenshots).
 
 - `src/gridiron/` is the production package; `scripts/` are drivers that
   import from it. Nothing in `src/` imports from `scripts/`.
-- One auth home (`espn.py`), one paths module (`paths.py`), one scoring
+- One league connector (`sleeper.py`), one paths module (`paths.py`), one scoring
   implementation (`scoring.py`), one settings object (`config.py`).
 - Data flow: `data/research/cache/` (bulk, ignored) → pipelines →
   `data/outputs/` + `data/ledger/` (small, committed).

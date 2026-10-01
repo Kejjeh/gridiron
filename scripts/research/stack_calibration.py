@@ -45,58 +45,11 @@ from gridiron.models import advanced as A
 from gridiron.paths import RESEARCH_CACHE, REPO_ROOT
 
 
-def _load(name: str, rel: str):
-    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / rel)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def fit_pos(train, cols, target, lam=5.0):
-    return {p: A.Ridge.fit(train.loc[train["position"] == p],
-                           train.loc[train["position"] == p, target], cols[p], lam=lam)
-            for p in A.POSITIONS}
-
-
-def predict_pos(models, df):
-    out = pd.Series(index=df.index, dtype="float64")
-    for p, m in models.items():
-        sel = df["position"] == p
-        out[sel] = m.predict(df[sel])
-    return out
-
+from research_common import (calibrate, fit_pos, lad_line, load_script as _load,  # noqa: E402
+                             predict_pos)
 
 #: Ordering differences below one pair in ten thousand are a tie.
 TIE = 1e-4
-
-
-def lad_line(x: np.ndarray, y: np.ndarray, iters: int = 60) -> tuple[float, float]:
-    """a, b minimising sum |y - a - b x| (median regression, IRLS)."""
-    a, b = 0.0, 1.0
-    for _ in range(iters):
-        r = np.abs(y - a - b * x)
-        w = 1.0 / np.maximum(r, 0.05)
-        X = np.column_stack([np.ones_like(x), x])
-        beta = np.linalg.solve((X * w[:, None]).T @ X + 1e-9 * np.eye(2), (X * w[:, None]).T @ y)
-        a, b = float(beta[0]), float(beta[1])
-    return a, b
-
-
-def calibrate(train_pred: pd.Series, train: pd.DataFrame, test_pred: pd.Series,
-              test: pd.DataFrame) -> tuple[pd.Series, dict]:
-    """Per position, map a prediction through the median-regression line fit
-    on out-of-fold training predictions. Monotone within position when b > 0,
-    so start/sit ordering is untouched; only the error changes."""
-    out = pd.Series(index=test.index, dtype="float64")
-    lines = {}
-    for p in A.POSITIONS:
-        tr, te = train["position"] == p, test["position"] == p
-        a, b = lad_line(train_pred[tr].to_numpy(dtype=float), train.loc[tr, "actual"].to_numpy(dtype=float))
-        b = max(b, 1e-6)
-        lines[p] = (round(a, 3), round(b, 3))
-        out[te] = a + b * test_pred[te]
-    return out.clip(lower=0), lines
 
 
 def main(argv=None) -> int:
