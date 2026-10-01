@@ -101,6 +101,8 @@ def main(argv=None) -> int:
                     default=RESEARCH_CACHE / "season2026" / "crosswalk.csv")
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--only-seasons", action="store_true",
+                    help="question 1 only (and --save refits the shipped set on every season)")
     args = ap.parse_args(argv)
     from nflreadpy.config import update_config
     update_config(cache_mode="filesystem", cache_dir=RESEARCH_CACHE / "nflreadpy",
@@ -142,6 +144,16 @@ def main(argv=None) -> int:
         print(f"  test {test_s}: two neighbours {near} {res['near']['pairwise']:.2%}/{res['near']['mae']:.3f}"
               f"  all {len(rest)} others {res['rest']['pairwise']:.2%}/{res['rest']['mae']:.3f}"
               f"  (Sleeper {res['sleeper']['pairwise']:.2%}/{res['sleeper']['mae']:.3f})")
+
+    seasons_win = all(more[t]["rest"]["pairwise"] > more[t]["near"]["pairwise"]
+                      and more[t]["rest"]["mae"] < more[t]["near"]["mae"] for t in more)
+    print(f"  every other season beats the two neighbours on both metrics in every fold: {seasons_win}")
+    if args.only_seasons:
+        if args.save and seasons_win:
+            _save(shipped, tables, base, [], args, {"more_seasons": more, "seasons_win": True})
+        elif args.save:
+            print("not saved: more seasons did not beat the neighbours in every fold")
+        return 0
 
     # 2. more metrics
     print("\n2. MORE METRICS — each block on the shipped set, every season held out")
@@ -189,27 +201,32 @@ def main(argv=None) -> int:
            "eligible": eligible, "winner": winner, "final_blocks": final}
     if args.out:
         args.out.write_text(json.dumps(res, indent=1, default=str), encoding="utf-8")
-    if args.save and final:
-        everything = pd.concat(tables.values())
-        cols = {p: base[p] + [c for n in final for c in block_cols(n, p)] for p in A.POSITIONS}
-        adv = dict(shipped.adv)
-        for p in A.POSITIONS:
-            tr = everything.loc[everything["position"] == p]
-            adv[p] = A.Ridge.fit(tr, tr["actual"], cols[p])
-        meta = dict(shipped.meta)
-        meta["feature_set"] = f"{meta.get('feature_set', 'core')}{''.join(final)}"
-        meta["fit_on"] = sorted(args.seasons)
-        meta["fit_rows"] = int(len(everything))
-        meta["expansion_evidence"] = {k: res[k] for k in ("seasons", "more_seasons", "cv", "eligible",
-                                                         "winner", "final_blocks")}
-        meta["expansion_evidence"]["folds"] = {str(t): v for t, v in folds.items()}
-        meta["expansion_evidence"]["doc"] = "docs/research/FEATURE_EXPANSION.md"
-        meta["written"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        A.AdvancedModel(adv, shipped.stack, meta).save()
-        print(f"saved {A.WEIGHTS_PATH.relative_to(REPO_ROOT)} ({meta['feature_set']}, fit on "
-              f"{len(everything)} player-weeks over {len(args.seasons)} seasons); the stack and the "
-              f"ROS weights must be refit next (stack_calibration.py --save, ros_backtest.py --save)")
+    if args.save and (final or seasons_win):
+        ev = {k: res[k] for k in ("seasons", "more_seasons", "cv", "eligible", "winner", "final_blocks")}
+        ev["folds"] = {str(t): v for t, v in folds.items()}
+        _save(shipped, tables, base, final, args, ev)
     return 0
+
+
+def _save(shipped, tables, base, final, args, evidence) -> None:
+    """Refit the skill positions on every season with the shipped set plus
+    the winning blocks (none when only the seasons won); keep K and DEF."""
+    everything = pd.concat(tables.values())
+    cols = {p: base[p] + [c for n in final for c in block_cols(n, p)] for p in A.POSITIONS}
+    adv = dict(shipped.adv)
+    for p in A.POSITIONS:
+        tr = everything.loc[everything["position"] == p]
+        adv[p] = A.Ridge.fit(tr, tr["actual"], cols[p])
+    meta = dict(shipped.meta)
+    meta["feature_set"] = f"{meta.get('feature_set', 'core')}{''.join(final)}"
+    meta["fit_on"] = sorted(args.seasons)
+    meta["fit_rows"] = int(len(everything))
+    meta["expansion_evidence"] = {**evidence, "doc": "docs/research/FEATURE_EXPANSION.md"}
+    meta["written"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    A.AdvancedModel(adv, shipped.stack, meta).save()
+    print(f"saved {A.WEIGHTS_PATH.relative_to(REPO_ROOT)} ({meta['feature_set']}, fit on "
+          f"{len(everything)} player-weeks over {len(args.seasons)} seasons); K/DEF, the stack and "
+          f"the ROS weights must be refit next")
 
 
 if __name__ == "__main__":
