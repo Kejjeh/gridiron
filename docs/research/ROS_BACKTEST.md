@@ -1,4 +1,4 @@
-# Rest-of-season rankings: which method orders players best? (2026-09-30)
+# Rest-of-season rankings: which method orders players best? (2026-09-30, re-run 2026-10-01)
 
 **Short answer: build ROS rankings on the advanced weekly model, not on
 points per game.** In season-fold cross-validation over 2023–2025, ranking
@@ -10,8 +10,8 @@ with the schedule nudge or with a learned combination, won everywhere.
 
 Command: `PYTHONPATH=src python scripts/research/ros_backtest.py --save`.
 
-**Folds.** Each season (2023, 2024 and 2025) is held out in turn, and the
-other two train. The weekly models are refit on the train seasons only.
+**Folds.** Each season is held out in turn and the others train (2023–2025
+at first; 2019–2025 since 2026-10-01). The weekly models are refit on the train seasons only.
 
 **Cuts.** At each cut week 4–14 of the held-out season, every method
 projects each player's points from the cut through week 17:
@@ -56,36 +56,37 @@ never by one test season.
 - It is fit to actual points per remaining game.
 - It is trained only on out-of-fold weekly rates.
 
-## Results (cross-validated mean, 2023–2025)
+## Results (cross-validated mean, 2019–2025)
 
-Re-run 2026-09-30 after the weekly model gained the last-game block
-(`docs/research/ROLE_CHANGE_BACKTEST.md`); the method per position was
-re-chosen on the new rates.
+Re-run 2026-10-01 over seven seasons (docs/research/FEATURE_EXPANSION.md:
+more seasons help every model here), each held out in turn, weekly models
+refit per fold; the method per position was re-chosen on this run.
 
 | pos | ppg | base | adv | adv_sched | ros_model | **shipped** | gain vs ppg |
 |---|---|---|---|---|---|---|---|
-| QB | .494 | .509 | .504 | .520 | **.553** | ros_model | +.059 |
-| RB | .661 | .646 | .672 | **.678** | .676 | adv_sched | +.017 |
-| WR | .555 | .555 | .604 | **.604** | .603 | adv_sched | +.049 |
-| TE | .397 | .406 | .467 | .473 | **.479** | ros_model | +.082 |
-| K | .135 | .160 | .130 | **.193** | .188 | adv_sched | +.058 |
-| DEF | .110 | .110 | .161 | .186 | **.187** | ros_model | +.077 |
+| QB | .477 | .502 | .516 | .532 | **.550** | ros_model | +.073 |
+| RB | .590 | .615 | .624 | .628 | **.635** | ros_model | +.045 |
+| WR | .512 | .524 | **.570** | .570 | .569 | adv | +.058 |
+| TE | .394 | .425 | .475 | .484 | **.486** | ros_model | +.092 |
+| K | .158 | .176 | .149 | .183 | **.222** | ros_model | +.064 |
+| DEF | .139 | .139 | .174 | **.234** | .218 | adv_sched | +.095 |
 
 Pairwise order, shipped method vs ppg:
 
 | pos | shipped | ppg |
 |---|---|---|
-| QB | 69.9% | 68.1% |
-| RB | 74.6% | 74.0% |
-| WR | 71.8% | 69.3% |
-| TE | 67.2% | 63.7% |
-| K | 56.2% | 53.7% |
-| DEF | 56.5% | 53.3% |
+| QB | 70.2% | 67.5% |
+| RB | 73.1% | 71.3% |
+| WR | 70.6% | 68.0% |
+| TE | 67.4% | 63.5% |
+| K | 57.9% | 54.9% |
+| DEF | 58.4% | 54.3% |
 
-WR `adv` and `adv_sched` tie (.604); TE's learned combination leads the
-schedule-nudged rate by .006. Both are hairline calls and could flip on
-another season; the first run (before the last-game block) chose WR `adv`
-and TE `adv_sched`.
+With seven folds the learned combination wins at QB, RB, TE and K; WR keeps
+the plain advanced rate (a three-way tie at .570) and DEF the schedule-
+nudged rate. The three-season run (2023–2025, first shipped) had chosen
+adv_sched for RB and K and ros_model for DEF; those were the hairline calls
+and they moved, which is what a three-fold choice is worth.
 
 Per-fold tables are saved in `src/gridiron/models/ros_weights.json` under
 `evidence.folds`.
@@ -98,12 +99,11 @@ Per-fold tables are saved in `src/gridiron/models/ros_weights.json` under
   about 0.19. A ROS K or DEF ranking is a weak tiebreaker. The weekly
   streaming call (`advanced_v1` K/DEF) is where the edge is.
 - **The schedule nudge helps where the weekly model leans on the matchup**
-  (K, DEF, TE, RB) and is neutral for WR (a tie, resolved to it).
-- **The learned combination wins at QB, TE and DEF.**
+  (K, DEF, TE, RB) and is neutral for WR.
+- **The learned combination wins at QB, RB, TE and K** on seven seasons.
   - QB: it rewards a longer track record. Games played carries weight, a
     proxy for job security.
-  - DEF: it leans on the schedule-nudged rate.
-  - DEF's lead over `adv_sched` is a tie (.187 vs .186); TE's is .006.
+  - DEF leans on the schedule-nudged rate and ships it outright.
 - **Playoff-week (15–17) ordering is weaker than full-ROS ordering** at every
   position. It is shown as a separate column, not ranked on.
 - **ROS is points, not ΔP(win) (rule #7).** It is for holds, drops and

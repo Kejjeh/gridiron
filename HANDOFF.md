@@ -40,6 +40,17 @@ the first system here that is not behind Sleeper out of sample; it does not
 clear the strict bar and stays a contender until the shoot-out says so.
 `AdvancedContext.stacked()` now feeds its own advanced mean as `adv`.
 
+More data (2026-10-01, `docs/research/FEATURE_EXPANSION.md`): every model
+is now fit on 2019-2025. Six training seasons beat two on both metrics in
+every held-out season for the weekly ridge; K 57.3% / DEF 62.0% start/sit
+on 2025 (were 56.8 / 61.5); ROS methods re-chosen on seven folds (QB/RB/TE/K
+learned combination, WR advanced rate, DEF schedule-nudged). Six new metric
+blocks (xTD and team share, EPA, more NGS, spread/wind/temp, team pace, PFR)
+are built and fetched but none cleared the every-fold bar — nothing reads
+them for a number. The calibrated stack on seven seasons: ahead of Sleeper
+on MAE (6/7), behind on ordering (4/7, −0.10 on the mean); saved as a
+contender with `bar_cleared: false`. Three-fold "ties" did not survive.
+
 Non-linear learner (2026-10-01, owner-approved scikit-learn, research only):
 gradient-boosted trees lose to the ridge on ordering in every fold and every
 configuration (`docs/research/GBM_BACKTEST.md`); nothing ships, serving
@@ -47,9 +58,10 @@ never imports it.
 
 Not done / next: the live shoot-out is the scoreboard for the new weights
 and the calibrated stack (first graded week: 5). Honest ceiling on history:
-a linear model of public inputs, and a calibrated blend with Sleeper that
-ties it on ordering and beats it on error. More seasons of training rows,
-or a new input (player props), are the remaining levers — each a project.
+a linear model of public inputs fit on seven seasons; the calibrated blend
+with Sleeper beats it on error and trails it by a tenth of a point on
+ordering. Remaining levers: a new input (player props, routes run — both
+projects), and the live shoot-out.
 
 
 ## Weekly routine — skills, usage trends, grading (2026-09-30, draft)
