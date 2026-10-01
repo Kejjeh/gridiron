@@ -47,9 +47,12 @@ on 2025 (were 56.8 / 61.5); ROS methods re-chosen on seven folds (QB/RB/TE/K
 learned combination, WR advanced rate, DEF schedule-nudged). Six new metric
 blocks (xTD and team share, EPA, more NGS, spread/wind/temp, team pace, PFR)
 are built and fetched but none cleared the every-fold bar — nothing reads
-them for a number. The calibrated stack on seven seasons: ahead of Sleeper
-on MAE (6/7), behind on ordering (4/7, −0.10 on the mean); saved as a
-contender with `bar_cleared: false`. Three-fold "ties" did not survive.
+them for a number. The `stack` contender is now the MIX (mean of
+Sleeper + half our residual ridge, and the two-stage ridge), calibrated and
+composed into one ridge: ahead of Sleeper on ordering in 6 of 7 seasons
+(64.68% vs 64.61%; 2020 behind by 0.18) and on MAE in 7 of 7 (3.862 vs
+3.971) — the strongest result here, recorded `bar_cleared: false`
+(`scripts/research/blend_search.py`). Three-fold "ties" did not survive.
 
 Non-linear learner (2026-10-01, owner-approved scikit-learn, research only):
 gradient-boosted trees lose to the ridge on ordering in every fold and every

@@ -250,7 +250,17 @@ def test_the_shipped_model_is_the_gated_one():
         assert "baseline" in model.adv[pos].cols            # measured against it
         assert set(model.stack[pos].cols) <= allowed | {"sleeper", "adv"}
     form = model.meta.get("stack_form") or {}
-    if form.get("kind") == "two_stage_calibrated":
+    if form.get("kind") == "mix_calibrated":
+        # the contender: ours + Sleeper mixed and calibrated, one composed ridge
+        se = model.meta["stack_evidence"]
+        assert se["cv"][se["winner"]]["mae"] < se["cv"]["sleeper"]["mae"]
+        assert se["mae_better_folds"] == len(se["folds"]) and se["ordering_ahead_folds"] >= 6
+        assert se["bar_cleared"] is False                           # 2020 is behind: say so
+        for p in A.POSITIONS:
+            assert {"adv", "sleeper", "baseline"} <= set(model.stack[p].cols)
+            assert all(sd == 1.0 and mu == 0.0 for sd, mu in zip(model.stack[p].sd, model.stack[p].mu))
+        assert all(form["calibration"][p][1] > 0 for p in A.POSITIONS)   # monotone
+    elif form.get("kind") == "two_stage_calibrated":
         # the live contender: ours + Sleeper, calibrated; never worse than
         # Sleeper on ordering in any fold (a tie = under one pair in ten
         # thousand; 2025 is behind by 2 of 60,813), better on error in every fold

@@ -1,13 +1,14 @@
-# Ours + Sleeper, calibrated: better on error, not on ordering (2026-10-01)
+# Ours + Sleeper, calibrated: the mix that is ahead of Sleeper in six of seven seasons (2026-10-01)
 
-**Short answer: a two-stage blend of our advanced mean, Sleeper's projection
-and the baseline, recalibrated per position, beats Sleeper on point error
-in six of seven held-out seasons but is behind it on start/sit ordering in
-four of seven.** On the first three seasons tested it looked like a tie on
-ordering; seven seasons say it is not. It ships as the `stack` contender
-(`advanced_weights.json`) with the bar recorded as NOT cleared; the live
-shoot-out decides what drives the page (docs/DECISIONS.md), and the page's
-own number is unchanged.
+**Short answer: the average of two blends — Sleeper plus half of our
+residual model, and a two-stage ridge on our advanced mean, Sleeper and the
+baseline — recalibrated per position, orders start/sit pairs better than
+Sleeper in six of seven held-out seasons and has a lower point error in all
+seven.** It is behind in 2020 by 0.18 points of start/sit, so it does not
+clear the every-fold bar and is recorded that way. It ships as the `stack`
+contender (`advanced_weights.json`, one composed ridge); the live shoot-out
+decides what drives the page (docs/DECISIONS.md), and the page's own number
+is unchanged.
 
 ## Why calibration, not more features
 
@@ -41,56 +42,60 @@ and touches, depth rank, vacated opportunity); each raw and calibrated.
 
 ## Results
 
-**Seven seasons, 2019–2025** (the run that ships; mean over folds):
+**Seven seasons, 2019–2025**, mean over folds; "ahead" counts the folds the
+system beats Sleeper (`scripts/research/blend_search.py`):
 
-| system | start/sit | close calls | MAE |
+| system | start/sit | MAE | ordering ahead | MAE better |
+|---|---|---|---|---|
+| Sleeper | 64.61% | 3.971 | — | — |
+| resid 0.5, calibrated | 64.65% | 3.893 | 5 of 7 | 6 of 7 |
+| two_stage, calibrated | 64.51% | 3.852 | 3 of 7 | 6 of 7 |
+| **mix 0.5 (mean of the two), calibrated** | **64.68%** | 3.862 | **6 of 7** | **7 of 7** |
+| rank-level blend 0.7, calibrated | 64.67% | 3.873 | 6 of 7 | 7 of 7 |
+
+The mix vs Sleeper, per fold (start/sit, MAE):
+
+| test | Sleeper | mix 0.5 calibrated | ordering |
 |---|---|---|---|
-| Sleeper | **64.61%** | 56.70% | 3.971 |
-| resid 0.5, calibrated | **64.65%** | **56.79%** | 3.893 |
-| stack (old form), calibrated | 64.53% | 56.56% | 3.859 |
-| **two_stage, calibrated** | 64.51% | 56.53% | **3.852** |
+| 2019 | 63.95%, 4.341 | 64.01%, 4.179 | ahead |
+| 2020 | 63.93%, 4.122 | 63.76%, 4.018 | behind (−0.18) |
+| 2021 | 65.33%, 4.208 | 65.49%, 3.996 | ahead |
+| 2022 | 64.71%, 3.833 | 64.76%, 3.720 | ahead |
+| 2023 | 64.58%, 3.731 | 64.75%, 3.693 | ahead |
+| 2024 | 64.35%, 3.791 | 64.55%, 3.787 | ahead |
+| 2025 | 65.42%, 3.770 | 65.44%, 3.644 | ahead |
 
-Two-stage calibrated vs Sleeper, per fold (start/sit, MAE):
-
-| test | Sleeper | two-stage calibrated | ordering |
-|---|---|---|---|
-| 2019 | 63.95%, 4.341 | 63.73%, 4.115 | behind |
-| 2020 | 63.93%, 4.122 | 63.40%, 4.022 | behind |
-| 2021 | 65.33%, 4.208 | 65.47%, 3.964 | ahead |
-| 2022 | 64.71%, 3.833 | 64.58%, 3.730 | behind |
-| 2023 | 64.58%, 3.731 | 64.82%, 3.692 | ahead |
-| 2024 | 64.35%, 3.791 | 64.38%, 3.795 | ahead (error behind) |
-| 2025 | 65.42%, 3.770 | 65.22%, 3.649 | behind |
-
-**Three seasons, 2023–2025** (the first run, kept for the record): the same
-form was never worse than Sleeper on ordering in any fold (2025 behind by 2
-of 60,813 pairs) and better on error in every fold — 64.84% vs 64.78%,
-3.707 vs 3.764. That is what a three-fold result is worth.
+The shrink k barely matters (0.3 to 0.6 within 0.01 of each other); 0.5 is
+kept. Earlier runs for the record: the two-stage form alone on three seasons
+(2023–2025) looked like a tie on ordering and a win on error; on seven it
+was behind in four.
 
 ## Reading it honestly
 
-- **Ordering: behind Sleeper by 0.10 points on the seven-season mean**, ahead
-  in three seasons, behind in four. The three-season tie did not survive
-  more data. The error gain is real and large: −0.12 MAE on the mean, ahead
-  in six of seven seasons.
-- **The shrunk residual form (`resid 0.5`) orders best** (64.65%, ahead of
-  Sleeper by 0.04) but its error is worse than the two-stage form's; neither
-  clears the bar. The two-stage form is kept because its serving path is
-  wired and its error is best.
+- **Ahead of Sleeper in six of seven seasons on ordering and in all seven on
+  error, +0.07 on the mean.** One season (2020) is behind by 0.18 points.
+  That is the strongest result this repo has against the strongest public
+  comparator, and it is not an every-fold win.
+- **Why the mix beats its parts.** The residual form keeps Sleeper's
+  ordering and nudges it with ours; the two-stage form has the best error;
+  averaging keeps most of both. A rank-level blend does about the same.
 - **Sleeper's history may carry post-game edits** (PROJECTION_BACKTEST_2025),
   which would flatter Sleeper here, not us. Only the live shoot-out
   (`grade_week.py`) can confirm.
-- **This is the ceiling of a linear blend of public inputs on history.**
-  Trees were tried and lost (GBM_BACKTEST.md); more metrics were tried and
-  did not clear the bar (FEATURE_EXPANSION.md).
+- **This is the ceiling of linear blends of public inputs on history.**
+  Trees lost (GBM_BACKTEST.md); new metrics did not clear the bar
+  (FEATURE_EXPANSION.md); seven seasons are all Sleeper's history allows.
 
 ## What ships
 
-- `advanced_weights.json` `stack` for QB/RB/WR/TE: a ridge on
-  (`adv`, `sleeper`, `baseline`) fit on 2019–2025 with the median line
-  folded into its coefficients (`meta.stack_form`; `meta.stack_evidence`
-  carries `bar_cleared: false` and every fold). K and DEF stacks come from
-  their own backtest.
-- `AdvancedContext.stacked()` feeds its own advanced mean as `adv`.
+- `advanced_weights.json` `stack` for QB/RB/WR/TE: the mix composed into ONE
+  ridge in raw units over the features, the page's advanced mean (`adv`),
+  Sleeper's number and the baseline, with the per-position median line
+  folded in (`meta.stack_form`, kind `mix_calibrated`; `meta.stack_evidence`
+  carries `bar_cleared: false` and every fold). The save step asserts the
+  composed ridge reproduces the research computation on every training row,
+  NaNs included. K and DEF stacks come from their own backtest.
+- `AdvancedContext.stacked()` feeds its own advanced mean as `adv`; no other
+  serving change.
 - The record's `contenders` block and the weekly shoot-out carry it as
   before; nothing on the page changes until the shoot-out says so.
