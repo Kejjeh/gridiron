@@ -1708,23 +1708,23 @@ padding:12px 0 0;border-top:1px solid var(--line)}
 @media (max-width:560px){.radar summary{padding:9px 2px}.radar .rname{font-size:15px}
 .facts>div{grid-template-columns:1fr;gap:2px;padding:8px 0}.dcard,.dcard.first{padding:14px 15px}
 .dcard.first h3{font-size:19px}.dhead .until{margin-left:0;flex-basis:100%}}
-.rintro{margin:0 0 4px;max-width:82ch}
-.rgroup{display:flex;align-items:center;gap:8px;font-size:var(--t-xs);letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:18px 0 8px}
-.rgroup .count{font-size:11px;padding:1px 8px;border-radius:999px;background:var(--chip);border:1px solid var(--line2);color:var(--muted);letter-spacing:.04em}
+.mintro{margin:0 0 4px;max-width:82ch}
+.mgroup{display:flex;align-items:center;gap:8px;font-size:var(--t-xs);letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:18px 0 8px}
+.mgroup .count{font-size:11px;padding:1px 8px;border-radius:999px;background:var(--chip);border:1px solid var(--line2);color:var(--muted);letter-spacing:.04em}
 .roster{list-style:none;margin:0;padding:0;display:grid;gap:8px}
-.rrow{--pc:var(--dim);display:grid;grid-template-columns:60px minmax(0,1.3fr) minmax(0,1.2fr) minmax(0,.9fr) minmax(0,.8fr);
+.mrow{--pc:var(--dim);display:grid;grid-template-columns:60px minmax(0,1.3fr) minmax(0,1.2fr) minmax(0,.9fr) minmax(0,.8fr);
 gap:6px 16px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius-s);
 background:linear-gradient(90deg,color-mix(in srgb,var(--pc) 9%,transparent),transparent 38%),var(--bg2);transition:border-color .15s ease}
-.rrow:hover{border-color:var(--line2)}
+.mrow:hover{border-color:var(--line2)}
 .p-qb{--pc:var(--qb)}.p-rb{--pc:var(--rb)}.p-wr{--pc:var(--wr)}.p-te{--pc:var(--te)}.p-k{--pc:var(--k)}.p-def{--pc:var(--def)}
-.rrow .slot{display:inline-flex;align-items:center;justify-content:center;min-width:48px;height:28px;padding:0 8px;border-radius:8px;
+.mrow .slot{display:inline-flex;align-items:center;justify-content:center;min-width:48px;height:28px;padding:0 8px;border-radius:8px;
 font-size:12px;font-weight:800;letter-spacing:.06em;color:var(--pc);border:1px solid color-mix(in srgb,var(--pc) 45%,transparent);
 background:color-mix(in srgb,var(--pc) 11%,transparent)}
-.rname{font-weight:750;font-size:15.5px;line-height:1.25}
-.rmeta{font-size:12.5px;color:var(--muted)}.rmeta .pos{color:var(--pc);font-weight:800;letter-spacing:.04em}
-.rproj{font-size:var(--t-s)}.rproj b{font-size:17px}.rproj details{margin:0}.rproj summary{padding:0;font-size:12px}
-.rlbl{display:block;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-weight:700}
-.rlock .lk{font-size:12px;color:var(--dim)}.rlock .lk.on{color:var(--warn);font-weight:700}
+.mname{font-weight:750;font-size:15.5px;line-height:1.25}
+.mmeta{font-size:12.5px;color:var(--muted)}.mmeta .pos{color:var(--pc);font-weight:800;letter-spacing:.04em}
+.mproj{font-size:var(--t-s)}.mproj b{font-size:17px}.mproj details{margin:0}.mproj summary{padding:0;font-size:12px}
+.mlbl{display:block;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-weight:700}
+.mlock .lk{font-size:12px;color:var(--dim)}.mlock .lk.on{color:var(--warn);font-weight:700}
 .usage{display:flex;flex-direction:column;gap:5px}.urow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .ustat{font-size:12px;color:var(--muted)}.ustat b{color:var(--fg)}
 .spark{flex:0 0 auto;overflow:visible}.spark .bar{fill:var(--line2)}.spark .bar.last{fill:var(--pc,var(--cyan))}.spark .gap{fill:var(--line)}
@@ -1739,10 +1739,10 @@ svg.bt{width:100%;height:10px;border-radius:999px;display:block}
 svg .track{fill:var(--line)}svg .fill{fill:var(--cyan)}.bars .top svg .fill{fill:var(--lime)}svg .coin{fill:var(--fg);opacity:.55}
 svg.meter{width:64px;height:6px;border-radius:999px;vertical-align:middle;margin-right:6px}svg.meter .fill{fill:var(--lime)}
 .report .empty{margin:2px 0;color:var(--muted)}.report .empty b{color:var(--fg)}
-@media (max-width:860px){.rrow{grid-template-columns:52px minmax(0,1fr) auto;
+@media (max-width:860px){.mrow{grid-template-columns:52px minmax(0,1fr) auto;
 grid-template-areas:"s w w" "p p l" "u u u"}
-.rslot{grid-area:s}.rwho{grid-area:w}.rproj{grid-area:p}.ruse{grid-area:u}.rlock{grid-area:l;text-align:right}}
-@media (max-width:560px){.rrow{padding:11px 12px}.report .kpi{grid-template-columns:repeat(2,minmax(0,1fr))}
+.mslot{grid-area:s}.mwho{grid-area:w}.mproj{grid-area:p}.muse{grid-area:u}.mlock{grid-area:l;text-align:right}}
+@media (max-width:560px){.mrow{padding:11px 12px}.report .kpi{grid-template-columns:repeat(2,minmax(0,1fr))}
 .report .kpi b{font-size:22px}.bars .b{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}
 .bars svg.bt{grid-column:1/-1;grid-row:2}}
 """
@@ -1883,7 +1883,7 @@ def _roster_html(d: "Dashboard", players: Sequence[Player], slot_of: Mapping[str
         if not members:
             continue
         seen.update(p.sleeper_id for p in members)
-        out.append(f"<h3 class=\"rgroup\">{_e(title)} <span class=\"count\">{len(members)}</span></h3>"
+        out.append(f"<h3 class=\"mgroup\">{_e(title)} <span class=\"count\">{len(members)}</span></h3>"
                    "<ol class=\"roster\">")
         for p in members:
             slot = slot_of.get(p.sleeper_id, p.lineup)
@@ -1892,14 +1892,14 @@ def _roster_html(d: "Dashboard", players: Sequence[Player], slot_of: Mapping[str
                     else f"<span class=\"lk\">{_e(p.lock_note)}</span>")
             flags = "".join(f"<div class=\"warn small\">{_e(f)}</div>" for f in p.flags)
             out.append(
-                f"<li class=\"rrow p-{pos}\">"
-                f"<div class=\"rslot\"><span class=\"slot\">{_e(slot)}</span></div>"
-                f"<div class=\"rwho\"><div class=\"rname\">{_e(p.name)}</div>"
-                f"<div class=\"rmeta\"><span class=\"pos\">{_e(p.position)}</span> {_e(p.team)}"
+                f"<li class=\"mrow p-{pos}\">"
+                f"<div class=\"mslot\"><span class=\"slot\">{_e(slot)}</span></div>"
+                f"<div class=\"mwho\"><div class=\"mname\">{_e(p.name)}</div>"
+                f"<div class=\"mmeta\"><span class=\"pos\">{_e(p.position)}</span> {_e(p.team)}"
                 f" \u00b7 {_e(p.availability)}</div>{flags}</div>"
-                f"<div class=\"ruse\">{_usage_cell(d, p)}</div>"
-                f"<div class=\"rproj\"><span class=\"rlbl\">Projection</span>{_proj_cell(p)}</div>"
-                f"<div class=\"rlock\">{lock}</div></li>")
+                f"<div class=\"muse\">{_usage_cell(d, p)}</div>"
+                f"<div class=\"mproj\"><span class=\"mlbl\">Projection</span>{_proj_cell(p)}</div>"
+                f"<div class=\"mlock\">{lock}</div></li>")
         out.append("</ol>")
     return "".join(out)
 
@@ -2792,7 +2792,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     u = d.usage if isinstance(d.usage, Mapping) else {}
     thru = u.get("through_week")
     out.append("<h2 id=\"roster\">Roster projections and usage trends</h2><div class=\"card roster-card\">")
-    out.append("<p class=\"small sub rintro\">Each player\u2019s projection beside what the player "
+    out.append("<p class=\"small sub mintro\">Each player\u2019s projection beside what the player "
                "has actually done"
                + (f" through week {_e(thru)}" if thru else "")
                + ". The trend reads volume only (snaps and opportunities over the last two "

@@ -42,7 +42,7 @@ def test_every_roster_row_carries_a_trend_on_the_page(tmp_path):
     rc, html, rec = render(tmp_path, "complete", "--grades-dir", str(tmp_path / "none"))
     assert rc == 0
     roster = html[html.index("id=\"roster\""):html.index("id=\"matchup\"")]
-    rows = roster.count("<li class=\"rrow")
+    rows = roster.count("<li class=\"mrow")
     assert rows == len(rec["roster"])
     assert roster.count("class=\"trend ") == rows
     # the fixture holds two weeks of box scores: a direction needs three
@@ -82,3 +82,11 @@ def test_nothing_on_the_board_uses_an_inline_style_attribute(tmp_path):
     _, html, _ = render(tmp_path, "complete", "--grades-dir", str(tmp_path / "none"))
     for text in (pieces, html):
         assert not re.search(r"<[^>]+\sstyle=", text), "an inline style attribute is blocked by CSP"
+
+
+def test_the_roster_styles_never_reach_the_free_agent_rows():
+    # The radar's rows were already `li.rrow` with `.rname`/`.rmeta`; a roster
+    # rule on those names restyled every free-agent row on the live page.
+    for cls in ("rrow", "rname", "rmeta", "rslot", "rproj"):
+        assert not re.search(rf"(^|[}}\s]){re.escape('.' + cls)}[{{\s.:]", D._CSS.replace(".radar ." + cls, "")), \
+            f"an unscoped .{cls} rule would restyle the radar"
