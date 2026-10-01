@@ -3,12 +3,18 @@ name = "gridiron"
 version = "0.1.0"
 description = "Fantasy football decision engine (P(win)-denominated), seeded from plv_clone's lessons"
 requires-python = ">=3.11"
+# Mirrors requirements.txt (runtime) and requirements-dev.txt (dev); the
+# cloud build installs from requirements.txt.
 dependencies = [
     "pydantic-settings>=2.0",
+    "numpy>=2.0",
+    "nflreadpy>=0.1.5",
+    "pandas>=2.0,<4",
+    "pyarrow>=15",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "scikit-learn>=1.5"]
 
 [build-system]
 requires = ["setuptools>=68"]

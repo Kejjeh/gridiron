@@ -1,18 +1,14 @@
-# Direct dependencies only. Freeze (pip freeze > requirements.lock) ONLY
-# from inside this project's .venv — never from a machine-wide environment
-# (bootstrap §5: plv_clone's lock shipped an unrelated trading stack).
-pydantic-settings>=2.0
-pytest>=8.0
-numpy>=2.0            # research sims (scripts/research/)
-
-# Build step 2 (ingest), landed 2026-09-17:
-nflreadpy>=0.1.5      # polars-native; NOT the deprecated nfl_data_py
-pandas>=2.0,<4        # tested on 3.x (copy-on-write, new string dtype)
-pyarrow>=15           # parquet cache: NaN stays NaN, counts stay ints
-
-# Research only (scripts/research/gbm_backtest.py), owner-approved 2026-10-01.
-# Serving never imports it: a boosted model ships as JSON trees read by numpy.
-scikit-learn>=1.5
+# RUNTIME dependencies: what the cloud build installs (`pip install -r
+# requirements.txt`, .github/workflows) and what `src/gridiron` imports.
+# Freeze (pip freeze > requirements.lock) ONLY from inside this project's
+# .venv — never from a machine-wide environment (bootstrap §5: plv_clone's
+# lock shipped an unrelated trading stack). Development and research tools
+# live in requirements-dev.txt; pyproject.toml mirrors both lists.
+pydantic-settings>=2.0  # gridiron.config (credentials from .env, rule #9)
+numpy>=2.0              # ridge fits and the research sims
+nflreadpy>=0.1.5        # polars-native; NOT the deprecated nfl_data_py
+pandas>=2.0,<4          # tested on 3.x (copy-on-write, new string dtype)
+pyarrow>=15             # parquet cache: NaN stays NaN, counts stay ints
 
 # Not needed: espn-api (the league is on Sleeper, whose read API needs no
 # auth — gridiron.sleeper uses stdlib urllib). No markdown/table library:

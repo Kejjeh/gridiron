@@ -1,0 +1,6 @@
+# Development and research only. Serving never imports these.
+-r requirements.txt
+pytest>=8.0
+# Research only (scripts/research/gbm_backtest.py), owner-approved 2026-10-01.
+# A boosted model would ship as JSON trees read by numpy; none has earned it.
+scikit-learn>=1.5

@@ -11,6 +11,11 @@ gridiron.sleeper.player_map_budget). `--force` re-pulls everything else.
 Sources
   nflverse (nflreadpy) : weekly player stats, snap counts, schedules, injuries
   Sleeper (read-only)  : NFL state, league, users, rosters, matchups, players
+  advanced-model inputs: expected points, Next Gen Stats, depth charts, team
+                         stats, weekly rosters (gridiron.models.advanced
+                         .fetch_inputs; beside the cache, outside the manifest)
+  shadow projections   : Sleeper's weekly projections for the shoot-out
+                         (gridiron.shadow; outside the manifest, gates nothing)
   dynastyprocess       : the id crosswalk (rule #3)
 
 Every pull is recorded in the season manifest with its as-of timestamp, row
@@ -272,11 +277,11 @@ def pull_shadow(manifest: ing.Manifest, now: datetime, force: bool, *,
     try:
         blob = shadow.fetch_sleeper(season, week, now=now,
                                     **({"fetch": fetch} if fetch else {}))
+        shadow.write_shadow(directory, blob)      # a write error is this step's too
     except Exception as exc:                                  # noqa: BLE001
         print(f"  shadow_projections: FAILED {type(exc).__name__}: {exc} — the "
               f"page is unaffected (shadow only)", file=sys.stderr)
         return
-    shadow.write_shadow(directory, blob)
     print(f"  shadow_projections: week {week}, {len(blob['players'])} players "
           f"(Sleeper, shadow only)")
 
@@ -295,11 +300,11 @@ def pull_model_inputs(manifest: ing.Manifest, season: int, now: datetime,
         frames = adv_model.fetch_inputs(
             season, loaders=loaders,
             log=lambda m: print(f"  model_inputs: {m} (optional; left unknown)", file=sys.stderr))
+        adv_model.write_inputs(directory, season, frames, now)   # a write error is this step's too
     except Exception as exc:                                  # noqa: BLE001
         print(f"  model_inputs: FAILED {type(exc).__name__}: {exc} — the page "
               f"keeps the baseline projection", file=sys.stderr)
         return
-    adv_model.write_inputs(directory, season, frames, now)
     print("  model_inputs: " + ", ".join(f"{k} {len(v)} rows" for k, v in frames.items()))
 
 
@@ -516,7 +521,10 @@ def main(argv: list[str] | None = None) -> int:
               f"{unscorable} — recorded in the manifest; the report will blank "
               f"the affected points rather than publish a wrong one",
               file=sys.stderr)
-    return 0
+    # The manifest is written either way (last-good data stays usable), but
+    # the exit code tells the truth: a pull with failed sources is not a
+    # success, and the cloud run summary prints this step's outcome.
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

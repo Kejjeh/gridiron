@@ -158,7 +158,13 @@ def resolve_league_id() -> str:
         from gridiron.config import get_settings
 
         configured = get_settings().sleeper_league_id
-    except Exception:  # pydantic-settings absent or .env unreadable
+    except Exception as exc:  # pydantic-settings absent or .env unreadable  # noqa: BLE001
+        # Said, not swallowed: an override that is being ignored is the kind
+        # of silence that costs a week (the cloud build once installed
+        # everything but pydantic-settings).
+        import sys
+        print(f"[sleeper] league-id override not read ({type(exc).__name__}: {exc}); "
+              f"using the verified constant", file=sys.stderr)
         configured = None
     return str(configured or SLEEPER_LEAGUE_ID)
 
