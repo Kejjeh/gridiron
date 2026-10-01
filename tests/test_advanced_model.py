@@ -159,6 +159,54 @@ def test_a_teammate_on_a_reserve_list_is_the_confirmed_version(tmp_path):
     assert fetched["reserve"]["gsis_id"].tolist() == ["rb1"] and len(fetched["defense"]) == 0
 
 
+def test_expansion_inputs_are_built_from_their_sources():
+    ff = pd.DataFrame([{"player_id": "g1", "week": 2, "receptions_exp": 4, "rec_yards_gained_exp": 50,
+                        "rec_touchdown_exp": 0.5, "rush_touchdown_exp": 0.25,
+                        "total_fantasy_points_exp": 12.0, "total_fantasy_points_exp_team": 48.0}])
+    x = A.xfp_from_ff_opportunity(ff).iloc[0]
+    assert x["xfp"] == 4 * 0.5 + 5 + 3 + 1.5 and x["xtd"] == 0.75 and x["xfp_share"] == 0.25
+    off = A.offense_history(pd.DataFrame([
+        {"team": "NYJ", "week": 1, "season_type": "REG", "attempts": 30, "carries": 30,
+         "passing_epa": 2.0, "rushing_epa": -1.0},
+        {"team": "NYJ", "week": 19, "season_type": "POST", "attempts": 50, "carries": 10}]))
+    assert off.to_dict("records") == [{"team": "NYJ", "week": 1, "plays": 60.0, "pass_rate": 0.5,
+                                       "off_epa": 1.0}]
+    pfr = A.pfr_from_advstats({
+        "rec": pd.DataFrame([{"pfr_player_id": "AbcDe00", "week": 1, "game_type": "REG",
+                              "receiving_drop_pct": 10.0}]),
+        "rush": pd.DataFrame([{"pfr_player_id": "AbcDe00", "week": 1, "game_type": "REG",
+                               "rushing_yards_before_contact_avg": 2.5,
+                               "rushing_yards_after_contact_avg": 1.5}]),
+        "pass": None})
+    assert pfr.iloc[0].to_dict() == {"pfr_id": "AbcDe00", "week": 1, "pfr_drop_pct": 10.0,
+                                     "pfr_ybc": 2.5, "pfr_yac": 1.5}
+    ctx = A.schedule_context(pd.DataFrame([
+        {"week": 1, "game_type": "REG", "home_team": "NYJ", "away_team": "MIA", "roof": "dome",
+         "spread_line": 3.0, "wind": 12, "temp": 40},
+        {"week": 1, "game_type": "REG", "home_team": "BUF", "away_team": "NE", "roof": "outdoors",
+         "spread_line": -2.0, "wind": 12, "temp": 40}]), 1)
+    assert ctx["NYJ"]["wind"] == 0.0 and ctx["NYJ"]["temp"] == 70.0 and ctx["MIA"]["spread"] == -3.0
+    assert ctx["BUF"]["wind"] == 12.0 and ctx["BUF"]["temp"] == 40.0 and ctx["NE"]["spread"] == 2.0
+
+
+def test_the_feature_frame_carries_every_expansion_column_and_reads_only_earlier_weeks():
+    h = _hist()
+    h["pfr_id"] = "P1"
+    pfr = pd.DataFrame([{"pfr_id": "P1", "week": w, "pfr_drop_pct": 5.0 * w} for w in (1, 2, 3, 4)])
+    weeks = h.rename(columns={"xfp": "_x"})
+    hist = A.history_frame(weeks.assign(receiving_epa=1.0), h[["gsis_id", "week", "xfp"]]
+                           .assign(xtd=0.5, xfp_share=0.3), pd.DataFrame(columns=["gsis_id", "week"]),
+                           pfr)
+    off = pd.DataFrame([{"team": "NYJ", "week": w, "plays": 60 + w, "pass_rate": 0.6, "off_epa": 1.0}
+                        for w in (1, 2, 3, 4)])
+    f = A.features_as_of(hist, 3, offense=off).set_index("gsis_id")
+    assert set(A.EXPANSION_FEATURES) <= set(f.columns)
+    wr1 = f.loc["wr1"]
+    assert wr1["pfr_drop_pct"] == 7.5 and wr1["epa_pg"] == 1.0          # weeks 1-2 only
+    assert wr1["team_plays_l3"] == 61.5 and wr1["xtd_l3"] == 0.5 and wr1["xfp_share_l3"] == 0.3
+    assert np.isnan(wr1["spread"]) and not np.isnan(wr1["team_epa_l3"])
+
+
 def test_depth_rank_from_both_nflverse_layouts():
     weekly = pd.DataFrame([
         {"week": 3.0, "formation": "Offense", "depth_position": "WR", "depth_team": "2",

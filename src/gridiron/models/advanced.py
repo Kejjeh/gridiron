@@ -59,9 +59,17 @@ XFP_MAP = {
 }
 
 NGS_COLUMNS = {"receiving": {"avg_separation": "ngs_sep",
-                             "avg_yac_above_expectation": "ngs_yacoe"},
-               "rushing": {"rush_yards_over_expected_per_att": "ngs_ryoe"},
-               "passing": {"completion_percentage_above_expectation": "ngs_cpoe"}}
+                             "avg_yac_above_expectation": "ngs_yacoe",
+                             "avg_intended_air_yards": "ngs_adot",
+                             "percent_share_of_intended_air_yards": "ngs_iay_share",
+                             "avg_cushion": "ngs_cushion"},
+               "rushing": {"rush_yards_over_expected_per_att": "ngs_ryoe",
+                           "percent_attempts_gte_eight_defenders": "ngs_box8",
+                           "efficiency": "ngs_rush_eff"},
+               "passing": {"completion_percentage_above_expectation": "ngs_cpoe",
+                           "avg_time_to_throw": "ngs_ttt",
+                           "aggressiveness": "ngs_aggr"}}
+NGS_ALL = tuple(c for cols in NGS_COLUMNS.values() for c in cols.values())
 
 #: Every feature `features_as_of` produces, before the caller adds the two
 #: projection-side columns (`baseline`, `ppg_to_date`) and, for the stack,
@@ -84,27 +92,58 @@ EWM_HALFLIFE = 1.0
 #: list. INA is the game-day inactive list — known 90 minutes before kickoff,
 #: never a feature.
 RESERVE_STATUSES = ("RES", "EXE")
+#: The expansion blocks (docs/research/FEATURE_EXPANSION.md), each a
+#: candidate until it beats the shipped set out of sample:
+#:   xtd / xfp_share  expected touchdowns and the player's share of his team's
+#:                    expected points (role, from ff_opportunity);
+#:   epa_pg           EPA per game, season (efficiency, slow — rule #6);
+#:   ngs_*            more Next Gen Stats: depth of target, share of intended
+#:                    air yards, cushion, stacked boxes, rushing efficiency,
+#:                    time to throw, aggressiveness;
+#:   spread / wind / temp   the posted line and the forecast;
+#:   team_*           the offense's plays, pass rate and EPA per game (last 3);
+#:   pfr_*            Pro Football Reference: drops, yards before and after
+#:                    contact, pressure and bad-throw rates (season).
+EXPANSION_FEATURES = ("xtd_l3", "xtd_season", "xfp_share_l3", "epa_pg",
+                      "ngs_adot", "ngs_iay_share", "ngs_cushion", "ngs_box8", "ngs_rush_eff",
+                      "ngs_ttt", "ngs_aggr", "spread", "wind", "temp",
+                      "team_plays_l3", "team_pass_rate_l3", "team_epa_l3",
+                      "pfr_drop_pct", "pfr_ybc", "pfr_yac", "pfr_pressure_pct",
+                      "pfr_bad_throw_pct")
 FEATURE_COLUMNS = ("xfp_l3", "xfp_season", "fpoe_season", "snap_l3", "tgt_share_l3",
                    "ay_share_l3", "carries_l3", "opp_l3", "ngs_sep", "ngs_yacoe",
                    "ngs_ryoe", "ngs_cpoe", "implied", "def_allowed", "vacated_pickup",
                    "practice_dnp", "practice_limited", "questionable", "depth_rank",
-                   *ROLE_FEATURES)
+                   *ROLE_FEATURES, *EXPANSION_FEATURES)
 
 
 # ------------------------------------------------------------------ inputs
 
+XFP_COLUMNS = ("xfp", "xtd", "xfp_share")
+
+
 def xfp_from_ff_opportunity(ff: pd.DataFrame | None) -> pd.DataFrame:
-    """(gsis_id, week, xfp): expected league points per player-week."""
+    """(gsis_id, week, xfp, xtd, xfp_share): expected league points per
+    player-week, expected touchdowns, and the player's share of his team's
+    expected fantasy points that week (nflverse's own scale; a ratio)."""
+    cols = ["gsis_id", "week", *XFP_COLUMNS]
     if ff is None or len(ff) == 0:
-        return pd.DataFrame(columns=["gsis_id", "week", "xfp"])
+        return pd.DataFrame(columns=cols)
     rows = []
     for r in ff.to_dict("records"):
         line = {col: float(r.get(k) or 0.0) for k, col in XFP_MAP.items()
                 if r.get(k) == r.get(k)}
+        num = lambda k: float(r.get(k) or 0.0) if r.get(k) == r.get(k) else 0.0  # noqa: E731
+        team = num("total_fantasy_points_exp_team")
         rows.append({"gsis_id": normalize_id(r.get("player_id")),
-                     "week": int(r["week"]), "xfp": fantasy_points(line)})
+                     "week": int(r["week"]), "xfp": fantasy_points(line),
+                     "xtd": num("rec_touchdown_exp") + num("rush_touchdown_exp")
+                     + num("pass_touchdown_exp"),
+                     "xfp_share": (num("total_fantasy_points_exp") / team) if team > 0 else np.nan})
     out = pd.DataFrame(rows)
-    return out.loc[out["gsis_id"] != ""].groupby(["gsis_id", "week"], as_index=False)["xfp"].sum()
+    out = out.loc[out["gsis_id"] != ""]
+    g = out.groupby(["gsis_id", "week"], as_index=False)
+    return g.agg(xfp=("xfp", "sum"), xtd=("xtd", "sum"), xfp_share=("xfp_share", "sum"))[cols]
 
 
 def ngs_from_nextgen(frames: Mapping[str, pd.DataFrame | None]) -> pd.DataFrame:
@@ -179,20 +218,72 @@ def practice_from_injuries(injuries: pd.DataFrame | None) -> pd.DataFrame:
         "out": rep.isin(["Out", "Doubtful"]).astype(float)})
 
 
-def history_frame(weeks: pd.DataFrame, xfp: pd.DataFrame, ngs: pd.DataFrame) -> pd.DataFrame:
+def offense_history(team_stats: pd.DataFrame | None) -> pd.DataFrame:
+    """(team, week, plays, pass_rate, off_epa): the offense's volume and
+    efficiency per game, from nflverse team-weekly stats."""
+    cols = ["team", "week", "plays", "pass_rate", "off_epa"]
+    if team_stats is None or len(team_stats) == 0:
+        return pd.DataFrame(columns=cols)
+    t = _regular(team_stats, "season_type")
+    num = lambda c: pd.to_numeric(t[c], errors="coerce").fillna(0.0) if c in t else 0.0  # noqa: E731
+    att, car = num("attempts"), num("carries")
+    plays = att + car
+    return pd.DataFrame({"team": t["team"].astype(str), "week": t["week"].astype(int),
+                         "plays": plays, "pass_rate": (att / plays.where(plays > 0)),
+                         "off_epa": num("passing_epa") + num("rushing_epa")})[cols]
+
+
+PFR_COLUMNS = {"rec": {"receiving_drop_pct": "pfr_drop_pct"},
+               "rush": {"rushing_yards_before_contact_avg": "pfr_ybc",
+                        "rushing_yards_after_contact_avg": "pfr_yac"},
+               "pass": {"times_pressured_pct": "pfr_pressure_pct",
+                        "passing_bad_throw_pct": "pfr_bad_throw_pct"}}
+
+
+def pfr_from_advstats(frames: Mapping[str, pd.DataFrame | None]) -> pd.DataFrame:
+    """(pfr_id, week, pfr_*) from the three PFR advanced-stat frames. Keyed
+    by PFR id — the crosswalk's gsis->pfr edge joins it (rule #3)."""
+    out = None
+    for kind, cols in PFR_COLUMNS.items():
+        d = frames.get(kind)
+        if d is None or len(d) == 0 or "pfr_player_id" not in d:
+            continue
+        d = _regular(d, "game_type")
+        keep = {c: n for c, n in cols.items() if c in d.columns}
+        d = d[["pfr_player_id", "week", *keep]].rename(columns={"pfr_player_id": "pfr_id", **keep})
+        d["pfr_id"] = d["pfr_id"].map(normalize_id)
+        d["week"] = d["week"].astype(int)
+        for n in keep.values():
+            d[n] = pd.to_numeric(d[n], errors="coerce")
+        out = d if out is None else out.merge(d, on=["pfr_id", "week"], how="outer")
+    if out is None:
+        return pd.DataFrame(columns=["pfr_id", "week"])
+    return out.loc[out["pfr_id"] != ""].groupby(["pfr_id", "week"], as_index=False).mean(numeric_only=True)
+
+
+def history_frame(weeks: pd.DataFrame, xfp: pd.DataFrame, ngs: pd.DataFrame,
+                  pfr: pd.DataFrame | None = None) -> pd.DataFrame:
     """Scored player-weeks (`gridiron.usage.player_weeks`) + expected points
-    + NGS, one row per player-week that has a stat line."""
+    + NGS (+ PFR through the player's pfr id), one row per player-week that
+    has a stat line."""
     cols = ["gsis_id", "week", "team", "opponent_team", "position", "league_points",
-            "offense_pct", "target_share", "air_yards_share", "carries", "targets"]
+            "offense_pct", "target_share", "air_yards_share", "carries", "targets",
+            "receiving_epa", "rushing_epa", "passing_epa", "pfr_id"]
     h = weeks[[c for c in cols if c in weeks.columns]].copy()
     for c in cols:
         if c not in h.columns:
             h[c] = np.nan
     h["gsis_id"] = h["gsis_id"].map(normalize_id)
     h["opps"] = h["carries"].fillna(0) + h["targets"].fillna(0)
+    h["epa"] = (pd.to_numeric(h["receiving_epa"], errors="coerce").fillna(0)
+                + pd.to_numeric(h["rushing_epa"], errors="coerce").fillna(0)
+                + pd.to_numeric(h["passing_epa"], errors="coerce").fillna(0))
     h = h.merge(xfp, on=["gsis_id", "week"], how="left")
     h = h.merge(ngs, on=["gsis_id", "week"], how="left")
-    for c in ("ngs_sep", "ngs_yacoe", "ngs_ryoe", "ngs_cpoe"):
+    if pfr is not None and len(pfr) and "pfr_id" in pfr:
+        h["pfr_id"] = h["pfr_id"].fillna("").astype(str)
+        h = h.merge(pfr, on=["pfr_id", "week"], how="left")
+    for c in (*NGS_ALL, *XFP_COLUMNS, *(n for v in PFR_COLUMNS.values() for n in v.values())):
         if c not in h.columns:
             h[c] = np.nan
     h["fpoe"] = h["league_points"] - h["xfp"]
@@ -206,13 +297,16 @@ def features_as_of(history: pd.DataFrame, week: int, *,
                    practice: pd.DataFrame | None = None,
                    depth: pd.DataFrame | None = None,
                    teams: Mapping[str, str] | None = None,
-                   reserve: pd.DataFrame | None = None) -> pd.DataFrame:
+                   reserve: pd.DataFrame | None = None,
+                   offense: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every feature for `week`, from history before `week` only; one row
     per gsis id that has at least one earlier game. `teams` (gsis -> team)
     overrides the last team seen in history (a trade the box scores have not
     caught up with). `reserve` (week, gsis_id: players on a reserve list,
     `reserve_from_rosters`) is read at the latest week it covers up to
-    `week` — a reserve stint persists, so the last known status stands."""
+    `week` — a reserve stint persists, so the last known status stands.
+    `offense` (team, week, plays, pass_rate, off_epa: `offense_history`)
+    feeds the team block."""
     past = history.loc[history["week"] < int(week)].sort_values("week")
     if len(past) == 0:
         return pd.DataFrame(columns=["gsis_id", "position", "team", *FEATURE_COLUMNS])
@@ -226,7 +320,12 @@ def features_as_of(history: pd.DataFrame, week: int, *,
         "ay_share_l3": last3["air_yards_share"].mean(),
         "carries_l3": last3["carries"].mean(), "opp_l3": last3["opps"].mean(),
         "ngs_sep": g["ngs_sep"].mean(), "ngs_yacoe": g["ngs_yacoe"].mean(),
-        "ngs_ryoe": g["ngs_ryoe"].mean(), "ngs_cpoe": g["ngs_cpoe"].mean()})
+        "ngs_ryoe": g["ngs_ryoe"].mean(), "ngs_cpoe": g["ngs_cpoe"].mean(),
+        "xtd_l3": last3["xtd"].mean(), "xtd_season": g["xtd"].mean(),
+        "xfp_share_l3": last3["xfp_share"].mean(), "epa_pg": g["epa"].mean(),
+        **{c: g[c].mean() for c in ("ngs_adot", "ngs_iay_share", "ngs_cushion", "ngs_box8",
+                                    "ngs_rush_eff", "ngs_ttt", "ngs_aggr")},
+        **{n: g[n].mean() for v in PFR_COLUMNS.values() for n in v.values()}})
     f.index.name = "gsis_id"
     f = f.reset_index()
     if teams:
@@ -235,6 +334,19 @@ def features_as_of(history: pd.DataFrame, week: int, *,
     games = schedule_index(schedule, int(week)) if schedule is not None else {}
     f["implied"] = [getattr(games.get(str(t)), "implied_total", None) for t in f["team"]]
     f["implied"] = pd.to_numeric(f["implied"], errors="coerce")
+    sctx = schedule_context(schedule, int(week))
+    for k in ("spread", "wind", "temp"):
+        f[k] = pd.to_numeric([sctx.get(str(t), {}).get(k, np.nan) for t in f["team"]],
+                             errors="coerce")
+    if offense is not None and len(offense):
+        o3 = (offense.loc[offense["week"] < int(week)].sort_values("week")
+              .groupby("team").tail(3).groupby("team"))
+        plays, rate, epa = o3["plays"].mean(), o3["pass_rate"].mean(), o3["off_epa"].mean()
+    else:
+        plays = rate = epa = pd.Series(dtype=float)
+    f["team_plays_l3"] = [plays.get(str(t), np.nan) for t in f["team"]]
+    f["team_pass_rate_l3"] = [rate.get(str(t), np.nan) for t in f["team"]]
+    f["team_epa_l3"] = [epa.get(str(t), np.nan) for t in f["team"]]
     opponent = _opponents(schedule, int(week))
     per = (past.groupby(["opponent_team", "position", "week"])["league_points"].sum()
            .reset_index())
@@ -463,13 +575,17 @@ def fetch_inputs(season: int, *, loaders=None) -> dict[str, pd.DataFrame]:
             "team_stats": lambda: nfl.load_team_stats([season],
                                                       summary_level="week").to_pandas(),
             "rosters": lambda: nfl.load_rosters_weekly([season]).to_pandas(),
+            **{f"pfr_{k}": (lambda k=k: nfl.load_pfr_advstats(
+                [season], stat_type=k, summary_level="week").to_pandas()) for k in PFR_COLUMNS},
         }
     raw = {name: fn() for name, fn in loaders.items()}
     return {"xfp": xfp_from_ff_opportunity(raw.get("ff_opportunity")),
             "ngs": ngs_from_nextgen({k: raw.get(f"ngs_{k}") for k in NGS_COLUMNS}),
             "depth": depth_from_charts(raw.get("depth_charts"), raw.get("schedules")),
             "defense": defense_history(raw.get("team_stats"), raw.get("schedules")),
-            "reserve": reserve_from_rosters(raw.get("rosters"))}
+            "reserve": reserve_from_rosters(raw.get("rosters")),
+            "offense": offense_history(raw.get("team_stats")),
+            "pfr": pfr_from_advstats({k: raw.get(f"pfr_{k}") for k in PFR_COLUMNS})}
 
 
 def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame],
@@ -490,7 +606,8 @@ def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame
 
 def load_inputs(directory: Path, season: int) -> dict | None:
     """The saved inputs for `season`, or None when absent or for another
-    season. Returns {"xfp", "ngs", "depth", "defense", "reserve", "meta"}."""
+    season. Returns {"xfp", "ngs", "depth", "defense", "reserve", "offense",
+    "pfr", "meta"}."""
     folder = Path(directory) / INPUT_DIR
     try:
         meta = json.loads((folder / INPUT_META).read_text(encoding="utf-8"))
@@ -503,6 +620,9 @@ def load_inputs(directory: Path, season: int) -> dict | None:
         rpath = folder / "reserve.parquet"
         frames["reserve"] = (pd.read_parquet(rpath) if rpath.exists()
                              else pd.DataFrame(columns=["week", "gsis_id"]))
+        for name, cols in (("offense", ["team", "week"]), ("pfr", ["pfr_id", "week"])):
+            path = folder / f"{name}.parquet"
+            frames[name] = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=cols)
     except (OSError, ValueError, KeyError):
         return None
     for df in frames.values():
@@ -616,10 +736,11 @@ def build_context(*, weeks: pd.DataFrame | None, inputs: Mapping | None,
     if weeks is None or len(weeks) == 0:
         return AdvancedContext(model, {}, week, "baseline: no box scores to build "
                                "advanced features from")
-    hist = history_frame(weeks, inputs["xfp"], inputs["ngs"])
+    hist = history_frame(weeks, inputs["xfp"], inputs["ngs"], inputs.get("pfr"))
     feats = features_as_of(hist, int(week), schedule=schedule,
                            practice=practice_from_injuries(injuries),
-                           depth=inputs["depth"], teams=teams, reserve=inputs.get("reserve"))
+                           depth=inputs["depth"], teams=teams, reserve=inputs.get("reserve"),
+                           offense=inputs.get("offense"))
     rows = {gid: {**{c: r.get(c) for c in FEATURE_COLUMNS}, "_kind": "skill"}
             for gid, r in zip(feats["gsis_id"], feats.to_dict("records"))}
     dh = inputs.get("defense")
@@ -669,12 +790,17 @@ def schedule_context(schedule: pd.DataFrame | None, week: int) -> dict[str, dict
         line = r.get("spread_line")
         line = float(line) if line == line and line is not None else np.nan
         dome = 1.0 if str(r.get("roof") or "").lower() in ("dome", "closed") else 0.0
+        # indoors there is no weather: wind 0, room temperature; outdoors the
+        # forecast, unknown when the schedule has none
+        wind = 0.0 if dome else pd.to_numeric(r.get("wind"), errors="coerce")
+        temp = 70.0 if dome else pd.to_numeric(r.get("temp"), errors="coerce")
         for team, opp, is_home in ((home, away, 1.0), (away, home, 0.0)):
             out[team] = {"opponent": opp, "home": is_home,
                          "spread": line if is_home else -line,
                          "implied": getattr(games.get(team), "implied_total", np.nan),
                          "opp_implied": getattr(games.get(opp), "implied_total", np.nan),
-                         "dome": dome}
+                         "dome": dome, "wind": float(wind) if wind == wind else np.nan,
+                         "temp": float(temp) if temp == temp else np.nan}
     return out
 
 

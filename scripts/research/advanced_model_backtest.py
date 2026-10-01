@@ -89,11 +89,20 @@ def season_table(season: int, cw: Crosswalk, bt, *, reserve_lag: bool = False) -
     practice = A.practice_from_injuries(nfl.load_injuries([season]).to_pandas())
     depth = A.depth_from_charts(nfl.load_depth_charts([season]).to_pandas(), sched)
     reserve = A.reserve_from_rosters(nfl.load_rosters_weekly([season]).to_pandas())
-    hist = A.history_frame(frame, xfp, ngs)
+    offense = A.offense_history(nfl.load_team_stats([season], summary_level="week").to_pandas())
+
+    def pfr_frame(kind):
+        try:
+            return nfl.load_pfr_advstats([season], stat_type=kind, summary_level="week").to_pandas()
+        except Exception as exc:                                  # noqa: BLE001
+            print(f"  {season}: PFR {kind} unavailable ({type(exc).__name__})", file=sys.stderr)
+            return None
+    pfr = A.pfr_from_advstats({k: pfr_frame(k) for k in A.PFR_COLUMNS})
+    hist = A.history_frame(frame, xfp, ngs, pfr)
     feats = []
     for w in sorted(rows["week"].unique()):
         f = A.features_as_of(hist, int(w), schedule=sched, practice=practice, depth=depth,
-                             reserve=reserve)
+                             reserve=reserve, offense=offense)
         if reserve_lag:
             lag = A.role_features(hist.loc[hist["week"] < int(w)].sort_values("week"), set(),
                                   A.reserve_ids(reserve, int(w) - 1))
