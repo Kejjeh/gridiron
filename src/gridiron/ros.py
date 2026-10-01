@@ -419,7 +419,10 @@ def build_table(*, weeks: pd.DataFrame | None, schedule: pd.DataFrame | None,
     if choice:
         status += "; ROS method by position: " + ", ".join(f"{p} {m}" for p, m in choice.items())
     flagged = int(table["reserve_since"].notna().sum()) if len(table) else 0
-    if flagged:
+    if reserve is None or len(reserve) == 0:
+        status += ("; reserve lists UNKNOWN (no weekly roster data in this build): no "
+                   "injured-reserve games are zeroed — the player map's IR tag is the only flag")
+    elif flagged:
         status += (f"; {flagged} ranked player(s) on a reserve list per the weekly roster: "
                    f"the first {IR_MIN_GAMES} games of the stint are 0 (NFL minimum), "
                    f"a return after them is flagged, never guessed")

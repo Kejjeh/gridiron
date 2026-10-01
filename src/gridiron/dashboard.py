@@ -207,6 +207,8 @@ class Dashboard:
             "current_lineup": [p.sleeper_id if p else None for p in self.plan.current],
             "best_lineup": [p.sleeper_id if p else None for p in self.plan.best],
             "current_points": round(self.plan.current_points, 3),
+            "current_points_partial": self.plan.partial,
+            "unprojected_starters": [p.sleeper_id for p in self.plan.unprojected_starters],
             "best_points": round(self.plan.best_points, 3),
             "lineup_abstained": self.plan.abstained,
             "alternatives": [{
@@ -2505,8 +2507,10 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     if plan.abstained:
         out.append(f"<p class=\"bad\"><b>ABSTAINED:</b> {_e(plan.abstained)}</p>")
     else:
+        partial = (f" (partial: {len(plan.unprojected_starters)} starter(s) unprojected, "
+                   f"counted 0)" if plan.partial else "")
         out.append("<div class=\"kpi\">"
-                   f"<div>current lineup<b>{_num(plan.current_points)}</b></div>"
+                   f"<div>current lineup{_e(partial)}<b>{_num(plan.current_points)}</b></div>"
                    f"<div>best legal lineup<b>{_num(plan.best_points)}</b></div>"
                    f"<div>improvement<b>{_num(plan.improvement, 1, True)}</b></div></div>")
         changes = plan.changes()

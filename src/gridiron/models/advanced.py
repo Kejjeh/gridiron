@@ -229,9 +229,10 @@ def offense_history(team_stats: pd.DataFrame | None) -> pd.DataFrame:
     if team_stats is None or len(team_stats) == 0:
         return pd.DataFrame(columns=cols)
     t = _regular(team_stats, "season_type")
-    num = lambda c: pd.to_numeric(t[c], errors="coerce").fillna(0.0) if c in t else 0.0  # noqa: E731
+    unknown = pd.Series(np.nan, index=t.index)
+    num = lambda c: pd.to_numeric(t[c], errors="coerce") if c in t else unknown  # noqa: E731
     att, car = num("attempts"), num("carries")
-    plays = att + car
+    plays = att + car                        # NaN when either is unknown (rule #11)
     return pd.DataFrame({"team": t["team"].astype(str), "week": t["week"].astype(int),
                          "plays": plays, "pass_rate": (att / plays.where(plays > 0)),
                          "off_epa": num("passing_epa") + num("rushing_epa")})[cols]
@@ -399,11 +400,16 @@ def features_as_of(history: pd.DataFrame, week: int, *,
         if opponent.get(str(t)) else np.nan for t, p in zip(f["team"], f["position"])]
 
     prac = practice.loc[practice["week"] == int(week)] if practice is not None and len(practice) else None
-    flags = (prac.groupby("gsis_id")[["practice_dnp", "practice_limited", "questionable"]]
-             .max() if prac is not None and len(prac) else pd.DataFrame())
+    reported = prac is not None and len(prac) > 0
+    flags = (prac.groupby("gsis_id")[["practice_dnp", "practice_limited", "questionable"]].max()
+             if reported else pd.DataFrame())
+    # No report for the week at all (a build before Friday, a source that is
+    # down) is UNKNOWN, not "nobody is hurt": the flags and the vacated
+    # volume are NaN and the ridge fills them like any missing input. A
+    # player absent from a report that exists has no designation: 0.
     for c in ("practice_dnp", "practice_limited", "questionable"):
-        f[c] = [float(flags[c].get(gid, 0.0)) if len(flags) else 0.0 for gid in f["gsis_id"]]
-    out_ids = set(prac.loc[prac["out"] > 0, "gsis_id"]) if prac is not None else set()
+        f[c] = [float(flags[c].get(gid, 0.0)) if reported else np.nan for gid in f["gsis_id"]]
+    out_ids = set(prac.loc[prac["out"] > 0, "gsis_id"]) if reported else set()
     freed: dict[str, float] = {}
     for gid, team, opp3 in zip(f["gsis_id"], f["team"], f["opp_l3"]):
         if gid in out_ids and opp3 == opp3:
@@ -411,6 +417,7 @@ def features_as_of(history: pd.DataFrame, week: int, *,
     active = f.loc[~f["gsis_id"].isin(out_ids)]
     team_total = active.groupby("team")["opp_l3"].sum()
     f["vacated_pickup"] = [
+        np.nan if not reported else
         0.0 if gid in out_ids or not team_total.get(t) else
         freed.get(str(t), 0.0) * (float(o) if o == o else 0.0) / float(team_total.get(t))
         for gid, t, o in zip(f["gsis_id"], f["team"], f["opp_l3"])]
@@ -571,7 +578,10 @@ class AdvancedModel:
     def load(cls, path: Path = WEIGHTS_PATH) -> "AdvancedModel | None":
         try:
             blob = json.loads(Path(path).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            import sys
+            print(f"[advanced] coefficients not read from {path}: {type(exc).__name__}: {exc}",
+                  file=sys.stderr)
             return None
         return cls({p: Ridge.from_json(v) for p, v in blob["adv"].items()},
                    {p: Ridge.from_json(v) for p, v in blob["stack"].items()},
@@ -600,6 +610,10 @@ class AdvancedModel:
 INPUT_DIR = "model_inputs"
 INPUT_META = "meta.json"
 INPUT_REFRESH_HOURS = 6.0
+#: Inputs older than this drive nothing: the page keeps the baseline and
+#: says how old they are. The ingest manifest's freshness gate never sees
+#: this folder (it is outside the manifest), so the limit lives here.
+MAX_INPUT_AGE_DAYS = 10
 
 
 #: Inputs nothing reads for a number yet (docs/research/FEATURE_EXPANSION.md):
@@ -699,7 +713,11 @@ def load_inputs(directory: Path, season: int) -> dict | None:
                            ("routes", ["gsis_id", "week"])):
             path = folder / f"{name}.parquet"
             frames[name] = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=cols)
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError) as exc:
+        if folder.exists():                     # absent is normal; unreadable is not
+            import sys
+            print(f"[advanced] model inputs under {folder} not read: {type(exc).__name__}: "
+                  f"{exc}", file=sys.stderr)
         return None
     for df in frames.values():
         if "gsis_id" in df:
@@ -795,8 +813,11 @@ class AdvancedContext:
 def build_context(*, weeks: pd.DataFrame | None, inputs: Mapping | None,
                   injuries: pd.DataFrame | None, schedule: pd.DataFrame | None,
                   week: int, teams: Mapping[str, str] | None = None,
-                  model: "AdvancedModel | None" = None) -> AdvancedContext:
-    """Assemble the week's features, or an inactive context with a reason."""
+                  model: "AdvancedModel | None" = None, now=None,
+                  max_age_days: int = MAX_INPUT_AGE_DAYS) -> AdvancedContext:
+    """Assemble the week's features, or an inactive context with a reason.
+    With `now`, inputs fetched more than `max_age_days` earlier are refused
+    (the baseline stands and the status says how old they are)."""
     model = model if model is not None else AdvancedModel.load()
     if model is None:
         return AdvancedContext(None, {}, week, "baseline: the advanced model's "
@@ -812,6 +833,20 @@ def build_context(*, weeks: pd.DataFrame | None, inputs: Mapping | None,
     if weeks is None or len(weeks) == 0:
         return AdvancedContext(model, {}, week, "baseline: no box scores to build "
                                "advanced features from")
+    if now is not None:
+        from datetime import datetime, timezone
+        try:
+            at = datetime.fromisoformat(str((inputs.get("meta") or {}).get("fetched_at")))
+            at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+            age = (now - at).days
+        except (TypeError, ValueError):
+            age = None
+        if age is None or age > max_age_days:
+            return AdvancedContext(model, {}, week, (
+                f"baseline: advanced inputs are {age} days old (fetched "
+                f"{(inputs.get('meta') or {}).get('fetched_at')}), past the "
+                f"{max_age_days}-day limit" if age is not None else
+                "baseline: advanced inputs carry no readable fetch time"))
     hist = history_frame(weeks, inputs["xfp"], inputs["ngs"], inputs.get("pfr"),
                          inputs.get("routes"))
     feats = features_as_of(hist, int(week), schedule=schedule,
@@ -891,6 +926,9 @@ def defense_history(team_stats: pd.DataFrame | None,
     if team_stats is None or len(team_stats) == 0:
         return pd.DataFrame(columns=cols)
     t = _regular(team_stats, "season_type").copy()
+    from gridiron.scoring import _DEFENSE_COMPONENTS
+    scoring_cols = {c for cols in _DEFENSE_COMPONENTS.values() for c in cols}
+    scorable = scoring_cols <= set(t.columns)
     allowed: dict[tuple[int, str], float] = {}
     if schedule is not None and len(schedule):
         s = _regular(schedule, "game_type")
@@ -898,7 +936,10 @@ def defense_history(team_stats: pd.DataFrame | None,
             if r.home_score == r.home_score and r.home_score is not None:
                 allowed[(int(r.week), str(r.home_team))] = float(r.away_score)
                 allowed[(int(r.week), str(r.away_team))] = float(r.home_score)
-    num = lambda c: pd.to_numeric(t[c], errors="coerce").fillna(0.0) if c in t else 0.0  # noqa: E731
+    # A column the source did not carry is UNKNOWN for every team (rule #11);
+    # the ridge fills it like any missing input instead of reading zero sacks.
+    unknown = pd.Series(np.nan, index=t.index)
+    num = lambda c: pd.to_numeric(t[c], errors="coerce") if c in t else unknown  # noqa: E731
     out = pd.DataFrame({
         "team": t["team"].astype(str), "week": t["week"].astype(int),
         "opponent_team": t["opponent_team"].astype(str),
@@ -909,8 +950,12 @@ def defense_history(team_stats: pd.DataFrame | None,
         "giveaways": num("passing_interceptions") + num("sack_fumbles_lost")
         + num("rushing_fumbles_lost") + num("receiving_fumbles_lost"),
         "sacks_suffered": num("sacks_suffered"), "fga": num("fg_att"), "xpa": num("pat_att")})
-    out["dst_points"] = [defense_points(r, pa) for r, pa in
-                         zip(t.to_dict("records"), out["points_allowed"])]
+    # The defense's points are scored only when every column the scoring
+    # rules read is present; a frame missing one gets NaN, never a number
+    # computed from zero sacks and takeaways.
+    out["dst_points"] = ([defense_points(r, pa) for r, pa in
+                          zip(t.to_dict("records"), out["points_allowed"])]
+                         if scorable else np.nan)
     return out[cols]
 
 

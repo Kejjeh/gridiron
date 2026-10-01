@@ -144,6 +144,9 @@ def ros_block(*, weeks, schedule, injuries, directory, season, week, players, cr
                         "still makes every lineup call",
                 "players": table.loc[keep, cols].to_dict("records")}
     except Exception as exc:                                  # noqa: BLE001
+        import traceback
+        print(f"[ros] rankings failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return {"status": f"ROS rankings failed: {type(exc).__name__}: {exc}", "players": []}
 
 
@@ -252,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
             teams[gid] = nflverse_team(rec.get("team"))
     advanced = adv_model.build_context(
         weeks=weeks, inputs=adv_model.load_inputs(directory, state_season),
-        injuries=injuries, schedule=schedule, week=report_week, teams=teams)
+        injuries=injuries, schedule=schedule, week=report_week, teams=teams, now=now)
 
     owner_id = find_owner_id(snapshot, args.owner)
     if owner_id is None:

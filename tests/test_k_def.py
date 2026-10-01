@@ -120,8 +120,26 @@ def _team_stats(sched):
                          "opponent_team": opp, "def_sacks": 3 if team == "AAA" else 1,
                          "def_interceptions": 1, "fumble_recovery_opp": 0,
                          "passing_interceptions": 1, "sacks_suffered": 2,
-                         "fg_att": 2, "pat_att": 3})
+                         "fg_att": 2, "pat_att": 3,
+                         # every column the scoring rules read, as the real
+                         # nflverse frame carries them (zero here)
+                         **{c: 0 for c in ("def_fg_blocks", "def_fumbles_forced", "def_pat_blocks",
+                                           "def_punt_blocks", "def_safeties", "def_tds",
+                                           "fumble_recovery_tds", "special_teams_tds")}})
     return pd.DataFrame(rows)
+
+
+def test_a_frame_missing_a_scoring_column_scores_nothing_rather_than_zero():
+    sched = _schedule()
+    short = _team_stats(sched).drop(columns=["def_safeties"])
+    dh = A.defense_history(short, sched)
+    assert dh["dst_points"].isna().all()                       # unknown, never from zero safeties
+    assert dh["sacks"].notna().all()                           # the columns it has still read
+    no_sacks = _team_stats(sched).drop(columns=["def_sacks"])
+    assert A.defense_history(no_sacks, sched)["sacks"].isna().all()
+    off = A.offense_history(pd.DataFrame([{"team": "AAA", "week": 1, "season_type": "REG",
+                                           "attempts": 30}]))
+    assert np.isnan(off.iloc[0]["plays"]) and np.isnan(off.iloc[0]["pass_rate"])
 
 
 def test_defense_history_scores_every_team_week():

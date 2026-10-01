@@ -108,7 +108,12 @@ def test_a_starter_missing_from_the_box_score_hands_his_role_to_who_played():
     assert f.loc["rb2", "opp_jump"] == pytest.approx(17.0)
     assert f.loc["rb2", "snap_jump"] == pytest.approx(0.5)
     assert f.loc["rb2", "absent_pickup"] == pytest.approx(19.0)     # rb1's 19 per game
-    assert f.loc["rb2", "vacated_pickup"] == 0.0                     # rb1 is NOT on the report
+    assert np.isnan(f.loc["rb2", "vacated_pickup"])                  # no report this week: unknown
+    empty_report = A.practice_from_injuries(pd.DataFrame([
+        {"week": 5, "gsis_id": "wr9", "team": "NYJ", "position": "WR",
+         "report_status": "Questionable", "practice_status": None}]))
+    g = A.features_as_of(_role_hist(), 5, practice=empty_report).set_index("gsis_id")
+    assert g.loc["rb2", "vacated_pickup"] == 0.0                     # a report exists; rb1 is not on it
     assert f.loc["rb1", "opp_share_last"] == 0.0 and f.loc["rb1", "absent_pickup"] == 0.0
     # before the injury nothing fires
     before = A.features_as_of(_role_hist(), 4).set_index("gsis_id")

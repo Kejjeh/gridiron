@@ -102,7 +102,11 @@ def week_archives(root: Path, season: int, week: int) -> list[tuple[datetime, Pa
         stamp = archive_stamp(path)
         try:
             blob = read_archive(path)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            # Said, not skipped in silence: grading a different archive than
+            # the one the page froze would weaken rule #7 without a trace.
+            print(f"[grade] archive {path.name} not readable ({type(exc).__name__}: {exc}); "
+                  f"skipped", file=sys.stderr)
             continue
         if stamp is not None and int(blob.get("week") or -1) == week:
             out.append((stamp, path, blob))
