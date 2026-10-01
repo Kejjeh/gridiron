@@ -40,12 +40,16 @@ the first system here that is not behind Sleeper out of sample; it does not
 clear the strict bar and stays a contender until the shoot-out says so.
 `AdvancedContext.stacked()` now feeds its own advanced mean as `adv`.
 
+Non-linear learner (2026-10-01, owner-approved scikit-learn, research only):
+gradient-boosted trees lose to the ridge on ordering in every fold and every
+configuration (`docs/research/GBM_BACKTEST.md`); nothing ships, serving
+never imports it.
+
 Not done / next: the live shoot-out is the scoreboard for the new weights
-and the calibrated stack (first graded week: 5); a non-linear learner
-(interactions such as last-game share x starter missing) needs a dependency
-— none is installed — and the owner's call. Honest ceiling: a linear blend of
-public inputs ties the strongest public comparator on ordering; "best" beyond
-that is not something this repo can show on history.
+and the calibrated stack (first graded week: 5). Honest ceiling on history:
+a linear model of public inputs, and a calibrated blend with Sleeper that
+ties it on ordering and beats it on error. More seasons of training rows,
+or a new input (player props), are the remaining levers — each a project.
 
 
 ## Weekly routine — skills, usage trends, grading (2026-09-30, draft)

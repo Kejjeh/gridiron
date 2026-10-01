@@ -10,6 +10,10 @@ nflreadpy>=0.1.5      # polars-native; NOT the deprecated nfl_data_py
 pandas>=2.0,<4        # tested on 3.x (copy-on-write, new string dtype)
 pyarrow>=15           # parquet cache: NaN stays NaN, counts stay ints
 
+# Research only (scripts/research/gbm_backtest.py), owner-approved 2026-10-01.
+# Serving never imports it: a boosted model ships as JSON trees read by numpy.
+scikit-learn>=1.5
+
 # Not needed: espn-api (the league is on Sleeper, whose read API needs no
 # auth — gridiron.sleeper uses stdlib urllib). No markdown/table library:
 # gridiron.weekly renders its own table.
