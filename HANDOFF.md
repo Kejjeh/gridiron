@@ -52,7 +52,11 @@ Sleeper + half our residual ridge, and the two-stage ridge), calibrated and
 composed into one ridge: ahead of Sleeper on ordering in 6 of 7 seasons
 (64.68% vs 64.61%; 2020 behind by 0.18) and on MAE in 7 of 7 (3.862 vs
 3.971) — the strongest result here, recorded `bar_cleared: false`
-(`scripts/research/blend_search.py`). Three-fold "ties" did not survive.
+(`scripts/research/blend_search.py`). Three-fold "ties" did not survive. The owner then asked to beat Sleeper in
+EVERY season: nested blend weights, knob selection on inner folds, residual-
+model structure, and the role/reserve features were all tried on seven folds
+(STACK_CALIBRATION.md, "Trying to win every season"); 2020 stays behind by
+0.12-0.19 under every untuned variant. Six of seven is the verified state.
 
 Non-linear learner (2026-10-01, owner-approved scikit-learn, research only):
 gradient-boosted trees lose to the ridge on ordering in every fold and every

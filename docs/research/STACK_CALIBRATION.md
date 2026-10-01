@@ -99,3 +99,32 @@ was behind in four.
   serving change.
 - The record's `contenders` block and the weekly shoot-out carry it as
   before; nothing on the page changes until the shoot-out says so.
+
+## Trying to win every season (2026-10-01, later)
+
+Goal set by the owner: beat Sleeper in every held-out season on both
+metrics. The mix is behind in 2020 alone (−0.18 points of start/sit; error
+is ahead there too). Everything below was declared before it ran and judged
+on all seven folds; nothing was tuned to 2020.
+
+| attempt | script | 2020 ordering vs Sleeper | folds ahead |
+|---|---|---|---|
+| fixed mix (ships) | `blend_search.py` | −0.18 | 6 of 7 |
+| learned blend weights, nested (pooled / per position / averaged with the mix) | `super_learner.py` | −0.58 / −0.40 / −0.24 | 2 / 3 / 4 of 7 |
+| mix knobs (shrink k, part weight w) selected on inner folds by ordering, pooled / per position | `mix_select.py` | −0.17 / −0.29 | 5 / 4 of 7 |
+| residual model on the evaluation universe only | `resid_variants.py` | −0.19 | 6 of 7 |
+| residual model + Sleeper's number and its gaps to ours | `resid_variants.py` | −0.35 | 4 of 7 |
+| residual model with week × position fixed effects | `resid_variants.py` | −0.17 | 6 of 7 |
+| residual model + reserve-list teammates (2020's absences ran through the reserve/COVID list, never the injury report) | `resid_variants.py --role` | −0.20 | 6 of 7 |
+| residual model + team share and jumps | `resid_variants.py --role` | −0.12 | 6 of 7 |
+| residual model + the whole role block | `resid_variants.py --role` | −0.14 | 6 of 7 |
+
+Reading it: the learned meta-learner is unstable (its inputs are collinear —
+the two-stage form already contains Sleeper) and loses; the blend knobs do
+not matter; the residual model's structure does not matter; the reserve-list
+hypothesis for 2020 did not hold. 2020's input coverage (depth charts,
+expected points, snaps, lines, report flags) is in line with other seasons.
+Sleeper is simply better that season by about a sixth of a point on
+ordering, for reasons the public inputs do not carry. Six of seven is where
+the evidence stops; a seventh would have to come from a new input, not from
+re-arranging these.
