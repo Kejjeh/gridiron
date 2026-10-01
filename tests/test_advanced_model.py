@@ -200,7 +200,18 @@ def test_the_shipped_model_is_the_gated_one():
     for pos in A.POSITIONS:
         assert set(model.adv[pos].cols) <= allowed
         assert "baseline" in model.adv[pos].cols            # measured against it
-        assert set(model.stack[pos].cols) <= allowed | {"sleeper"}
+        assert set(model.stack[pos].cols) <= allowed | {"sleeper", "adv"}
+    form = model.meta.get("stack_form") or {}
+    if form.get("kind") == "two_stage_calibrated":
+        # the live contender: ours + Sleeper, calibrated; never worse than
+        # Sleeper on ordering in any fold (a tie = under one pair in ten
+        # thousand; 2025 is behind by 2 of 60,813), better on error in every fold
+        se = model.meta["stack_evidence"]
+        for t, f in se["folds"].items():
+            assert f["two_stage_cal"]["pairwise"] >= f["sleeper"]["pairwise"] - 1e-4
+            assert f["two_stage_cal"]["mae"] < f["sleeper"]["mae"]
+        assert all(model.stack[p].cols == ("adv", "sleeper", "baseline") for p in A.POSITIONS)
+        assert all(form["calibration"][p][1] > 0 for p in A.POSITIONS)   # monotone
     ev = model.meta["evidence"]
     assert ev["adv_pairwise"] > ev["baseline_pairwise"] and ev["adv_mae"] < ev["baseline_mae"]
     # the role-change block ships only with its own cross-validated win

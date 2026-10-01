@@ -569,6 +569,9 @@ class AdvancedContext:
             return None
         full = {**row, "baseline": baseline, "sleeper": sleeper,
                 "ppg_to_date": baseline if ppg_to_date is None else ppg_to_date}
+        # the two-stage form reads the page's own advanced mean as an input
+        # (docs/research/STACK_CALIBRATION.md); older forms ignore the key
+        full["adv"] = self.model.predict(position, full)
         mean = self.model.predict(position, full, stacked=True)
         return None if mean is None else round(mean, 3)
 

@@ -32,10 +32,20 @@ a game, RB29 — the linear weights move him, not far. The live depth chart
 still lists the third back first, so "the depth chart carries the news" from
 history does not hold this week.
 
+Stack calibration (2026-10-01, `docs/research/STACK_CALIBRATION.md`): the
+`stack` contender (ours + Sleeper) is now a calibrated two-stage blend —
+never worse than Sleeper on ordering in any fold (2025: behind by 2 of
+60,813 pairs, a tie), better on MAE in every fold (3.707 vs 3.764). It is
+the first system here that is not behind Sleeper out of sample; it does not
+clear the strict bar and stays a contender until the shoot-out says so.
+`AdvancedContext.stacked()` now feeds its own advanced mean as `adv`.
+
 Not done / next: the live shoot-out is the scoreboard for the new weights
-(first graded week: 5); a non-linear learner (interactions such as last-game
-share x starter missing) needs a dependency — none is installed — and the
-owner's call.
+and the calibrated stack (first graded week: 5); a non-linear learner
+(interactions such as last-game share x starter missing) needs a dependency
+— none is installed — and the owner's call. Honest ceiling: a linear blend of
+public inputs ties the strongest public comparator on ordering; "best" beyond
+that is not something this repo can show on history.
 
 
 ## Weekly routine — skills, usage trends, grading (2026-09-30, draft)
