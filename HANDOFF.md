@@ -1,76 +1,58 @@
 # HANDOFF
 
-Updated: 2026-09-08 (draft-day session; league settings verified, draft
-board + Monte Carlo built, war-room artifact published)
+Updated 2026-09-08 after the draft-readiness repair.
 
-## State
+## Current state
 
-**League settings are VERIFIED** (`league_config.SETTINGS_VERIFIED = True`).
-Platform Sleeper, league 1389720742551093249 (id in `.env`, pulled by
-`scripts/research/pull_sleeper.py`). 12 teams, half-PPR, INT −1,
-QB/2RB/2WR/TE/2FLEX/K/DEF + 5 BN + 1 IR, 15-round snake, Josh at slot 1.
-Rule #1 no longer blocks; K/DEF weights live in `league_config` as dicts.
+Local repository repaired; outputs regenerated. No push or deployment.
+League settings are verified for Sleeper 1389720742551093249, 12-team
+half-PPR, slot 1, fifteen rounds, two FLEX, K and DEF.
+Current instructions and limitations: docs/research/DRAFT_2026_PLAN.md.
 
-**Code** — smoke green; 74 tests:
-- Bootstrap skeleton + pure-math modules unchanged (`winprob`, `shrinkage`,
-  `season`, `vegas`). Tests that pinned full-PPR now pass an explicit
-  `ScoringRules(reception=1.0)`; `DEFAULT_SCORING` is the league's rules.
-- `scripts/research/pull_sleeper.py`, `pull_nflverse_2026.py`,
-  `pull_fantasypros.py` — draft-day pulls into `data/research/cache/draft2026/`
-  (gitignored). nflreadpy 0.1.5 works; `load_injuries(2026)` refuses
-  (season cap 2025) and 2026 stats 404 until week 1 lands.
-- `scripts/research/draft_board_2026.py` — projections under league scoring,
-  replacement by lineup fill, VOR, ADP-availability model, 300-draft Monte
-  Carlo. Output committed: `data/outputs/draft2026_board.csv`.
+The earlier roughly 100-point strategy advantage was invalid: competing
+policies missed starter slots. All simulated teams now complete their
+rosters; temporarily ineligible players can be reconsidered. Identical
+seeds and identical downstream policy isolate scripted openings.
+Static VOR is 1890.4 versus dynamic 1885.1 in the rebuilt 300-draw results.
+These are exploratory projected outcomes, not validated predictions.
 
-- `src/gridiron/draft.py` — pure draft math (snake order, ADP survival,
-  lineup-fill replacement, optimal lineup), written test-first in
-  `tests/test_draft.py`; the board script imports it.
-- `scripts/research/warroom/` — the war-room page source: template,
-  `draftroom_logic.js` (mirrors `draft.py`; `node --test` in that dir, 7
-  tests), and `warroom_build.py` which emits
-  `data/outputs/draft2026_warroom.html`, the file published as the artifact.
+Room survival uses a separate 1,000-draft neutral-market scenario with
+actual selections removed, rather than ghosting your choices. It is
+labeled a pre-draft snapshot. ADP is the default page mode, also unvalidated.
+The manifest stores input fingerprints, timestamps, seeds, results and
+board hash; the page builder checks that hash before publishing an artifact.
 
-**Draft plan** — `docs/research/DRAFT_2026_PLAN.md`. Gibbs at 1; Bowers at
-the 2/3 turn (97% there at 24); static best-VOR beat every scripted opening
-by ~100 lineup points. The live tool is the "1.01 War Room" artifact
-(tracks picks, recomputes survival odds to the next pick, localStorage).
+The HTML now contains all 983 board records, keeps historical correction
+indices, validates Mine/Gone against your turn, shows save failures, and
+supports JSON backup/restore plus unlisted players. Explicitly starred
+alternatives are included in the pick backup. Old saved data is validated
+before use; the page never silently overwrites an unreadable save.
 
-**Research** — `docs/research/QUANT_FOUNDATIONS.md` unchanged: §1, §2, §4
-verified; §5–7 partly (381/382, 177/12, 66/9). The half-PPR replacement
-question from §6 was answered empirically today: the 24 flex slots filled
-16 WR / 8 RB on the 2026 projection curve, so replacement = RB33 / WR41 /
-TE13, not the full-PPR RB25 / WR35.
-
-**Room + injuries (draft day, later)** — `docs/research/COMPETITION_2026.md`
-(manager profiles from 2023–25 Sleeper history; per-slot QB/TE/RB/WR timing
-shifts feed the sim, which exports history-aware survival odds `ph{pick}`
-into the board and the page) and `docs/research/INJURY_EFFECTS.md`
-(Questionable-and-played = 0.84; RB ankle/knee returns 0.77/0.79 for six
-games). `gridiron.ledger` (test-first) records the real draft with the
-rejected side per pick and grades the survival predictions.
+Production pandas/numpy and optional research libraries are declared.
+The user authorized installing them into the existing repository .venv.
+Verification: full Python suite 104 passing and JavaScript 15 passing;
+required offline smoke checks pass. Browser checks cover recording, correcting,
+backup/restore, refresh persistence, and previously missing player search.
 
 ## Next
 
-1. **After the draft**: `PYTHONPATH=src python scripts/research/record_draft_2026.py`
-   writes `data/ledger/draft_2026.csv` and prints my picks with the rejected
-   side plus the Brier score of the board's `p{k}`/`ph{k}` predictions.
-   Commit the ledger. Then compare ADP-only vs history-aware odds on the
-   real picks to decide which model the in-season tools should trust.
-2. Build step 2 ingest for the season: nflreadpy weekly + snaps + schedules
-   lines, Sleeper league rosters/matchups each Tuesday. Cached 2023–25 data
-   already exists.
-3. Build step 3 baseline with the corrected shape (usage prior × efficiency ×
-   line multiplier), now with real scoring. Register in `golden_run.py`.
-4. Reconcile the §5–7 verification failures (unchanged from last handoff).
-5. First skills (rule #12): roster-audit and waiver-board are the immediate
-   in-season needs; waivers clear Wed 3 AM ET.
+1. Before the draft, follow the checklist in DRAFT_2026_PLAN.md. Use the
+   HTML as a manual companion and confirm all decisions in Sleeper.
+2. After the draft, run record_draft_2026.py. It identifies your selections
+   by draft slot (including autopicks) and evaluates ADP/room on common
+   nonmissing support. Its alternative is a retrospective benchmark.
+   Keep the page JSON backup for the actual alternatives considered.
+3. Repair the remaining source-ID crosswalk, incomplete cache producers,
+   minor scoring-stat coverage and injury/projection validation before
+   treating the output as a reliable decision engine.
+4. Continue the in-season ingest/baseline work described in the existing
+   architecture and research docs; no new model signal was validated here.
 
-## Not done deliberately
+## Caveats
 
-- No skills yet.
-- The dynamic VONA policy in the board script underperformed static VOR
-  because its need weights were hand-set; left as-is rather than tuned on
-  draft day.
-- FantasyPros projection pages only render 10 rows server-side; the board
-  used Sleeper projections + ECR-implied points instead.
+No fresh news pull during this repair. Cached injury exclusions are
+scenario assumptions; player-specific causal discounts remain unproven.
+Older COMPETITION_2026.md and INJURY_EFFECTS.md are historical exploratory
+research. Their earlier probability and causal claims are not current
+validation. CLAUDE.md's placeholder-settings headline predates the verified
+league configuration; the settings gate remains enforced in the builders.

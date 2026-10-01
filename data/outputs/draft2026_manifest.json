@@ -1,0 +1,88 @@
+{
+  "generated": "2026-09-09T00:26:04.653344+00:00",
+  "seed": 20260908,
+  "room_seed": 20260909,
+  "policy_sims": 300,
+  "room_sims": 1000,
+  "adp_source": "Sleeper adp_half_ppr",
+  "adp_retrieved": "2026-09-09T00:23:11.896865+00:00",
+  "room_model": "neutral-market-sleeper-v3",
+  "validated": false,
+  "inputs": [
+    {
+      "name": "sleeper_projections_2026.csv",
+      "sha256": "68c29708cc4461e0f8bc961e8f4761e5f3f662ea44ccc93b5df3fcf6a2759f1c",
+      "modified": "2026-09-08T20:49:03.439170+00:00"
+    },
+    {
+      "name": "fp_ecr_half.json",
+      "sha256": "8aaa89bf9897beddfe9071490269165fb85b792dc9b7598a0fc929d79b1ef88d",
+      "modified": "2026-09-08T20:47:28.105641+00:00"
+    },
+    {
+      "name": "ffc_adp_half-ppr.json",
+      "sha256": "656279fd975dd00b3ad6833d37bef090865019b8a0599a14ee59c459418b4c76",
+      "modified": "2026-09-08T20:48:09.671245+00:00"
+    },
+    {
+      "name": "sleeper_adp_2026.json",
+      "sha256": "b3e7c9709a5db8d89612be74a3a928efc7d58eb4f8625030b4b1a1aa2b3f927c",
+      "modified": "2026-09-09T00:23:11.897446+00:00"
+    },
+    {
+      "name": "ff_playerids.csv",
+      "sha256": "df234f344e565cf23a8d0c83f5c2d544081e1f23f30c981761cef036b136e218",
+      "modified": "2026-09-08T20:47:14.068756+00:00"
+    },
+    {
+      "name": "stats_season_2025.csv",
+      "sha256": "9e6c28da20652ac28b2299108201ab75811e8ba6ac5f1046866a354a4ba4bf65",
+      "modified": "2026-09-08T20:47:11.814936+00:00"
+    },
+    {
+      "name": "sleeper_players.json",
+      "sha256": "38ee87763994f76800748d1ab6d697e0025122c065e5189840f9f2f3277a587c",
+      "modified": "2026-09-08T20:48:10.516676+00:00"
+    },
+    {
+      "name": "competition_shifts_2026.csv",
+      "sha256": "512ade28bbfa122a42d0fec421e77f20af6f2522c0a5ff753d833f79294cf9d0",
+      "modified": "2026-09-08T21:32:47.132077+00:00"
+    }
+  ],
+  "policies": {
+    "static_vor": {
+      "mean": 1893.5571450980397,
+      "p10": 1875.0660833333334
+    },
+    "dynamic_vona": {
+      "mean": 1893.057786764706,
+      "p10": 1871.7244362745103
+    },
+    "rb_rb_rb": {
+      "mean": 1872.9611923202617,
+      "p10": 1848.5570833333338
+    },
+    "rb_wr_wr": {
+      "mean": 1881.966396568628,
+      "p10": 1865.02875
+    },
+    "rb_rb_wr": {
+      "mean": 1888.493503594771,
+      "p10": 1867.2945000000004
+    },
+    "rb_te_wr": {
+      "mean": 1867.2155321895427,
+      "p10": 1851.8473382352943
+    },
+    "rb_wr_qb": {
+      "mean": 1860.0287460784318,
+      "p10": 1844.4616666666668
+    },
+    "wr_at_1": {
+      "mean": 1849.0651799019608,
+      "p10": 1827.1320833333336
+    }
+  },
+  "board_sha256": "305ee3104198c994541314db4a56e68e5bc35a7a0fa101a17df140a7722c4065"
+}

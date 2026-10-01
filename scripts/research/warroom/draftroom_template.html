@@ -1,6 +1,7 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The 1.01 War Room</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{
   --bg:#0e1712; --bg2:#13201a; --panel:#182a21; --line:#274135; --line2:#33523f;
@@ -52,7 +53,7 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
 
 /* ---------- top bar ---------- */
 .top{position:sticky;top:0;z-index:20;background:var(--bg2);border-bottom:1px solid var(--line);}
-.top-in{max-width:1380px;margin:0 auto;padding:10px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center}
+.top-in{width:100%;margin:0;padding:10px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center}
 .brand{display:flex;align-items:baseline;gap:10px}
 .brand h1{margin:0;font-size:26px;font-weight:800;line-height:1;text-transform:uppercase}
 .brand .sub{color:var(--ink3);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
@@ -61,7 +62,7 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
 .pill b{color:var(--ink);font-family:"Barlow Condensed",sans-serif;font-size:18px;font-weight:700;line-height:1}
 .pill.hot{border-color:var(--amber);color:var(--amber)}
 .pill.hot b{color:var(--amber)}
-.tools{display:flex;gap:8px;align-items:center}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .search{width:220px;max-width:44vw;padding:8px 10px;border:1px solid var(--line2);border-radius:var(--radius);background:var(--panel);color:var(--ink);font-size:14px}
 .search::placeholder{color:var(--ink3)}
 .btn{padding:8px 12px;border:1px solid var(--line2);border-radius:var(--radius);background:var(--panel);font-size:13px;font-weight:500}
@@ -69,19 +70,19 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
 .btn.warn{border-color:var(--bad);color:var(--bad)}
 
 /* ---------- layout ---------- */
-.wrap{max-width:1380px;margin:0 auto;padding:12px 14px 60px;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+.wrap{width:100%;margin:0;padding:12px 14px 60px;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
 .main{min-width:0}
-.side{position:sticky;top:64px;display:grid;gap:12px}
+.side{position:sticky;top:var(--sidebar-top,104px);max-height:calc(100dvh - var(--sidebar-top,104px) - 12px);overflow-y:auto;overscroll-behavior-y:contain;scrollbar-gutter:stable;display:grid;gap:12px;align-content:start}
 @media (max-width:980px){
   .wrap{grid-template-columns:1fr}
-  .side{position:static}
+  .side{position:static;max-height:none;overflow:visible;scrollbar-gutter:auto}
   .tabs{display:flex}
   .tabpane{display:none}
   .tabpane.on{display:block}
-  .top-in{grid-template-columns:1fr auto}
+  .top-in{grid-template-columns:1fr}
   .clock{grid-column:1/-1;justify-content:flex-start}
 }
-@media (min-width:981px){ .tabs{display:none} .tabpane{display:block} }
+@media (min-width:981px){ .tabs{display:none} .tabpane{display:none} .tabpane[data-pane="board"]{display:block} }
 .tabs{gap:6px;margin-bottom:10px}
 .tabs button{flex:1;padding:9px 6px;border:1px solid var(--line2);background:var(--panel);border-radius:var(--radius);font-family:"Barlow Condensed",sans-serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
 .tabs button.on{background:var(--amber);color:var(--amber-ink);border-color:var(--amber)}
@@ -100,6 +101,8 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
 
 /* ---------- board table ---------- */
 .board-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+.context-cell{min-width:115px;font-size:12px}.context-cell summary{cursor:pointer}.context-cell .meta{white-space:normal;font-size:10px}.context-cell details{max-width:175px}.context-cell p{margin:5px 0} #contextInfo{padding:8px 12px;font-size:12px;color:var(--ink2)}
+#changesPanel{padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:8px 0} #changesPanel>summary{cursor:pointer;font-weight:600}.changes-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}.changes-grid h3{font-size:14px;margin:12px 0 6px}.changes-grid ul{padding-left:18px;font-size:13px}.changes-grid li{margin:6px 0}.changes-grid p{font-size:13px}.changes-grid .meta{white-space:normal}.changes-link{font-size:11px;padding:2px 5px;margin-left:5px}#changesTeam{margin:8px} .changes-table{overflow:auto}.changes-table table{min-width:650px;font-size:12px}
 table{border-collapse:collapse;width:100%;min-width:760px}
 th,td{padding:7px 8px;text-align:left;vertical-align:middle;border-bottom:1px solid var(--line)}
 th{position:sticky;top:0;background:var(--bg2);color:var(--ink3);font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;z-index:1;white-space:nowrap}
@@ -216,6 +219,34 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
 
 <div class="wrap">
 <div class="main">
+<div class="panel" style="margin-bottom:12px">
+  <details id="changesPanel"><summary>2026 changes · players, coaches, scheme and PFF</summary>
+<label>Team <select id="changesTeam" aria-label="2026 changes team"></select></label>
+<div id="changesBody"></div></details>
+<div id="contextInfo"></div>
+  <div id="saveStatus" role="status" aria-live="polite"></div>
+  <div id="actionStatus" role="alert"></div><div id="freshness"></div><div id="editStatus"></div>
+  <p class="foot">Read-only Sleeper sync or manual tracking; keep Sleeper open to make picks. Availability estimates are unvalidated and do not adjust for opponents’ roster needs.</p>
+  <div style="margin:8px 0"><button class="btn" id="syncBtn">Connect Sleeper (replace local picks)</button> <span id="syncStatus">Disconnected · manual entry</span></div>
+<div id="adpSource" class="foot"></div>
+<details><summary>Kicker and defense: Subvertadown Week 1</summary><p>Public preview checked September 8: Cameron Dicker 10.0, Cam Little 9.7; Jaguars D/ST 9.9, Chargers D/ST 8.4. These are weekly source projections, not a complete ranking or a verified match to this league’s scoring. Season projections remain unchanged.</p><a href="https://subvertadown.com/weekly/kicker" target="_blank" rel="noopener">Kicker details</a> · <a href="https://subvertadown.com/weekly/defense" target="_blank" rel="noopener">Defense rankings</a> · <a href="https://subvertadown.com/" target="_blank" rel="noopener">Public preview</a></details>
+<details id="recovery"><summary>Pick log, corrections and backup</summary>
+    <p>Compare stars save the alternatives you considered with your next pick. Edit a historical pick, then choose its replacement on the board. Clear keeps its pick number unresolved.
+    Undo above removes only the latest pick.</p>
+    <div class="tools">
+      <button class="btn" id="exportBtn">Export backup</button>
+      <button class="btn" id="importBtn">Restore pasted backup</button>
+      <button class="btn" id="cancelEdit">Cancel correction</button>
+    </div>
+    <label>Backup JSON<textarea id="backupText" rows="4" style="width:100%" placeholder="Export to copy, or paste a backup to restore"></textarea></label>
+    <div class="tools">
+      <label>Unlisted player <input id="customName" maxlength="120" placeholder="Full player name"></label>
+      <label>Position <select id="customPos"><option>QB</option><option>RB</option><option>WR</option><option>TE</option><option>K</option><option>DEF</option></select></label>
+      <button class="btn" id="customBtn">Record unlisted player</button>
+    </div>
+    <div id="ownership"></div><div id="pickLog"></div>
+  </details>
+</div>
   <div class="tabs">
     <button class="on" data-tab="board">Board</button>
     <button data-tab="roster">My team</button>
@@ -237,9 +268,9 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
       <button class="chip tagf" data-tag="avoid" title="avoid + regress chips">Avoid</button>
       <span class="spacer"></span>
       <span class="legend">Odds:</span>
-      <button class="chip modef" data-mode="adp" title="Market only: blended Sleeper/FFC ADP with a fitted spread">ADP</button>
-      <button class="chip modef on" data-mode="room" title="This room: 1,000 simulated drafts using each manager's 2023-25 tendencies">Room</button>
-      <button class="chip modef" data-mode="hybrid" title="Weighted blend of the two">Hybrid</button>
+      <button class="chip modef" data-mode="adp" title="Sleeper half-PPR ADP with a fitted availability spread; missing ADP uses an estimated fallback">ADP</button>
+      <button class="chip modef on" data-mode="room" title="Pre-draft room scenario; does not condition on actual picks">Room snapshot</button>
+      <button class="chip modef" data-mode="hybrid" title="Exploratory blend; no validated weight">Hybrid</button>
       <label class="legend" id="wLabel" hidden>room <span id="wVal">50</span>% <input type="range" id="wRange" min="0" max="100" step="5" value="50" style="vertical-align:middle;width:90px"></label>
       <label class="legend"><input type="checkbox" id="hideGone" checked> hide drafted</label>
       <label class="legend"><input type="checkbox" id="showNotes" checked> notes</label>
@@ -254,8 +285,12 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
           <th class="r sorted" data-sort="vor" title="Points over the replacement starter at the position">VOR</th>
           <th class="r" data-sort="tier" title="FantasyPros consensus tier">Tier</th>
           <th class="r" data-sort="ecr" title="FantasyPros expert consensus rank (half-PPR)">ECR</th>
-          <th class="r" data-sort="adp" title="Blended ADP: 60% Sleeper, 40% FFC 12-team half-PPR">ADP</th>
-          <th class="r" data-sort="pnext" id="nextHead" title="Chance this player is still there at your next pick (the one after the current pick when you are on the clock): from 1,000 simulated drafts using each manager's 2023-25 tendencies, conditioned on who is already gone (ADP model as fallback)">Next?</th>
+          <th class="r" data-sort="adp" title="Sleeper half-PPR redraft ADP; not custom to league size or FLEX slots">ADP</th>
+          <th class="r" data-sort="pnext" id="nextHead" title="Chance this player is still there at your next pick (the one after the current pick when you are on the clock): ADP estimates or a 1,000-draft room snapshot, according to the selected mode. Neither is validated.">Next?</th>
+          <th title="Historical team run blocking; does not adjust projections">Run blocking</th>
+          <th title="Historical team pass blocking; does not adjust projections">Pass protection</th>
+          <th title="Weeks 1–4 opponents: historical run stop and pass rush, not full fantasy SOS">Early schedule</th>
+          <th title="Weeks 15–17 opponents: historical run stop and pass rush, not full fantasy SOS">Playoff schedule</th>
           <th class="r" data-sort="ppg25">'25 PPG</th>
           <th class="notecol">Note</th>
           <th class="r"></th>
@@ -266,22 +301,22 @@ td.tier{color:var(--ink3);width:30px;text-align:center}
     <button class="showmore" id="more">Show more</button>
   </div>
 
-  <div class="tabpane" data-pane="roster"><div id="rosterMobile"></div></div>
+  <div class="tabpane" data-pane="roster"><div id="rosterMobile"></div><div class="panel" id="opponentMobile" style="margin-top:12px"></div></div>
   <div class="tabpane" data-pane="plan"><div id="planMobile"></div><div id="roomMobile" style="margin-top:12px"></div></div>
 </div>
 
-<aside class="side" id="sideDesktop">
-  <div class="panel" id="rosterPanel"></div>
+<aside class="side" id="sideDesktop" tabindex="0" aria-label="Your team and draft plan">
+  <div class="panel" id="rosterPanel"></div><div class="panel" id="opponentPanel"></div>
   <div class="panel" id="planPanel"></div>
   <div class="panel" id="roomPanel"></div>
   <div class="panel">
     <h2>House rules</h2>
     <ul class="rules">
       <li><b>Sort is VOR</b>: points over the 12-team replacement starter (RB33 / WR41 / TE13 / QB13 under this roster). It already prices half-PPR and the two flex slots.</li>
-      <li><b>At N?</b> is the chance the player survives to your next pick, recomputed as picks are logged. <b>Odds</b> switches the model: <b>ADP</b> is the market alone; <b>Room</b> is 1,000 simulated drafts with each manager's 2023-25 tendencies (TEs early, RBs late); <b>Hybrid</b> blends them by the slider. Room history is one to three seasons per manager, so Hybrid at 50-70% room is the sober default.</li>
-      <li>Tier breaks are FantasyPros consensus. Reach across a tier break only when the Next? column says the tier will be gone.</li>
+      <li><b>At N?</b> is an unvalidated estimate at the target pick. <b>Odds</b> switches the model: <b>ADP</b> is the market alone; <b>Room</b> is a pre-draft snapshot of legal neutral-market drafts; <b>Hybrid</b> is exploratory. Neither uses actual opponent rosters. No blend weight is validated.</li>
+      <li>Tier breaks are FantasyPros consensus. Use tier breaks and roster needs together; do not reach solely because of an estimated percentage.</li>
       <li>Two QBs on the clock at the same time: QB4&ndash;QB12 sit within 15 points of each other. Wait.</li>
-      <li>K and DEF: last two picks, no exceptions.</li>
+      <li>Reserve room for K and DEF and complete all starting slots.</li>
       <li>Chips: <span class="tag usage">usage</span> earned 11+ expected points a game last year at a bench price; <span class="tag experts">experts</span> the multi-year-accurate rankers sit above ADP; <span class="tag avoid">avoid</span> the room is ahead of both usage and the experts, or the player is unavailable; <span class="tag regress">regress</span> beat expected points by 35+ last year.</li>
     </ul>
     <div class="foot" id="foot"></div>
@@ -305,16 +340,117 @@ const STARTER_NEED = {QB:1,RB:2,WR:2,TE:1,K:1,DEF:1};
 const LS = "war-room-1389720742551093249";
 
 // ---------- state ----------
-let state = {picks:[], offset:0}; // picks: [{id, mine:boolean}] in draft order; {id:null} = a skipped (unlogged) pick
-try{ const s = localStorage.getItem(LS); if(s) state = JSON.parse(s); }catch(e){}
-state.picks = Array.isArray(state.picks) ? state.picks : []; state.offset = state.offset || 0;
-state.mode = ["adp","room","hybrid"].includes(state.mode) ? state.mode : "room";
-state.w = (typeof state.w === "number" && state.w >= 0 && state.w <= 1) ? state.w : 0.5;
-const oddsOpts = () => ({mode: state.mode, w: state.w});
-const MODE_LABEL = {adp:"ADP", room:"room", hybrid:"hybrid"};
-function save(){ try{ localStorage.setItem(LS, JSON.stringify(state)); }catch(e){} }
+let state={picks:[],offset:0,mode:"adp",custom:[],shortlist:[]};
+let saveMessage="", editIndex=null, restoreBlocked=false;
+let live=false, syncEpoch=0, syncTimer=null, syncController=null;
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function hydrate(value){
+  const next=window.DraftLogic.validateState(value);
+  next.custom=Array.isArray(next.custom)?next.custom:[];
+  if(next.custom.length>180)throw Error("Too many unlisted players");
+  const ids=new Set(P.map(p=>p.id));
+  for(const p of next.custom){
+    if(!p || typeof p.id!=="string" || !p.id.startsWith("custom:") || ids.has(p.id) ||
+       typeof p.name!=="string" || !p.name.trim() || p.name.length>120 ||
+       !["QB","RB","WR","TE","K","DEF"].includes(p.pos))throw Error("Invalid unlisted player");
+    ids.add(p.id);
+  }
+  if(next.picks.some(x=>x.id && !ids.has(x.id)))throw Error("Backup contains a player missing from this board");
+  next.shortlist=Array.isArray(next.shortlist)?next.shortlist.filter(id=>ids.has(id)):[];
+  if(next.offset){
+    next.picks=[...Array.from({length:next.offset},(_,i)=>({id:null,mine:MY.includes(i+1)})),...next.picks];
+    next.offset=0;
+  }
+  if(next.picks.some((x,i)=>x.mine!==MY.includes(i+1)))throw Error("Pick ownership does not match your draft slot");
+  return next;
+}
+function addCustomPlayers(){
+  for(const p of state.custom||[])byId.set(p.id,{id:p.id,name:p.name,pos:p.pos,
+    team:"Unlisted",proj:0,vor:0,adp:999,adp_sd:100,custom:true});
+}
+let stored=null;
+try{stored=localStorage.getItem(LS);}catch(e){saveMessage="Browser storage unavailable. Export backups after recording picks.";}
+try{
+  if(stored)state=hydrate(JSON.parse(stored));
+  if(!saveMessage)saveMessage=stored?"Draft restored in this browser.":"No saved picks. Export backups during the draft.";
+}catch(e){
+  saveMessage="Saved draft could not be loaded. Recover the data below before continuing.";
+  restoreBlocked=true;
+  try{document.getElementById("backupText").value=localStorage.getItem(LS)||"";}catch(_){}
+}
+addCustomPlayers();
+const oddsOpts=()=>({mode:state.mode,w:state.w});
+const MODE_LABEL={adp:"ADP estimate",room:"pre-draft room",hybrid:"scenario blend"};
+function save(){
+  if(restoreBlocked){saveMessage="Save blocked: restore a valid backup or explicitly Reset.";return;}
+  let result;
+  try{result=window.DraftLogic.persistState(localStorage,LS,state);}catch(e){result={ok:false,error:e.message};}
+  saveMessage=result.ok?"Saved in this browser. Export before switching browsers.":"NOT SAVED — export a backup now. "+result.error;
+}
+function message(text){document.getElementById("actionStatus").textContent=text;}
+function record(id,mineFlag){
+  if(live){message("Disconnect Sleeper before editing picks.");return false;}
+  if(restoreBlocked){message("Restore a valid backup or Reset before recording picks.");return false;}
+  const index=editIndex===null?state.picks.length:editIndex,player=byId.get(id);
+  const excludedWarning=mineFlag && player && player.excluded;
+  const entry={id,mine:mineFlag,draftSlot:DL.draftSlot(index+1),rosterId:META.sync.slotToRoster[DL.draftSlot(index+1)],at:new Date().toISOString(),boardVersion:META.board_version,contextVersion:META.context?.version??null,personnelVersion:META.changes?.version??null,
+    corrected:editIndex!==null,
+    decision:mineFlag?{selected:id,mode:state.mode,roomWeight:state.w,target:DL.nextTarget(state,MY),
+      alternatives:(state.shortlist||[]).filter(x=>x!==id&&!taken().has(x)).map(x=>{
+        const p=byId.get(x);return {id:x,name:p.name,proj:p.proj,vor:p.vor};
+      })}:null};
+  try{state=DL.replacePick(state,index,entry,MY);}catch(e){message(e.message);return false;}
+  editIndex=null;message(excludedWarning?"Pick recorded. This player is excluded from the saved projection scenario; check current status.":"");save();render();return true;
+}
 
 let filterPos = "ALL", filterTag = null, sortKey="vor", sortDir=-1, query="", limit=90;
+
+// Read-only Sleeper polling. Local draft is backed up before connecting.
+function stopSync(reason){live=false;syncEpoch++;clearTimeout(syncTimer);syncController?.abort();document.getElementById("syncStatus").textContent=reason;render();}
+async function pollSleeper(epoch){
+  syncController=new AbortController();const timeout=setTimeout(()=>syncController.abort(),8000);
+  try{
+    const get=async path=>{const r=await fetch("https://api.sleeper.app/v1/"+path,{signal:syncController.signal,cache:"no-store"});if(!r.ok)throw Error("Sleeper HTTP "+r.status);return r.json();};
+    const cfg=META.sync;
+    const [draft,raw,trades]=await Promise.all([get("draft/"+cfg.draftId),get("draft/"+cfg.draftId+"/picks"),get("draft/"+cfg.draftId+"/traded_picks")]);
+    if(epoch!==syncEpoch||!live)return;
+    const ds=draft.settings||{};
+    if(draft.league_id!==cfg.leagueId||draft.type!=="snake"||ds.teams!==12||ds.rounds!==15||ds.reversal_round||draft.draft_order?.[cfg.userId]!==1||trades.length||draft.metadata?.scoring_type!=="half_ppr")throw Error("Draft configuration changed; use manual mode");
+    for(const [key,value] of Object.entries({slots_qb:1,slots_rb:2,slots_wr:2,slots_te:1,slots_flex:2,slots_k:1,slots_def:1,slots_bn:5}))if(ds[key]!==value)throw Error("Roster settings changed");
+    const config={...cfg,slotToRoster:draft.slot_to_roster_id};
+    if(Number(config.slotToRoster?.[1])!==cfg.rosterId)throw Error("Your roster mapping changed");
+    const parsed=DL.sleeperPicks(raw,config), custom=[];
+    const picks=parsed.map((x,i)=>{
+      let id=x.id;
+      if(!byId.has(id)){
+        id="custom:sleeper:"+x.id;
+        const pos=x.metadata.position==="DST"?"DEF":x.metadata.position;
+        if(!["QB","RB","WR","TE","K","DEF"].includes(pos))throw Error("Unknown player position in Sleeper feed");
+        custom.push({id,name:((x.metadata.first_name||"")+" "+(x.metadata.last_name||x.id)).trim(),pos});
+      }
+      const old=state.picks[i];
+      return {...(old?.id===id?old:{}),id,mine:x.mine,rosterId:x.rosterId,draftSlot:x.draftSlot,source:"sleeper"};
+    });
+    const next=hydrate({...state,picks,custom,offset:0});
+    const saved=DL.persistState(localStorage,LS,next);if(!saved.ok)throw Error("Cannot save synced picks: "+saved.error);
+    state=next;addCustomPlayers();editIndex=null;saveMessage="Sleeper picks saved in this browser.";
+    document.getElementById("syncStatus").textContent="Synced "+new Date().toLocaleTimeString()+" · "+draft.status+" · "+picks.length+" picks · checking every 5 seconds";
+    render();syncTimer=setTimeout(()=>pollSleeper(epoch),5000);
+  }catch(e){if(epoch===syncEpoch)stopSync("Sync stopped: "+e.message+". Last saved picks retained; reconnect or enter manually.");}
+  finally{clearTimeout(timeout);}
+}
+document.getElementById("syncBtn").addEventListener("click",()=>{
+  if(live){stopSync("Disconnected · manual entry; synced picks retained");return;}
+  if(restoreBlocked){message("Recover the saved draft before connecting.");return;}
+  const backup={version:2,leagueId:LS,boardVersion:META.board_version,exported:new Date().toISOString(),state};
+  document.getElementById("backupText").value=JSON.stringify(backup,null,2);
+  const saved=DL.persistState(localStorage,LS+"-before-sync",state);
+  if(!saved.ok){message("Cannot preserve existing picks. Export a backup before connecting.");return;}
+  live=true;editIndex=null;const epoch=++syncEpoch;render();
+  document.getElementById("syncStatus").textContent="Connecting; existing picks backed up in the backup box…";
+  pollSleeper(epoch);
+});
+document.getElementById("adpSource").textContent="ADP: Sleeper half-PPR redraft · refreshed "+new Date(META.adp_updated).toLocaleString()+". Closest scoring bucket; not customized to 12 teams or two FLEX. Missing ADP is shown as a dash; availability then uses an estimated fallback.";
 
 // ---------- math (tested in draftroom_logic.test.js; mirrors gridiron/draft.py) ----------
 const DL = window.DraftLogic;
@@ -333,11 +469,17 @@ function rosterHTML(){
       const p = (L[pos]||[])[i];
       if(p && pos!=="BN") total+=p.proj;
       h += `<span class="lab">${pos}</span>` + (p
-        ? `<span class="who"><span class="pos ${p.pos}">${p.pos}</span> ${p.name} <span class="meta">${p.team} · bye ${p.bye??"–"}</span></span><span class="pt num">${p.proj.toFixed(0)}</span>`
+        ? `<span class="who"><span class="pos ${p.pos}">${p.pos}</span> ${esc(p.name)} <span class="meta">${esc(p.team)} · bye ${p.bye??"–"}</span></span><span class="pt num">${p.proj.toFixed(0)}</span>`
         : `<span class="who empty">open</span><span class="pt"></span>`);
     }
   }
   h += `</div><div class="total"><span>Starting lineup projection</span><b class="num">${total.toFixed(0)}</b></div>`;
+  const missing=SLOTS.filter(([pos])=>pos!=="BN").flatMap(([pos,n])=>{
+    const need=n-(L[pos]||[]).length;return need>0?[pos+" ×"+need]:[];
+  });
+  if(missing.length)h+='<div class="foot">Still needed: '+missing.join(", ")+'</div>';
+  if(state.picks.some(x=>x.mine&&!x.id))h+='<div class="foot">Unresolved own pick: complete it in the log.</div>';
+  if(m.some(p=>p.custom))h+='<div class="foot">Unlisted players have no projection.</div>';
   // bye-week stack warning
   const byes = {}; m.forEach(p=>{ if(p.bye) byes[p.bye]=(byes[p.bye]||0)+1; });
   const stacked = Object.entries(byes).filter(([w,c])=>c>=3).map(([w,c])=>`wk ${w} ×${c}`);
@@ -347,10 +489,10 @@ function rosterHTML(){
 
 // ---------- plan ----------
 const PLAN = [
-  [1,  "Jahmyr Gibbs", "100% of sims. Bijan is the only other answer. Plan below is from 300 sims that use each manager's 2023-25 tendencies."],
-  [24, "Best RB left: {Kenneth Walker@24}, {Ashton Jeanty@24}, {Omarion Hampton@24}; else {Nico Collins@24} / {George Pickens@24}", "This room takes TEs early and RBs late: {Brock Bowers@24} and {Trey McBride@24} are gone before 24 in ~all sims. {Josh Allen@24} is a long shot."],
-  [25, "{George Pickens@25}, {Chris Olave@25}, {Malik Nabers@25}, {Javonte Williams@25} / {Kyren Williams@25} / {Breece Hall@25}", "Two RBs across the turn is fine. sallymcbride picks 23 and 26 and opens WR-WR then QB."],
-  [48, "{David Montgomery@48}, {Bucky Irving@48}, {Quinshon Judkins@48}, {D'Andre Swift@48}", "Or {Jaylen Waddle@48} / {Luther Burden@48} if the RBs are gone. Do not take a QB yet."],
+  [1,  "Jahmyr Gibbs", "Saved shortlist. Check current rankings and status; simulations do not prove an optimal opening."],
+  [24, "Best RB left: {Kenneth Walker@24}, {Ashton Jeanty@24}, {Omarion Hampton@24}; else {Nico Collins@24} / {George Pickens@24}", "Compare RB/WR with {Brock Bowers@24}, {Trey McBride@24} and {Josh Allen@24} if available. Room percentages are unvalidated pre-draft scenarios."],
+  [25, "{George Pickens@25}, {Chris Olave@25}, {Malik Nabers@25}, {Javonte Williams@25} / {Kyren Williams@25} / {Breece Hall@25}", "Two RBs across the turn is fine. sallymcbride picks 23 and 26; past openings suggest WR-WR then QB, but may change."],
+  [48, "{David Montgomery@48}, {Bucky Irving@48}, {Quinshon Judkins@48}, {D'Andre Swift@48}", "Or {Jaylen Waddle@48} / {Luther Burden@48} if the RBs are gone. Compare value and positional needs before deciding."],
   [49, "{Luther Burden@49}, {Terry McLaurin@49}, {Jameson Williams@49}, {Christian Watson@49}", "Two RBs across 48/49 is fine if you went WR-WR at the turn."],
   [72, "TE tier 2: {Sam LaPorta@72} / {Tucker Kraft@72} / {Harold Fannin@72}", "Or the QB window: {Jalen Hurts@72} / {Jayden Daniels@72}. {Brian Thomas@72} / {Marvin Harrison@72} / {Rhamondre Stevenson@72} are the skill fallbacks."],
   [73, "QB if you took a TE at 72: {Jayden Daniels@73}, {Jalen Hurts@73}, {Trevor Lawrence@73}", "Otherwise {DK Metcalf@73}, {Carnell Tate@73}, {Brian Thomas@73}."],
@@ -363,7 +505,7 @@ const PLAN = [
   [168,"DEF: Rams / Texans / Seahawks / Broncos, whichever is left", ""],
   [169,"K: Aubrey / Fairbairn / Little / Myers / Dicker", ""],
 ];
-// "{Name@pick}" -> "Name (xx%)": the live chance he is still there at that pick,
+// "{Name@pick}" -> "Name (xx%)": the selected model estimate that he is still there at that pick,
 // from the same odds as the Next? column, given who is already gone.
 const byName = new Map(P.map(p=>[p.name.toLowerCase(), p]));
 function fmtPlan(text){
@@ -371,14 +513,14 @@ function fmtPlan(text){
   return text.replace(/\{([^@}]+)@(\d+)\}/g, (m, name, pk)=>{
     const p = byName.get(name.toLowerCase()); pk = +pk;
     if(!p) return name;
-    if(t.has(p.id)) return `<s>${name}</s>`;
+    if(t.has(p.id)) return `<s>${esc(name)}</s>`;
     if(pk <= c) return name;                       // that pick is now or past: he is simply there
-    return `${name} (${Math.round(pAvail(p, pk, c, MY, oddsOpts())*100)}%)`;
+    return `${esc(name)} (${Math.round(pAvail(p, pk, c, MY, oddsOpts())*100)}%)`;
   });
 }
 function planHTML(){
   const c = curPick(); const nm = nextMine();
-  let h = `<h2>Slot-1 plan <small>odds from 1,000 sims with this room's history, live</small></h2><div class="plan">`;
+  let h = `<h2>Slot-1 plan <small>saved shortlist; unvalidated estimates</small></h2><div class="plan">`;
   PLAN.forEach(([pk,tg,alt],i)=>{
     const rnd = i+1; const cls = pk<c ? "done" : (pk===nm ? "now" : "");
     h += `<div class="pr ${cls}"><div class="pk">${pk}<small>R${rnd}</small></div><div class="tg"><b>${fmtPlan(tg)}</b>${alt?`<div class="alt">${fmtPlan(alt)}</div>`:""}</div></div>`;
@@ -403,7 +545,7 @@ function roomHTML(){
 function stripHTML(){
   const c=curPick(), nm=DL.nextTarget(state, MY), t=taken();
   const avail = P.filter(p=>!t.has(p.id));
-  const best = pos => avail.filter(p=>p.pos===pos).sort((a,b)=>b.vor-a.vor)[0];
+  const best = pos => avail.filter(p=>p.pos===pos&&!p.excluded).sort((a,b)=>b.vor-a.vor)[0];
   const cards = [];
   const mineNow = nextMine();
   const onClock = mineNow===c;
@@ -414,17 +556,43 @@ function stripHTML(){
     // tier scarcity: how many of tiers 1-4 are left at this position
     const left = [1,2,3,4].map(t=>avail.filter(p=>p.pos===pos && p.tier===t).length);
     const tiers = left.map((n,i)=>`T${i+1} ${n}`).join(" · ");
-    cards.push(`<div class="card"><div class="k">Best ${pos} left · ${tiers}</div><div class="v">${b.name}<small> · VOR ${b.vor.toFixed(0)} · ${Math.round(pn*100)}% at ${nm??"–"}</small></div></div>`);
+    cards.push(`<div class="card"><div class="k">Best ${pos} left · ${tiers}</div><div class="v">${esc(b.name)}<small> · VOR ${b.vor.toFixed(0)} · ${Math.round(pn*100)}% at ${nm??"–"}</small></div></div>`);
   }
+  const flex=DL.bestFlex(avail,state.picks);
+  if(flex)cards.push(`<div class="card"><div class="k">Best FLEX left · projected points</div><div class="v">${esc(flex.name)}<small> · ${flex.pos} · ${flex.proj.toFixed(0)} points</small></div></div>`);
   return cards.join("");
 }
 
 // ---------- board ----------
+function contextCells(p){
+  const c=META.context?.teams?.[p.context_team];
+  if(["K","DEF"].includes(p.pos))return '<td class="context-cell">N/A</td>'.repeat(4);
+  if(!c)return '<td class="context-cell">Unavailable<span class="meta"> · no team data</span></td>'.repeat(4);
+  const stamp="2025 history · published "+new Date(META.context.published).toLocaleDateString();
+  const block=key=>{
+    const b=c[key];
+    if(b?.rate==null)return '<td class="context-cell">Unavailable</td>';
+    return '<td class="context-cell"><details><summary>'+b.rate+'%'+(b.rank?' · #'+b.rank:'')+
+      '</summary><p>'+esc(stamp)+'. Higher win rate is better; rank 1 is best. 2026 personnel and injuries are not modeled.</p></details><span class="meta">Low confidence</span></td>';
+  };
+  const schedule=key=>{
+    const v=c.periods[key];
+    const opponents=v.opponents.map(g=>'W'+g.week+' '+(g.venue==="away"?'at ':'vs ')+g.opponent).join(' · ');
+    const rate=x=>x==null?'Unavailable':x.toFixed(1)+'%';
+    return '<td class="context-cell"><details><summary>Run '+rate(v.run_stop)+'<br>Rush '+rate(v.pass_rush)+
+      '</summary><p>'+esc(opponents||'No games in this window')+'</p><p>'+
+      'Opponent 2025 run-stop / pass-rush win rates. Lower means weaker historical opposition; this omits pass coverage and is not complete SOS. '+
+      'Coverage: run '+v.run_stop_coverage+'/'+v.games+', rush '+v.pass_rush_coverage+'/'+v.games+
+      '. Bye weeks excluded.</p></details><span class="meta">Low confidence · '+v.games+' games</span></td>';
+  };
+  return block("run_block")+block("pass_block")+schedule("early")+schedule("playoffs");
+}
+
 function rowsHTML(){
   const hideGone = document.getElementById("hideGone").checked;
   const showNotes = document.getElementById("showNotes").checked;
   const q = query.trim().toLowerCase();
-  const list = DL.filterSort(P, state, MY, {filterPos, filterTag, sortKey, sortDir, query, hideGone, mode: state.mode, w: state.w});
+  const list = DL.filterSort([...P,...(state.custom||[]).map(p=>byId.get(p.id))], state, MY, {filterPos, filterTag, sortKey, sortDir, query, hideGone, mode: state.mode, w: state.w});
   const shown = q? list : list.slice(0,limit);
   let lastTier=null; let h="";
   shown.forEach((x,i)=>{
@@ -435,26 +603,65 @@ function rowsHTML(){
     const inj = p.inj? `<span class="inj ${/out|ir/i.test(p.inj)?"out":""}" title="${p.inj}${p.injpart?" · "+p.injpart:""}"></span>`:"";
     h += `<tr class="row${x.gone?" gone":""}${x.mine?" mine":""}${tb}" data-id="${p.id}">
       <td class="rk num r">${i+1}</td>
-      <td><span class="name">${p.name}</span>${p.tag?`<span class="tag ${p.tag}">${p.tag}</span>`:""}${inj}<div class="meta">${p.team}${p.bye?` · bye ${p.bye}`:""}${p.age?` · ${p.age}y`:""} · ${p.pos}${p.posrank}</div></td>
+      <td><span class="name">${esc(p.name)}</span>${p.excluded?'<span class="tag avoid">excluded scenario</span>':""}${p.tag?`<span class="tag ${p.tag}">${p.tag}</span>`:""}${inj}<div class="meta">${esc(p.team)}${p.bye?` · bye ${p.bye}`:""}${p.age?` · ${p.age}y`:""} · ${p.pos}${(p.posrank??"")}<button class="changes-link" data-act="changes">2026 changes</button></div></td>
       <td><span class="pos ${p.pos}">${p.pos}</span></td>
       <td class="num r">${p.proj.toFixed(0)}</td>
       <td class="num r vor">${p.vor.toFixed(0)}</td>
       <td class="num tier">${p.tier??""}</td>
       <td class="num r" title="${p.ecr_min??""}–${p.ecr_max??""} (sd ${p.ecr_sd??""})">${p.ecr??"–"}</td>
-      <td class="num r" title="Sleeper ${p.adp_sl??"–"} · FFC ${p.adp_ffc??"–"}">${p.adp<250?p.adp.toFixed(0):"–"}</td>
+      <td class="num r" title="Sleeper half-PPR: ${p.adp??'not available; availability uses a model fallback'}">${p.adp!=null?p.adp.toFixed(1):"–"}</td>
       <td class="r"><span class="pav"><span class="bar ${barCls}"><i style="width:${pct}%"></i></span><span class="num">${x.gone?"":pct+"%"}</span></span></td>
+      ${contextCells(p)}
       <td class="num r">${p.ppg25!=null?p.ppg25.toFixed(1):"–"}${p.g25?`<span class="meta"> /${p.g25}</span>`:""}</td>
-      <td class="note">${showNotes&&p.note?p.note:""}</td>
+      <td class="note">${showNotes&&p.note?esc(p.note):""}</td>
       <td class="r"><div class="act">${x.gone
-        ? `<button class="undo" data-act="undo">undo</button>`
-        : `<button class="me" data-act="mine" title="I drafted this player">Mine</button><button class="x" data-act="gone" title="Someone else took him">Gone</button>`}</div></td>
+        ? `<button class="undo" data-act="edit">Edit pick</button>`
+        : `<button data-act="consider">${(state.shortlist||[]).includes(p.id)?"★":"Compare"}</button><button class="me" data-act="mine" title="I drafted this player">Mine</button><button class="x" data-act="gone" title="Someone else took him">Gone</button>`}</div></td>
     </tr>`;
   });
   document.getElementById("more").hidden = q || list.length<=limit;
   return h;
 }
 
+let viewedTeamSlot = 2;
+function opponentHTML(){
+  const options=Array.from({length:12},(_,i)=>{
+    const slot=i+1, member=(META.room||[]).find(m=>m.slot===slot);
+    return `<option value="${slot}" ${slot===viewedTeamSlot?'selected':''}>Slot ${slot}${slot===META.sync.slot?' · You':member?' · '+esc(member.name):''}</option>`;
+  }).join('');
+  const picks=state.picks.map((pick,i)=>({pick,number:i+1})).filter(x=>(x.pick.draftSlot??DL.draftSlot(x.number))===viewedTeamSlot);
+  const counts=['QB','RB','WR','TE','K','DEF'].map(pos=>pos+' '+picks.filter(x=>byId.get(x.pick.id)?.pos===pos).length).join(' · ');
+  const rows=picks.map(({pick,number})=>{
+    const player=byId.get(pick.id);
+    return `<div style="padding:7px 0;border-bottom:1px solid var(--line)"><b>${esc(player?.name||'Unlogged player')}</b><div class="foot">${esc(player?.pos||'Unknown position')} · ${esc(player?.team||'')} · Pick ${number}</div></div>`;
+  }).join('');
+  return `<h2>View teams <small>${picks.length}/15 picks recorded</small></h2><label>Team <select data-team-view aria-label="View drafted team" style="width:100%;margin:6px 0;padding:8px;background:var(--panel);color:var(--ink);border:1px solid var(--line2)">${options}</select></label><div class="foot">${counts}</div>${rows||'<p>No picks recorded for this team yet.</p>'}<div class="foot">Selections recorded in draft order; this is not a submitted starting lineup.</div>`;
+}
+function renderTeamViews(){
+  const html=opponentHTML();
+  document.getElementById('opponentPanel').innerHTML=html;
+  document.getElementById('opponentMobile').innerHTML=html;
+}
+document.addEventListener('change',event=>{
+  if(!event.target.matches('[data-team-view]'))return;
+  viewedTeamSlot=Number(event.target.value);
+  renderTeamViews();
+});
 function render(){
+  renderTeamViews();
+  document.getElementById("syncBtn").textContent=live?"Disconnect Sleeper":"Connect Sleeper (replace local picks)";
+  document.getElementById("saveStatus").textContent=saveMessage;
+  document.getElementById("editStatus").textContent=editIndex===null?"":"Correcting pick "+(editIndex+1)+". Select its replacement below.";
+  document.getElementById("pickLog").innerHTML=state.picks.map((x,i)=>{
+    const p=byId.get(x.id);
+    return '<div>Pick '+(i+1)+' · '+(x.mine?"you":"slot "+(x.draftSlot??DL.draftSlot(i+1)))+' · '+(p?esc(p.name):"Unresolved")+
+      ' <button data-pick="'+i+'">Edit</button> <button data-pick="'+i+'" data-clear="1">Clear player</button></div>';
+  }).join("");
+  document.getElementById("ownership").innerHTML=Array.from({length:12},(_,i)=>{
+    const picks=state.picks.filter((x,j)=>(x.draftSlot??DL.draftSlot(j+1))===i+1);
+    const counts=["QB","RB","WR","TE","K","DEF"].map(pos=>pos+" "+picks.filter(x=>byId.get(x.id)?.pos===pos).length).join(" · ");
+    return '<div class="foot">Slot '+(i+1)+': '+counts+'</div>';
+  }).join("");
   const c=curPick(), nm=nextMine();
   document.getElementById("curPick").textContent = c>180?"—":c;
   document.getElementById("curRound").textContent = Math.min(15, Math.ceil(c/12));
@@ -470,6 +677,7 @@ function render(){
   document.getElementById("wVal").textContent = Math.round(state.w*100);
   document.getElementById("wRange").value = Math.round(state.w*100);
   document.getElementById("rows").innerHTML = rowsHTML();
+  document.querySelectorAll('#undoBtn,#skipBtn,#resetBtn,#importBtn,#customBtn,#pickLog button,[data-act="mine"],[data-act="gone"],[data-act="edit"]').forEach(b=>b.disabled=live);
   const r = rosterHTML(), pl = planHTML();
   document.getElementById("rosterPanel").innerHTML = r;
   document.getElementById("planPanel").innerHTML = pl;
@@ -478,24 +686,68 @@ function render(){
   const rm = roomHTML();
   document.getElementById("roomPanel").innerHTML = rm;
   document.getElementById("roomMobile").innerHTML = `<div class="panel">${rm}</div>`;
-  document.getElementById("foot").textContent = `Data ${META.generated}. ${META.sources}. Projections = ½ Sleeper + ½ expert-consensus-implied, scored with this league's exact rules.`;
+  document.getElementById("foot").textContent = `Data ${META.generated}. ${META.sources}. Projections blend Sleeper and ECR-implied points. Exact scoring coverage is limited by source fields.`;
 }
 
 // ---------- events ----------
-document.getElementById("rows").addEventListener("click", e=>{
-  const b = e.target.closest("button[data-act]"); if(!b) return;
-  const id = e.target.closest("tr").dataset.id; const act=b.dataset.act;
-  if(act==="undo"){ state.picks = state.picks.filter(x=>x.id!==id); }
-  else { state.picks.push({id, mine: act==="mine"}); }
-  save(); render();
-  if(act!=="undo"){ const q=document.getElementById("q"); if(q.value){ q.value=""; query=""; render(); } }
+document.getElementById("rows").addEventListener("click",e=>{
+  const b=e.target.closest("button[data-act]");if(!b)return;
+  const id=e.target.closest("tr").dataset.id,act=b.dataset.act;
+  if(act==="changes"){showChanges(byId.get(id)?.context_team);return;}
+  if(act==="edit"){editIndex=state.picks.findIndex(x=>x.id===id);render();return;}
+  if(act==="consider"){
+    state.shortlist=(state.shortlist||[]).includes(id)?state.shortlist.filter(x=>x!==id):[...(state.shortlist||[]),id];
+    save();render();return;
+  }
+  if(record(id,act==="mine")){document.getElementById("q").value="";query="";render();}
 });
-document.getElementById("undoBtn").addEventListener("click", ()=>{ state.picks.pop(); save(); render(); });
-document.getElementById("skipBtn").addEventListener("click", ()=>{ state.picks.push({id:null, mine:false}); save(); render(); });
+document.getElementById("undoBtn").addEventListener("click",()=>{
+  if(restoreBlocked)return;state.picks.pop();editIndex=null;save();render();
+});
+document.getElementById("skipBtn").addEventListener("click",()=>{
+  const index=editIndex===null?state.picks.length:editIndex;record(null,MY.includes(index+1));
+});
+document.getElementById("cancelEdit").addEventListener("click",()=>{editIndex=null;render();});
+document.getElementById("pickLog").addEventListener("click",e=>{
+  const b=e.target.closest("button[data-pick]");if(!b)return;editIndex=+b.dataset.pick;
+  if(b.dataset.clear)record(null,MY.includes(editIndex+1));else render();
+});
+document.getElementById("exportBtn").addEventListener("click",()=>{
+  if(restoreBlocked){message("Copy the original unreadable save from the backup box before Reset.");return;}
+  const text=JSON.stringify({version:2,leagueId:LS,boardVersion:META.board_version,contextVersion:META.context?.version??null,personnelVersion:META.changes?.version??null,
+    exported:new Date().toISOString(),state},null,2);
+  document.getElementById("backupText").value=text;
+  const url=URL.createObjectURL(new Blob([text],{type:"application/json"}));
+  const a=document.createElement("a");a.href=url;a.download="gridiron-draft-backup.json";a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  message("Backup exported; the same JSON is in the box to copy.");
+});
+document.getElementById("importBtn").addEventListener("click",()=>{
+  try{
+    const b=JSON.parse(document.getElementById("backupText").value);
+    if(b.version!==2||b.leagueId!==LS)throw Error("Different league or backup format");
+    const next=hydrate(b.state);
+    if(state.picks.length){
+      const result=DL.persistState(localStorage,LS+"-before-restore",state);
+      if(!result.ok)throw Error("Cannot preserve current picks. Export them and Reset before restoring.");
+    }
+    state=next;restoreBlocked=false;editIndex=null;addCustomPlayers();save();render();
+    message(b.boardVersion===META.board_version?"Backup restored.":"Restored from another board version; check statuses.");
+  }catch(e){message("Restore failed: "+e.message);}
+});
+document.getElementById("customBtn").addEventListener("click",()=>{
+  const name=document.getElementById("customName").value.trim();
+  if(!name){message("Enter the player's name.");return;}
+  const p={id:"custom:"+Date.now(),name,pos:document.getElementById("customPos").value};
+  state.custom=[...(state.custom||[]),p];addCustomPlayers();
+  const index=editIndex===null?state.picks.length:editIndex;
+  if(!record(p.id,MY.includes(index+1)))state.custom=state.custom.filter(x=>x.id!==p.id);
+  else document.getElementById("customName").value="";
+});
 // Reset is a two-tap confirm: the sandbox blocks window.confirm().
 const resetBtn = document.getElementById("resetBtn");
 const resetUI = (armed)=>{ resetBtn.textContent = armed ? "Tap again to clear all picks" : "Reset"; resetBtn.classList.toggle("confirm", armed); };
-const resetM = DL.resetMachine(()=>{ state.picks=[]; state.offset=0; save(); render(); });
+const resetM = DL.resetMachine(()=>{ state.picks=[];state.custom=[];state.shortlist=[];state.offset=0;restoreBlocked=false;editIndex=null;save();render(); });
 let resetLabelTimer = null;
 resetBtn.addEventListener("click", ()=>{
   clearTimeout(resetLabelTimer);
@@ -528,7 +780,7 @@ qi.addEventListener("keydown", e=>{
     // Enter = top hit is Gone; Shift+Enter = top hit is Mine
     const top = document.querySelector("#rows tr.row:not(.gone)"); if(!top) return;
     e.preventDefault();
-    state.picks.push({id: top.dataset.id, mine: e.shiftKey}); save();
+    if(!record(top.dataset.id,e.shiftKey))return;
     qi.value=""; query=""; render();
   }
 });
@@ -540,6 +792,103 @@ document.querySelectorAll(".tabs button").forEach(b=>b.addEventListener("click",
   document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
   document.querySelectorAll(".tabpane").forEach(p=>p.classList.toggle("on", p.dataset.pane===b.dataset.tab));
 }));
+const personnel=META.changes;
+function sourceLink(url,label){
+  try{if(new URL(url).protocol!=="https:")return esc(label);}catch(_){return esc(label);}
+  return '<a href="'+esc(url)+'" target="_blank" rel="noopener noreferrer">'+esc(label)+'</a>';
+}
+function renderChanges(team){
+  const box=document.getElementById("changesBody"),x=personnel?.teams?.[team];
+  if(!x){box.textContent="No reviewed personnel data for this team. Projection adjustment 0.";return;}
+  const linePositions=new Set(["LT","LG","C","RG","RT","T","G","OT","OG","OL"]);
+  const skill=new Set(["QB","RB","FB","WR","TE"]);
+  const date=v=>new Date(v).toLocaleString(undefined,{timeZoneName:"short"});
+  const coaches=x.coaching.filter(n=>n.kind!=="scheme");
+  const schemes=x.coaching.filter(n=>n.kind==="scheme");
+  const notes=list=>list.map(n=>'<li>'+esc(n.text)+' <span class="meta">'+esc(n.status)+
+    ' · '+sourceLink(n.source_url,(n.date_basis==="retrieval cutoff"?"Seen ":"Source ")+new Date(n.published).toLocaleDateString())+'</span></li>').join("");
+  const movers=(key,positions)=>{
+    const list=x[key].filter(p=>positions.has(p.position));
+    if(!list.length)return '<p>No differences in this category in these snapshots.</p>';
+    return '<ul>'+list.map(p=>'<li>'+esc(p.name)+' ('+esc(p.position)+') · '+
+      esc(key==="arrivals"?(p.previous_team?'from '+p.previous_team:p.evidence):(p.next_team?'now '+p.next_team:p.evidence))+
+      '<span class="meta"> · roster status '+esc(p.status||"unknown")+'</span></li>').join("")+'</ul>';
+  };
+  const grade=(p,key)=>{
+    if(!p.pff)return "Not loaded";
+    const g=p.pff;
+    return (g[key+"_grade"]==null?"Unavailable":esc(g[key+"_grade"]))+' / '+esc(g[key+"_snaps"])+' snaps'+
+      '<div class="meta">'+esc(g.season)+' '+esc(g.position)+' · '+sourceLink(g.source_url,new Date(g.published_at).toLocaleDateString())+'</div>';
+  };
+  const line=x.starters.filter(p=>linePositions.has(p.position));
+  const starters=x.starters.filter(p=>skill.has(p.position));
+  const lineRows=line.map(p=>'<tr><td>'+esc(p.position)+'</td><td>'+esc(p.name)+'</td><td>'+esc(p.change)+
+    '<div class="meta">Status '+esc(p.status)+(p.alternatives>1?' · tied chart alternatives':'')+'</div></td><td>'+
+    grade(p,"run_block")+'</td><td>'+grade(p,"pass_block")+'</td></tr>').join("");
+  let h='<p><b>Snapshot facts and reported plans; forecast confidence low; projection adjustment 0.</b> Data assembled '+esc(date(personnel.as_of))+
+    '. Chart placements are provisional, not guaranteed snaps. Roster status is not a medical clearance.</p>';
+  h+='<div class="changes-grid"><section><h3>Coaching and play-calling reports</h3>'+
+    (coaches.length?'<ul>'+notes(coaches)+'</ul>':'<p>No reviewed coaching-change entry. This does not establish continuity.</p>')+
+    '<h3>Reported scheme plans</h3>'+(schemes.length?'<ul>'+notes(schemes)+'</ul>':'<p>No verified scheme description loaded.</p>')+
+    '<p class="meta">A depth-chart formation label is not evidence of scheme frequency. Coaching reports may predate later changes.</p></section>'+
+    '<section><h3>Skill-position arrivals in snapshots</h3>'+movers("arrivals",skill)+
+    '<details><summary>Skill-position departures</summary>'+movers("departures",skill)+'</details>'+
+    '<h3>Current skill depth-chart entries</h3><ul>'+starters.map(p=>'<li>'+esc(p.position)+' · '+esc(p.name)+' · '+esc(p.change)+
+    '<span class="meta"> · chart rank '+p.chart_rank+'; status '+esc(p.status)+'</span></li>').join("")+'</ul></section></div>';
+  h+='<h3>Offensive line: top entry at each chart slot</h3><p class="meta">Depth chart '+esc(x.depth_date?date(x.depth_date):"unavailable")+
+    '. Returning roster member does not mean returning starter. Identity warnings: '+x.identity_warnings+
+    '. Unresolved entries receive no linked history or PFF grade.</p><div class="changes-table"><table><thead><tr><th>Slot</th><th>Player</th><th>Roster comparison</th><th>PFF run / snaps</th><th>PFF pass / snaps</th></tr></thead><tbody>'+
+    lineRows+'</tbody></table></div><details><summary>Offensive-line roster arrivals and departures</summary><div class="changes-grid"><section>'+
+    movers("arrivals",linePositions)+'</section><section>'+movers("departures",linePositions)+'</section></div></details>';
+  const other=new Set(x.arrivals.concat(x.departures).map(p=>p.position).filter(p=>!skill.has(p)&&!linePositions.has(p)));
+  h+='<details><summary>Other roster changes, including defense</summary><div class="changes-grid"><section><h3>Arrivals</h3>'+
+    movers("arrivals",other)+'</section><section><h3>Departures</h3>'+movers("departures",other)+'</section></div></details>';
+  h+='<h3>Forecast questions — not established effects</h3><ul><li>Will the listed depth roles translate into carries, routes and targets?</li>'+
+    '<li>Will the current line remain available, and how will backups or position changes affect blocking?</li>'+
+    '<li>Do reported scheme changes alter opportunities beyond what the existing projections already assume?</li></ul>'+
+    '<p><b>PFF:</b> '+(personnel.pff_loaded?personnel.pff_loaded+' player records loaded; historical grades are not fantasy-point multipliers.':
+    'No player grades loaded. Historical ESPN team win rates above are a different metric.')+
+    ' No lineup grade or scheme-fit bonus is invented.</p>'+
+    '<details><summary>Data sources and snapshot dates</summary><p>'+sourceLink(personnel.roster_source,"nflverse rosters")+
+    ' · '+sourceLink(personnel.depth_source,"nflverse depth charts")+'</p><ul>'+
+    personnel.inputs.map(p=>'<li>'+esc(p.name)+' · saved '+esc(date(p.saved))+'</li>').join("")+
+    '</ul><p>Differences reflect saved roster membership, not a complete transaction log. A missing prior record is not proof of a rookie or acquisition.</p></details>';
+  box.innerHTML=h;
+}
+function showChanges(team){
+  const select=document.getElementById("changesTeam");
+  if(personnel?.teams?.[team])select.value=team;else select.selectedIndex=-1;
+  document.getElementById("changesPanel").open=true;renderChanges(select.value);
+  document.getElementById("changesPanel").scrollIntoView({behavior:"smooth",block:"start"});
+}
+const changesSelect=document.getElementById("changesTeam");
+changesSelect.innerHTML=Object.keys(personnel?.teams||{}).sort().map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join("");
+if(personnel?.teams?.[P[0]?.context_team])changesSelect.value=P[0].context_team;
+changesSelect.addEventListener("change",()=>renderChanges(changesSelect.value));
+renderChanges(changesSelect.value);
+
+document.getElementById("contextInfo").textContent=META.context?
+  "Context only · projection adjustment 0. Blocking and opponent metrics: "+META.context.historical_season+
+  " season, published "+new Date(META.context.published).toLocaleDateString()+
+  "; retrieved "+new Date(META.context.retrieved).toLocaleDateString()+
+  ". Schedule saved "+new Date(META.context.schedule_saved).toLocaleString(undefined,{timeZoneName:"short"})+
+  ". Low predictive confidence: no 2026 personnel adjustments or opponent adjustment. Click a cell for details. Run = opponent run stop; Rush = opponent pass rush.":
+  "Context unavailable · projection adjustment 0.";
+if(META.context){
+  const link=document.createElement("a");link.href=META.context.source_url;link.textContent=" ESPN source";
+  link.target="_blank";link.rel="noopener noreferrer";document.getElementById("contextInfo").append(link);
+}
+document.getElementById("freshness").textContent="Inputs saved "+new Date(META.inputs_updated).toLocaleString(undefined,{timeZoneName:"short"})+
+  ". News notes reviewed "+META.news_reviewed+". Rebuilding does not refresh news.";
+if(Date.now()-Date.parse(META.inputs_updated)>4*60*60*1000)
+  document.getElementById("freshness").textContent+=" Inputs are over 4 hours old: recheck status.";
 render();
 })();
+</script>
+
+<script>
+// Keep the independent sidebar scroll area below the wrapping draft header.
+new ResizeObserver(entries => {
+  document.documentElement.style.setProperty('--sidebar-top', Math.ceil(entries[0].target.getBoundingClientRect().height + 12) + 'px');
+}).observe(document.querySelector('.top'));
 </script>

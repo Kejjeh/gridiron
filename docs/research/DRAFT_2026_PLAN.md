@@ -1,122 +1,196 @@
-# 2026 draft plan — slot 1 of 12, "Take Mahomes, Country Road"
+# 2026 draft plan — corrected after readiness review
 
-Built 2026-09-08, ~4 hours before a 9:00 PM ET Sleeper snake draft. This is
-the record of what the board said and why; the live tool is the published
-"1.01 War Room" artifact, the data is `data/outputs/draft2026_board.csv`, and
-the code is `scripts/research/draft_board_2026.py`.
+Updated 2026-09-08. This replaces the earlier strategy comparison, which
+included incomplete rosters and a confounded downstream policy. Historical
+results remain in Git history and must not be used as current evidence.
 
-## League (verified from the Sleeper API, `league_config.py`)
+## League and tool
 
-12 teams, snake, 15 rounds, 60 s clock. Starters QB / 2 RB / 2 WR / TE /
-2 FLEX (RB-WR-TE) / K / DEF, 5 bench, 1 IR. Half-PPR, INT −1, fumble −2,
-no bonuses. Playoffs 6 teams from week 15; trade deadline week 13.
-My picks: 1, 24, 25, 48, 49, 72, 73, 96, 97, 120, 121, 144, 145, 168, 169.
+Sleeper league 1389720742551093249. 12 teams, half-PPR, passing TD 4,
+passing INT -1. QB / 2 RB / 2 WR / TE / 2 FLEX / K / DEF, five bench,
+one IR. Slot 1, 15-round snake. Cached draft time is September 8 at
+9:00:20 PM Eastern; autostart was off. Confirm in Sleeper before the draft.
 
-## Inputs
+Choose the HPPR_4ptPTD_1QB 2WR 2FLEX | 12T cheat sheet, not the auction tab.
+Your picks are 1, 24, 25, 48, 49, 72, 73, 96, 97, 120, 121, 144, 145, 168, 169.
 
-| source | what | freshness |
-|---|---|---|
-| Sleeper `projections/nfl/2026` | season stat-line projections + Sleeper ADP (3,304 players) | live |
-| FantasyPros half-PPR ECR | expert consensus rank, sd, min/max, tier (978 players) | 9/08 |
-| FantasyFootballCalculator ADP | 12-team half-PPR, 1,837 drafts | 9/03–9/08 |
-| nflverse 2025 season stats | prior-year PPG under this league's scoring | final |
-| Sleeper player dump + trending adds | injury tags, depth chart, 48-hour add counts | live |
-| ~25 web sources | injury/suspension/depth-chart news | 9/08 |
+Open data/outputs/draft2026_warroom.html as a local file. It contains all
+983 board records and does not need a running server. Keep Sleeper open:
+this page records selections manually and does not submit draft picks.
 
-## Method
+## Corrected simulation
 
-1. **Projection** = ½ Sleeper stat-line scored with `gridiron.scoring` under
-   the real rules + ½ "consensus-implied": the ECR position rank mapped onto
-   the Sleeper points curve. Known missed games (Henderson, Tyson, Jacobs,
-   Monangai, Kamara, season-enders) are applied to the Sleeper leg only.
-2. **Replacement level** by order-statistic fill of the actual lineup
-   (QB12, RB24, WR24, TE12, then 24 flex by projection). The flex filled
-   16 WR / 8 RB, so replacement = RB33 138.6, WR41 139.0, TE13 128.6,
-   QB13 292.2. VOR = projection − replacement.
-3. **Availability**: blended ADP (60% Sleeper, 40% FFC, because the room
-   drafts on Sleeper) with sd = 0.57 + 0.11·ADP fitted on FFC's own
-   per-player spread; P(available at pick k) = 1 − Φ((k − ½ − ADP)/sd).
-4. **Monte Carlo**: 300 drafts per policy. Eleven opponents draft off their
-   own noisy copy of the ADP board with roster caps (no K/DEF before round
-   12, one QB/TE before round 11). My policies were scored by optimal
-   starting-lineup points plus a small bench term.
+Each policy has 300 draws with seed 20260908; identical seeds provide a
+common random comparison. All simulated teams must complete the ten
+starter slots within 15 selections. Temporarily ineligible candidates
+are reconsidered on later turns. Scripted openings use static VOR
+after the opening, so the opening is the comparison being changed.
 
-## Results
+| policy | mean lineup points | 10th percentile |
+|---|---:|---:|
+| static_vor | 1890.4 | 1869.4 |
+| dynamic_vona | 1885.1 | 1862.2 |
+| rb_rb_rb | 1874.8 | 1848.4 |
+| rb_wr_wr | 1870.4 | 1851.4 |
+| rb_rb_wr | 1889.1 | 1869.8 |
+| rb_te_wr | 1852.5 | 1835.8 |
+| rb_wr_qb | 1852.2 | 1833.6 |
+| wr_at_1 | 1850.8 | 1828.3 |
 
-| policy (first three rounds) | mean lineup pts | p10 |
-|---|---|---|
-| **best static VOR each pick** | **1866** | 1849 |
-| RB then TE then WR | 1759 | 1740 |
-| dynamic value-over-next-available | 1759 | 1741 |
-| RB-RB-WR | 1756 | 1739 |
-| RB-WR-WR | 1752 | 1734 |
-| RB-WR-QB | 1747 | 1727 |
-| RB-RB-RB | 1742 | 1718 |
-| WR at 1.01 | 1715 | 1694 |
+Static versus dynamic differs by about 5.3 points in this run, not the
+previous roughly 100-point advantage. These are projected outcomes under
+assumptions, not observed wins or an out-of-sample validated strategy.
+Do not force a named opening from this result.
 
-The static-VOR rule wins by ~100 points, almost all of it from taking the
-elite TE at the 2/3 turn and a top-8 QB in rounds 6–7 instead of waiting.
+Room probabilities now come from 1,000 separate neutral-market drafts,
+seed 20260909, with all actual simulated selections removed. They are
+unconditional pre-draft scenarios; they do not learn the real room's picks.
+ADP mode is the default and is also an unvalidated estimate. At consecutive
+own picks, a player passed at the first pick remains available at the second.
 
-Most common picks under the winning rule:
+The manifest records input hashes and file modification times, seeds,
+policy summaries, and the board hash. The page builder rejects a board
+that does not match its manifest. Rebuilding never refreshes source news.
 
-| pick | most common | share |
-|---|---|---|
-| 1 | Jahmyr Gibbs | 100% |
-| 24 | Brock Bowers (else Nico Collins) | 77% |
-| 25 | Javonte Williams / George Pickens / Bowers | 47 / 32 / 19% |
-| 48 | David Montgomery / Waddle / Burden / Swift | 34 / 20 / 16 / 14% |
-| 49 | Luther Burden / McLaurin | 57 / 17% |
-| 72 | Brian Thomas / Harrison / Hurts / Daniels | 49 / 19 / 10 / 5% |
-| 73 | Daniels / Hurts / Harrison | 23 / 22 / 17% |
-| 96–97 | MarShawn Lloyd, Jayden Reed, Lawrence, Pittman, Mason | |
-| 120–145 | Coker, Shakir, Meyers, Doubs, Rodriguez, Boston, Boutte, Shaheed | |
-| 168–169 | DEF then K | |
+## Pre-draft checklist
 
-## Caveats
+- Confirm slot, league scoring, start time and available players in Sleeper.
+- Check current injury and suspension news. Saved news and projections are
+  snapshots. Excluded-scenario labels are assumptions, not live status.
+- Open the final HTML in the browser you will use all evening. Try a pick,
+  export a backup, then Reset twice to clear the rehearsal.
+- Check that the save status is healthy. If browser storage is unavailable,
+  export backups frequently; never assume a refresh will retain picks.
+- Confirm the counter stays aligned with Sleeper. Mine is only for your
+  turns; Gone is for opponents. Skip reserves an unresolved numbered pick.
+- Correct old picks through Pick log > Edit, then select the replacement.
+  Clear player preserves the pick number; Undo removes only the latest pick.
+- Use Compare to mark alternatives before your selection. The JSON backup
+  records the considered alternatives, model mode, time, and board version.
+- Record an unlisted player by name and position if needed; its projection
+  is zero, so it does not invent value. Recording an excluded player is
+  allowed to keep the tracker consistent with Sleeper, with a warning.
+- Export at each turn. Before switching browsers or files, export and then
+  restore the pasted backup in the new page. Check the counter and roster.
+- Finish with QB, two RB, two WR, TE, two eligible FLEX, K, DEF and five bench.
 
-- Replacement level treats the season as one number; RB injury churn
-  (§6.6 of QUANT_FOUNDATIONS: replacement is a forward max) means late RB
-  handcuffs carry more value than VOR shows. The plan leans on that in
-  rounds 9–13.
-- Sleeper's projections list `gp = 18` for everyone; the ECR leg carries the
-  injury discounting.
-- FFC's half-PPR sample is thin for some players (Bowers n small, ADP 40 vs
-  Sleeper 23.5). The 60/40 blend leans Sleeper on purpose.
-- The dynamic policy underperformed static because its need weights were
-  hand-set; it is not evidence against dynamic VOR in general.
+## Remaining limits
 
-## Revision: manager history (added 2026-09-08, 7:30 PM)
+Conditional GO as a manual companion; not a validated recommendation engine.
+No new live data was fetched during the repair. Name-based fallback joins
+remain for some sources, with ambiguous matches withheld rather than guessed.
+A full stable-ID crosswalk and reproducible producers for every cached input
+remain unfinished. The scoring adapter still lacks some less-common stats
+(e.g. two-point conversions), and K/DEF projections retain source assumptions.
+Injury discounts and manager-history estimates are exploratory; neither
+causal validation nor out-of-sample predictive validation is complete.
 
-`analyze_competition.py` profiled every manager from the league's 2023–25
-Sleeper history and `draft_board_2026.py` now shifts each opponent's board
-by how early they take their first QB/TE/RB/WR versus the market of the day
-(`data/outputs/competition_shifts_2026.csv`). Results moved:
+After the draft, record_draft_2026.py can fetch the completed Sleeper draft.
+Its alternative is explicitly a retrospective best-VOR benchmark, not a
+claim about what you considered. The exported page backup is the record
+of your actual marked alternatives. ADP and room Brier scores use common
+nonmissing support across all fifteen own-pick checkpoints; one draft is
+not enough to select a model confidently.
 
-| at pick 24 | ADP-only | with history |
-|---|---|---|
-| Bowers | 97% | ~0% |
-| McBride | 99% | ~0% |
-| Josh Allen | 55% | 22% |
-| Kenneth Walker | 4% | 35% |
-| Ashton Jeanty | 4% | 32% |
-| Omarion Hampton | 3% | 27% |
-| Nico Collins | 14% | 41% |
-| George Pickens | 38% | 65% |
+## Verification and rebuild (PowerShell, repository root)
 
-The turn is therefore RB/WR, not TE: best RB left (Walker, Jeanty, Hampton)
-or Collins/Pickens at 24, then Pickens/Collins/Olave/Nabers or Javonte/Kyren/
-Hall at 25. TE waits for the LaPorta/Kraft tier at 72; QB for Daniels/Hurts
-at 72–73 or Lawrence at 96. Full room profiles: `COMPETITION_2026.md`.
+    $env:PYTHONPATH="src"
+    .venv/Scripts/python.exe scripts/ci/smoke.py
+    .venv/Scripts/python.exe scripts/ci/run_summary.py -- .venv/Scripts/python.exe -m pytest
+    node --test scripts/research/warroom/draftroom_logic.test.js
+    .venv/Scripts/python.exe scripts/research/draft_board_2026.py
+    .venv/Scripts/python.exe scripts/research/warroom_build.py
 
-## Revision 2: survival odds in the page (6:30 PM)
+The board build requires the existing local research cache; it does not
+download missing inputs. Environment dependencies are declared in
+pyproject.toml and requirements.txt and installed in the repository .venv.
 
-The page's Next? column and the plan text now use `ph{pick}`: the share of
-1,000 history-aware simulated drafts in which the ROOM left the player alone
-until each of my picks, recorded with a "ghost me" (my own simulated picks
-do not remove players), so a player I would usually take at 25 still shows
-his true odds of lasting to 48. Conditioned live on the last of my picks
-already passed. Known bias: ghost picks leave one extra good player in the
-pool per my-pick, so the odds run slightly high late; the conditional ratio
-cancels most of it. At pick 1: Walker 48%, Jeanty 50%, Hampton 42%, Collins
-54%, Pickens 75%, Allen 29% to reach 24; Montgomery 88%, Irving 87%, Judkins
-94%, Swift 73% to reach 48; LaPorta 60%, Kraft 79%, Hurts 86% to reach 72.
+## Historical blocking and schedule context
+
+Four columns now show run blocking, pass protection, early opponents (weeks
+1-4) and fantasy playoff opponents (weeks 15-17). Click each cell for the
+metric explanation, opponents and coverage. Run blocking and pass protection
+use 2025 ESPN team win rates and the source's rankings; higher rates and
+lower ranks are better. These are historical team results, not grades of
+the current starting five.
+
+Schedule cells show two separate averages of opponents' 2025 run-stop and
+pass-rush win rates. Lower means weaker historical opposition. They are
+not full fantasy SOS: pass coverage, player roles, game script, coaching,
+2026 personnel changes and opponent adjustment are absent. Bye weeks do
+not become easy games; any missing opponent rate makes that metric
+unavailable instead of averaging the missing opponent away. K/DEF show N/A.
+
+All context has LOW predictive confidence and a ZERO projection adjustment.
+Do not apply another boost to the existing projection based on these columns.
+Publication, retrieval and schedule-cache dates are visible. Source:
+https://www.espn.com/nfl/story/_/id/46138675/2025-nfl-win-rates-top-teams-players-rankings-pass-run-block
+
+The small numeric snapshot is data/outputs/draft2026_context_source.json.
+It was transcribed from the primary team table because direct HTTP returned
+403. It is an inspectable snapshot, not an automatic live feed. The producer
+scripts/research/build_draft_context_2026.py runs offline using that snapshot
+and the cached 2026 schedule. It rejects incomplete schedules, future-dated
+source information, duplicate teams/weeks and invalid rates. The page
+builder verifies source fingerprints. To rebuild:
+
+    $env:PYTHONPATH="src"
+    .venv/Scripts/python.exe scripts/research/build_draft_context_2026.py
+    .venv/Scripts/python.exe scripts/research/warroom_build.py
+
+Before activating any numerical adjustment, evaluate baseline, schedule,
+blocking and combined variants with chronological folds and as-of source
+snapshots. Do not use later closing lines or end-of-season metrics in
+preseason backtests. No predictive validation was performed for this release.
+
+## 2026 personnel, coaching, scheme and optional PFF
+
+Open the 2026 changes panel above the board or the 2026 changes button
+beside a player. Select any of the 32 teams. The panel shows roster
+differences, skill-position chart entries, the current offensive-line
+chart, coaching reports, and sourced scheme plans. Defense and other
+roster changes are available in an expandable section.
+
+Roster comparisons anchor on GSIS IDs. They compare saved 2025/2026
+membership, not transactions or prior starter status. A missing player in
+the earlier snapshot is not assumed to be a rookie. The latest chart per
+team before the cutoff is used; top ranks are selected separately for
+each chart slot, so WR2/WR3 are not lost. Conflicting IDs or teams are
+flagged, and grades/history are withheld from those entries. Chart order
+is not a snap projection; roster ACT status is not medical clearance.
+
+Coaching coverage is a reviewed collection of NFL hiring reports, plus
+specific play-caller and scheme sources; it is not a complete current
+directory. Missing entries do not prove continuity. Coordinator changes
+and play-caller changes are separate. Scheme reporting is not measured
+scheme frequency. Source publication/retrieval and snapshot dates are
+visible. No numerical adjustment or causal claim is added.
+
+PFF grades are NOT loaded in this release. The optional import expects
+data/research/cache/draft2026/pff_blocking_2025.csv, using the header in
+data/outputs/pff_blocking_import_template.csv. Supply an authorized export
+mapped to this schema; do not rename unrelated PFF metrics as grades.
+Each player has one prior-season/position record, a GSIS ID or uniquely
+mapped PFF ID, separate run/pass blocking grades and snap counts, an HTTPS
+source, and a timezone-aware published_at. Blank component grades remain
+unavailable. Duplicate, future, unknown-ID, ambiguous-ID, invalid grade
+and zero-snap grade records are rejected. College grades are not translated.
+
+To build offline after updating verified inputs:
+
+    $env:PYTHONPATH="src"
+    .venv/Scripts/python.exe scripts/research/build_personnel_2026.py
+    .venv/Scripts/python.exe scripts/research/warroom_build.py
+
+The new 2025 roster cache was fetched with nflreadpy.load_rosters([2025]).
+The builder's --as-of option also rejects snapshots saved after the cutoff;
+historical evaluation requires original archived snapshots. Today's roster
+cannot be relabeled as a historical draft-day snapshot. Full roster-refresh
+automation and statistical personnel/scheme weighting are not included.
+
+Verification:
+
+    .venv/Scripts/python.exe scripts/ci/smoke.py
+    .venv/Scripts/python.exe scripts/ci/run_summary.py -- .venv/Scripts/python.exe -m pytest
+    node --test scripts/research/warroom/draftroom_logic.test.js
+    git diff --check

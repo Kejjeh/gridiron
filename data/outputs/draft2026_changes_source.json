@@ -1,0 +1,403 @@
+{
+  "retrieved": "2026-09-08T23:16:47.434999+00:00",
+  "coverage": "Reviewed hiring reports, not a complete current coaching directory.",
+  "teams": {
+    "ARI": [
+      {
+        "kind": "coaching",
+        "text": "HC: Mike LaFleur",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Nathaniel Hackett",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "ATL": [
+      {
+        "kind": "coaching",
+        "text": "HC: Kevin Stefanski",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Tommy Rees",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "BAL": [
+      {
+        "kind": "coaching",
+        "text": "HC: Jesse Minter",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Declan Doyle",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Anthony Weaver",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "BUF": [
+      {
+        "kind": "coaching",
+        "text": "HC: Joe Brady",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Pete Carmichael Jr.",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Jim Leonhard",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "CHI": [
+      {
+        "kind": "coaching",
+        "text": "OC: Press Taylor",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "play_caller",
+        "text": "Ben Johnson remains play-caller despite the OC change.",
+        "source_url": "https://amp.nfl.com/news/bears-promoting-passing-game-coordinator-press-taylor-to-offensive-coordinator",
+        "published": "2026-02-08T12:59:00+00:00",
+        "status": "NFL report",
+        "date_basis": "publication"
+      }
+    ],
+    "CLE": [
+      {
+        "kind": "coaching",
+        "text": "HC: Todd Monken",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Travis Switzer",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Mike Rutenberg",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "DAL": [
+      {
+        "kind": "coaching",
+        "text": "DC: Christian Parker",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "DET": [
+      {
+        "kind": "coaching",
+        "text": "OC: Drew Petzing",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "scheme",
+        "text": "Petzing describes combining concepts from Arizona with Detroit's existing offense.",
+        "source_url": "https://www.detroitlions.com/news/5-takeaways-from-petzing-s-media-session-goff-sewell-stbrown-williams",
+        "published": "2026-06-04T18:52:00+00:00",
+        "status": "Reported installation",
+        "date_basis": "publication"
+      }
+    ],
+    "GB": [
+      {
+        "kind": "coaching",
+        "text": "DC: Jonathan Gannon",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "KC": [
+      {
+        "kind": "coaching",
+        "text": "OC: Eric Bieniemy",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "LA": [
+      {
+        "kind": "coaching",
+        "text": "OC: Nate Scheelhaase",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "LAC": [
+      {
+        "kind": "coaching",
+        "text": "OC: Mike McDaniel",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Chris O'Leary",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "scheme",
+        "text": "Team reporting describes McDaniel installing a wide-zone running system.",
+        "source_url": "https://www.chargers.com/news/offensive-line-mike-mcdaniel-butch-barry",
+        "published": "2026-09-08T23:16:47.434989+00:00",
+        "status": "Reported installation",
+        "date_basis": "retrieval cutoff"
+      }
+    ],
+    "LV": [
+      {
+        "kind": "coaching",
+        "text": "HC: Klint Kubiak",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Andrew Janocko",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Rob Leonard",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "MIA": [
+      {
+        "kind": "coaching",
+        "text": "HC: Jeff Hafley",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Bobby Slowik",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Sean Duggan",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "NE": [
+      {
+        "kind": "coaching",
+        "text": "DC: Zak Kuhr",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "NYG": [
+      {
+        "kind": "coaching",
+        "text": "HC: John Harbaugh",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Matt Nagy",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Dennard Wilson",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "NYJ": [
+      {
+        "kind": "coaching",
+        "text": "OC: Frank Reich",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Brian Duker",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "PHI": [
+      {
+        "kind": "coaching",
+        "text": "OC: Sean Mannion",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "PIT": [
+      {
+        "kind": "coaching",
+        "text": "HC: Mike McCarthy",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Brian Angelichio",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Patrick Graham",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "SEA": [
+      {
+        "kind": "coaching",
+        "text": "OC: Brian Fleury",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "SF": [
+      {
+        "kind": "coaching",
+        "text": "DC: Raheem Morris",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "TB": [
+      {
+        "kind": "coaching",
+        "text": "OC: Zac Robinson",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "TEN": [
+      {
+        "kind": "coaching",
+        "text": "HC: Robert Saleh",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "OC: Brian Daboll",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Gus Bradley",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "WAS": [
+      {
+        "kind": "coaching",
+        "text": "OC: David Blough",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      },
+      {
+        "kind": "coaching",
+        "text": "DC: Daronte Jones",
+        "source_url": "https://amp.nfl.com/news/nfl-coaching-gm-tracker-latest-news-interviews-developments-2026-hiring-cycle",
+        "published": "2026-06-01T19:18:00+00:00",
+        "status": "NFL hiring report"
+      }
+    ],
+    "DEN": [
+      {
+        "kind": "play_caller",
+        "text": "Davis Webb becomes primary play-caller; Sean Payton remains involved.",
+        "source_url": "https://www.denverbroncos.com/news/i-wouldn-t-do-it-if-i-didn-t-think-it-was-going-to-help-our-team-win-hc-sean-payton-announces-oc-davis-webb-to-call-plays-for-broncos-offense",
+        "published": "2026-02-24T22:43:00+00:00",
+        "status": "Team announcement",
+        "date_basis": "publication"
+      }
+    ]
+  }
+}

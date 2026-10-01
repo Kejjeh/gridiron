@@ -1,0 +1,299 @@
+{
+  "season": 2025,
+  "source": "ESPN Analytics",
+  "source_url": "https://www.espn.com/nfl/story/_/id/46138675/2025-nfl-win-rates-top-teams-players-rankings-pass-run-block",
+  "published": "2026-01-06T10:51:00-05:00",
+  "through": "2025 regular season, Week 18",
+  "retrieved": "2026-09-08T23:06:10.072778+00:00",
+  "ingestion": "Numeric team facts transcribed from the public team table; direct HTTP returned 403.",
+  "teams": [
+    {
+      "team": "ARI",
+      "pass_rush": 39,
+      "run_stop": 30,
+      "pass_block": 63,
+      "run_block": 71,
+      "pass_rank": 21,
+      "run_rank": 15
+    },
+    {
+      "team": "ATL",
+      "pass_rush": 41,
+      "run_stop": 31,
+      "pass_block": 64,
+      "run_block": 70,
+      "pass_rank": 14,
+      "run_rank": 30
+    },
+    {
+      "team": "BAL",
+      "pass_rush": 30,
+      "run_stop": 30,
+      "pass_block": 69,
+      "run_block": 71,
+      "pass_rank": 7,
+      "run_rank": 17
+    },
+    {
+      "team": "BUF",
+      "pass_rush": 31,
+      "run_stop": 30,
+      "pass_block": 71,
+      "run_block": 75,
+      "pass_rank": 4,
+      "run_rank": 1
+    },
+    {
+      "team": "CAR",
+      "pass_rush": 34,
+      "run_stop": 26,
+      "pass_block": 59,
+      "run_block": 70,
+      "pass_rank": 23,
+      "run_rank": 28
+    },
+    {
+      "team": "CHI",
+      "pass_rush": 29,
+      "run_stop": 29,
+      "pass_block": 74,
+      "run_block": 74,
+      "pass_rank": 1,
+      "run_rank": 5
+    },
+    {
+      "team": "CIN",
+      "pass_rush": 29,
+      "run_stop": 29,
+      "pass_block": 58,
+      "run_block": 72,
+      "pass_rank": 28,
+      "run_rank": 10
+    },
+    {
+      "team": "CLE",
+      "pass_rush": 46,
+      "run_stop": 34,
+      "pass_block": 63,
+      "run_block": 70,
+      "pass_rank": 20,
+      "run_rank": 24
+    },
+    {
+      "team": "DAL",
+      "pass_rush": 40,
+      "run_stop": 32,
+      "pass_block": 63,
+      "run_block": 72,
+      "pass_rank": 19,
+      "run_rank": 11
+    },
+    {
+      "team": "DEN",
+      "pass_rush": 45,
+      "run_stop": 32,
+      "pass_block": 68,
+      "run_block": 74,
+      "pass_rank": 8,
+      "run_rank": 4
+    },
+    {
+      "team": "DET",
+      "pass_rush": 32,
+      "run_stop": 28,
+      "pass_block": 56,
+      "run_block": 71,
+      "pass_rank": 31,
+      "run_rank": 20
+    },
+    {
+      "team": "GB",
+      "pass_rush": 39,
+      "run_stop": 29,
+      "pass_block": 69,
+      "run_block": 71,
+      "pass_rank": 6,
+      "run_rank": 19
+    },
+    {
+      "team": "HOU",
+      "pass_rush": 35,
+      "run_stop": 32,
+      "pass_block": 56,
+      "run_block": 68,
+      "pass_rank": 30,
+      "run_rank": 32
+    },
+    {
+      "team": "IND",
+      "pass_rush": 29,
+      "run_stop": 29,
+      "pass_block": 58,
+      "run_block": 73,
+      "pass_rank": 27,
+      "run_rank": 7
+    },
+    {
+      "team": "JAX",
+      "pass_rush": 38,
+      "run_stop": 28,
+      "pass_block": 68,
+      "run_block": 73,
+      "pass_rank": 9,
+      "run_rank": 6
+    },
+    {
+      "team": "KC",
+      "pass_rush": 40,
+      "run_stop": 28,
+      "pass_block": 71,
+      "run_block": 70,
+      "pass_rank": 2,
+      "run_rank": 25
+    },
+    {
+      "team": "LV",
+      "pass_rush": 37,
+      "run_stop": 30,
+      "pass_block": 61,
+      "run_block": 70,
+      "pass_rank": 22,
+      "run_rank": 22
+    },
+    {
+      "team": "LAC",
+      "pass_rush": 37,
+      "run_stop": 30,
+      "pass_block": 54,
+      "run_block": 69,
+      "pass_rank": 32,
+      "run_rank": 31
+    },
+    {
+      "team": "LA",
+      "pass_rush": 40,
+      "run_stop": 34,
+      "pass_block": 69,
+      "run_block": 74,
+      "pass_rank": 5,
+      "run_rank": 2
+    },
+    {
+      "team": "MIA",
+      "pass_rush": 34,
+      "run_stop": 30,
+      "pass_block": 59,
+      "run_block": 70,
+      "pass_rank": 24,
+      "run_rank": 29
+    },
+    {
+      "team": "MIN",
+      "pass_rush": 46,
+      "run_stop": 30,
+      "pass_block": 59,
+      "run_block": 74,
+      "pass_rank": 25,
+      "run_rank": 3
+    },
+    {
+      "team": "NE",
+      "pass_rush": 35,
+      "run_stop": 31,
+      "pass_block": 64,
+      "run_block": 72,
+      "pass_rank": 13,
+      "run_rank": 12
+    },
+    {
+      "team": "NO",
+      "pass_rush": 35,
+      "run_stop": 31,
+      "pass_block": 56,
+      "run_block": 70,
+      "pass_rank": 29,
+      "run_rank": 23
+    },
+    {
+      "team": "NYG",
+      "pass_rush": 41,
+      "run_stop": 28,
+      "pass_block": 65,
+      "run_block": 71,
+      "pass_rank": 11,
+      "run_rank": 18
+    },
+    {
+      "team": "NYJ",
+      "pass_rush": 33,
+      "run_stop": 30,
+      "pass_block": 58,
+      "run_block": 71,
+      "pass_rank": 26,
+      "run_rank": 14
+    },
+    {
+      "team": "PHI",
+      "pass_rush": 35,
+      "run_stop": 30,
+      "pass_block": 64,
+      "run_block": 71,
+      "pass_rank": 17,
+      "run_rank": 16
+    },
+    {
+      "team": "PIT",
+      "pass_rush": 41,
+      "run_stop": 29,
+      "pass_block": 71,
+      "run_block": 72,
+      "pass_rank": 3,
+      "run_rank": 9
+    },
+    {
+      "team": "SF",
+      "pass_rush": 29,
+      "run_stop": 31,
+      "pass_block": 67,
+      "run_block": 72,
+      "pass_rank": 10,
+      "run_rank": 13
+    },
+    {
+      "team": "SEA",
+      "pass_rush": 41,
+      "run_stop": 32,
+      "pass_block": 65,
+      "run_block": 73,
+      "pass_rank": 12,
+      "run_rank": 8
+    },
+    {
+      "team": "TB",
+      "pass_rush": 40,
+      "run_stop": 30,
+      "pass_block": 64,
+      "run_block": 70,
+      "pass_rank": 15,
+      "run_rank": 27
+    },
+    {
+      "team": "TEN",
+      "pass_rush": 37,
+      "run_stop": 30,
+      "pass_block": 64,
+      "run_block": 70,
+      "pass_rank": 16,
+      "run_rank": 26
+    },
+    {
+      "team": "WAS",
+      "pass_rush": 36,
+      "run_stop": 31,
+      "pass_block": 63,
+      "run_block": 70,
+      "pass_rank": 18,
+      "run_rank": 21
+    }
+  ]
+}

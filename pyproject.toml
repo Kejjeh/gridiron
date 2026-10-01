@@ -5,10 +5,13 @@ description = "Fantasy football decision engine (P(win)-denominated), seeded fro
 requires-python = ">=3.11"
 dependencies = [
     "pydantic-settings>=2.0",
+    "pandas>=2.2",
+    "numpy>=2.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+research = ["requests>=2.32", "nflreadpy>=0.1.5", "pyarrow>=18", "lxml>=5"]
 
 [build-system]
 requires = ["setuptools>=68"]
