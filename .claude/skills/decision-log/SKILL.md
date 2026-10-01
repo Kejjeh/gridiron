@@ -11,6 +11,15 @@ skill runs it every week so accuracy accumulates.
 
 ## Steps
 
+0. The cloud build now grades every week by itself once its last game is
+   final (`grade_week.py --finished`, `gridiron.grading`): it pins the last
+   board built before the Sunday slate, grades it from the cached box
+   scores, and the board's **Report card** section shows the result. That
+   grade records no owner decisions. Run the steps below when the owner
+   wants their actual moves on record, or to commit the ledger: the cloud's
+   copy is in the fetched artifact under `ledger/grades/season<YYYY>.csv`;
+   copy it over `data/ledger/grades/` first so the commit carries both.
+
 1. Archives: `PYTHONPATH=src python scripts/weekly/fetch_record.py` prints an
    `archives:` path (the decision-time records the cloud carries). Locally
    they are under `data/ledger/decisions/`.

@@ -32,7 +32,7 @@ from gridiron.ids import Crosswalk, nflverse_team, sleeper_gsis_overlay
 from gridiron.league_config import (MY_SLEEPER_USERNAME, SEASON_YEAR,
                                     SETTINGS_VERIFIED)
 from gridiron.livesync import current_snapshot
-from gridiron.paths import OUTPUTS, ensure_dirs
+from gridiron.paths import LEDGER, OUTPUTS, ensure_dirs
 from gridiron.scoring import ScoringCoverage, scoring_coverage
 from gridiron.models import advanced as adv_model
 from gridiron.shadow import read_shadow
@@ -176,6 +176,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="ISO-8601 UTC instant to render AS OF (locks, freshness); "
                          "default: now")
     ap.add_argument("--fail-on-degraded", action="store_true")
+    ap.add_argument("--grades-dir", type=Path, default=None,
+                    help="season grade ledger folder for the report card "
+                         "(default data/ledger/grades)")
     args = ap.parse_args(argv)
 
     if not SETTINGS_VERIFIED:
@@ -270,6 +273,15 @@ def main(argv: list[str] | None = None) -> int:
         # grading only — not a manifest source, gates nothing (gridiron.shadow).
         shadow=read_shadow(directory, season=state_season, week=report_week),
         advanced=advanced)
+
+    # The report card: every graded week of the season, from the ledger the
+    # grading step keeps (counts only). Read after the build, so the archive
+    # this run froze never carries a grade.
+    from dataclasses import replace as _replace
+    from gridiron import grading
+    grades_dir = args.grades_dir or (LEDGER / "grades")
+    dash = _replace(dash, report_card=grading.report_card(
+        grading.read_ledger(grades_dir / f"season{state_season}.csv"), state_season))
 
     # Summary to stdout: no player names, so a log of this run exposes nothing.
     print(f"{ctx.headline()} | evidence boundary wk{ctx.evidence_boundary}")

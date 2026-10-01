@@ -207,6 +207,24 @@ jobs:
           if [ "$PLAYER_MAP_BOOTSTRAP" = "true" ]; then set -- "$@" --player-map-bootstrap; fi
           python scripts/ingest/pull_week.py "$@"
 
+      # Weekly grading, without a person. Each run keeps aside the last board
+      # built before a week's Sunday slate (the cloud keeps only ~10 hours of
+      # records, so Sunday's board would be gone by Tuesday), and once every
+      # game of that week has a score it grades the board against the box
+      # scores the pull step already cached: no extra download. A week is
+      # graded once and a week someone graded by hand is never regraded. The
+      # season ledger (counts and rates only, no player names or ids) rides
+      # the carry store and the run artifact, and the board renders it as its
+      # report card. Not fatal: a failed grade must not cost the page. The
+      # log prints counts only (gridiron.grading; tests/test_grading.py).
+      - name: Grade finished weeks (counts only)
+        continue-on-error: true
+        run: >-
+          python scripts/weekly/grade_week.py --finished
+          --archives data/ledger/decisions
+          --pins "$CARRY_DIR/pins"
+          --carry-grades "$CARRY_DIR/grades"
+
       - name: Render the dashboard
         id: render
         # The dispatch input is passed as an ENVIRONMENT VALUE, never
@@ -323,6 +341,7 @@ jobs:
             data/outputs/dashboard/*.html
             data/outputs/dashboard/*.json
             data/ledger/decisions/season*/*.json
+            data/ledger/grades/season*.csv
           if-no-files-found: error
           retention-days: 14
 

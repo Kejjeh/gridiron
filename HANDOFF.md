@@ -64,6 +64,29 @@ position ranked by points from the next week through week 17 (playoffs
 everywhere). In the record as `ros`, in `weekly_review.py`, and as full
 tables from `scripts/weekly/ros_rankings.py`.
 
+## Trend chips, cloud grading, board restyle (2026-10-01)
+
+The two "next candidates" from the weekly-routine section are built.
+
+- **Trend chips** on the Board's roster rows: volume trend label (rule #6),
+  an opportunities-per-week sparkline, ppg and last-game snaps. The roster
+  is now grouped cards (starters, bench, reserve) instead of a 7-column
+  table; free-agent radar rows carry the chip as well.
+- **Cloud grading**: new `gridiron.grading` + `grade_week.py --finished`,
+  run by `dashboard-artifact.yml` before the render (non-fatal, counts-only
+  log). Pins live in `.carry/pins/`, the ledger in `.carry/grades/` and the
+  run artifact. First automatic grade: week 4, the morning after Monday
+  night. Week 3's hand grade is kept and never regraded.
+- **Report card** section on the Board (KPIs, start/sit shoot-out bars with
+  the 50% coin-flip mark, one row per week). Page-only, never archived.
+- **Restyle** in `theme.CSS` (shared by both pages): glow background,
+  elevated cards, accent section headers, gradient brand mark and primary
+  buttons. Bars are SVG because the CSP blocks inline `style` attributes;
+  `tests/test_board_trends.py` pins that.
+
+Not verified: the real cloud run of the grading step (first final week with
+a pin is week 4). Check the run log's `[grade]` lines on Tuesday 10-06.
+
 ## Merged: unpushed draft-2026 research (merged 2026-10-01)
 
 Work from the 09-08 draft-day sessions sat uncommitted on the desktop

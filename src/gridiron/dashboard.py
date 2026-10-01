@@ -69,7 +69,9 @@ from gridiron.radar import RadarChanges, diff_radar, move_deadline, radar_record
 from gridiron.scoring import ScoringCoverage
 from gridiron.models.advanced import NAME as ADVANCED_NAME, AdvancedContext
 from gridiron.shadow import shadow_block
-from gridiron.trends import usage_block
+from gridiron.grading import SYSTEM_LABELS, ReportCard
+from gridiron.trends import (FALLING, MIXED, RISING, STEADY, TOO_FEW,
+                             usage_block)
 from gridiron import theme
 from gridiron.waivers import (
     BELOW, COVERAGE, LINEUP, RESEARCH, Candidate, WaiverBoard, available_ids,
@@ -159,6 +161,10 @@ class Dashboard:
     #: Other systems' numbers for the same players, for weekly grading only:
     #: the pre-advanced baseline and the stack (advanced + Sleeper).
     contenders: Mapping[str, object] | None = None
+    #: The season's graded weeks (`gridiron.grading.report_card`), read from
+    #: the ledger after the page is built. Page-only: never archived, so a
+    #: record never carries a grade of itself.
+    report_card: "ReportCard | None" = None
 
     @property
     def degraded(self) -> bool:
@@ -1702,6 +1708,43 @@ padding:12px 0 0;border-top:1px solid var(--line)}
 @media (max-width:560px){.radar summary{padding:9px 2px}.radar .rname{font-size:15px}
 .facts>div{grid-template-columns:1fr;gap:2px;padding:8px 0}.dcard,.dcard.first{padding:14px 15px}
 .dcard.first h3{font-size:19px}.dhead .until{margin-left:0;flex-basis:100%}}
+.rintro{margin:0 0 4px;max-width:82ch}
+.rgroup{display:flex;align-items:center;gap:8px;font-size:var(--t-xs);letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:18px 0 8px}
+.rgroup .count{font-size:11px;padding:1px 8px;border-radius:999px;background:var(--chip);border:1px solid var(--line2);color:var(--muted);letter-spacing:.04em}
+.roster{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.rrow{--pc:var(--dim);display:grid;grid-template-columns:60px minmax(0,1.3fr) minmax(0,1.2fr) minmax(0,.9fr) minmax(0,.8fr);
+gap:6px 16px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius-s);
+background:linear-gradient(90deg,color-mix(in srgb,var(--pc) 9%,transparent),transparent 38%),var(--bg2);transition:border-color .15s ease}
+.rrow:hover{border-color:var(--line2)}
+.p-qb{--pc:var(--qb)}.p-rb{--pc:var(--rb)}.p-wr{--pc:var(--wr)}.p-te{--pc:var(--te)}.p-k{--pc:var(--k)}.p-def{--pc:var(--def)}
+.rrow .slot{display:inline-flex;align-items:center;justify-content:center;min-width:48px;height:28px;padding:0 8px;border-radius:8px;
+font-size:12px;font-weight:800;letter-spacing:.06em;color:var(--pc);border:1px solid color-mix(in srgb,var(--pc) 45%,transparent);
+background:color-mix(in srgb,var(--pc) 11%,transparent)}
+.rname{font-weight:750;font-size:15.5px;line-height:1.25}
+.rmeta{font-size:12.5px;color:var(--muted)}.rmeta .pos{color:var(--pc);font-weight:800;letter-spacing:.04em}
+.rproj{font-size:var(--t-s)}.rproj b{font-size:17px}.rproj details{margin:0}.rproj summary{padding:0;font-size:12px}
+.rlbl{display:block;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-weight:700}
+.rlock .lk{font-size:12px;color:var(--dim)}.rlock .lk.on{color:var(--warn);font-weight:700}
+.usage{display:flex;flex-direction:column;gap:5px}.urow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ustat{font-size:12px;color:var(--muted)}.ustat b{color:var(--fg)}
+.spark{flex:0 0 auto;overflow:visible}.spark .bar{fill:var(--line2)}.spark .bar.last{fill:var(--pc,var(--cyan))}.spark .gap{fill:var(--line)}
+.radar .rmeta .trend{margin-left:2px;padding:1px 8px;font-size:10.5px}
+.report .kpi{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.report h3{margin-top:18px}
+.bars{list-style:none;padding:0;margin:10px 0 16px;display:grid;gap:10px}
+.bars .b{display:grid;grid-template-columns:170px minmax(0,1fr) 150px;align-items:center;gap:12px}
+.bars .bl{font-weight:700;font-size:var(--t-s)}
+.bars .bv{font-variant-numeric:tabular-nums;font-weight:800;text-align:right;font-size:var(--t-s)}
+svg.bt{width:100%;height:10px;border-radius:999px;display:block}
+svg .track{fill:var(--line)}svg .fill{fill:var(--cyan)}.bars .top svg .fill{fill:var(--lime)}svg .coin{fill:var(--fg);opacity:.55}
+svg.meter{width:64px;height:6px;border-radius:999px;vertical-align:middle;margin-right:6px}svg.meter .fill{fill:var(--lime)}
+.report .empty{margin:2px 0;color:var(--muted)}.report .empty b{color:var(--fg)}
+@media (max-width:860px){.rrow{grid-template-columns:52px minmax(0,1fr) auto;
+grid-template-areas:"s w w" "p p l" "u u u"}
+.rslot{grid-area:s}.rwho{grid-area:w}.rproj{grid-area:p}.ruse{grid-area:u}.rlock{grid-area:l;text-align:right}}
+@media (max-width:560px){.rrow{padding:11px 12px}.report .kpi{grid-template-columns:repeat(2,minmax(0,1fr))}
+.report .kpi b{font-size:22px}.bars .b{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}
+.bars svg.bt{grid-column:1/-1;grid-row:2}}
 """
 
 
@@ -1740,6 +1783,190 @@ def _proj_cell(p: Player) -> str:
         mm = pr.inputs.get("model_mean")
         txt += f" <span class=\"warn\">(withheld; model {_num(mm)})</span>"
     return txt + f"<details><summary>why</summary><pre>{_e(pr.explain())}</pre></details>"
+
+
+#: How the page shows each volume trend (`gridiron.trends`, rule #6). The
+#: label is the module's; only its look is decided here.
+_TREND_LOOK: dict[str, tuple[str, str, str]] = {
+    RISING: ("rising", "\u25b2", "Rising"), FALLING: ("falling", "\u25bc", "Falling"),
+    STEADY: ("steady", "\u25ac", "Steady"), MIXED: ("mixed", "\u25c6", "Mixed"),
+    TOO_FEW: ("few", "\u00b7", "Too few games"),
+}
+
+
+def _usage_line(d: "Dashboard", sleeper_id: str) -> Mapping[str, object] | None:
+    players = (d.usage or {}).get("players") if isinstance(d.usage, Mapping) else None
+    line = players.get(str(sleeper_id)) if isinstance(players, Mapping) else None
+    return line if isinstance(line, Mapping) else None
+
+
+def _trend_chip(line: Mapping[str, object] | None) -> str:
+    """The volume trend as a chip: arrow, word, and the numbers behind it on
+    hover. A player with no stat line says so; absence is not a trend."""
+    if line is None:
+        return "<span class=\"trend t-none\">No stat line</span>"
+    cls, arrow, word = _TREND_LOOK.get(str(line.get("trend")), ("few", "\u00b7", str(line.get("trend"))))
+    why = _e(line.get("trend_why") or "")
+    return (f"<span class=\"trend t-{cls}\" title=\"{why}\">"
+            f"<span aria-hidden=\"true\">{arrow}</span> {_e(word)}</span>")
+
+
+def _sparkline(line: Mapping[str, object] | None, through: int | None, window: int) -> str:
+    """Opportunities per week across the usage window, as bars. A week with no
+    stat line is a gap marked on the baseline, never a zero-height bar."""
+    if line is None or through is None:
+        return ""
+    by_week = {}
+    for w in line.get("weeks") or []:
+        if isinstance(w, Mapping) and w.get("week") is not None:
+            by_week[int(w["week"])] = w
+    weeks = [wk for wk in range(int(through) - int(window) + 1, int(through) + 1) if wk >= 1]
+    if not weeks:
+        return ""
+    vals = [by_week.get(wk, {}).get("opportunities") for wk in weeks]
+    top = max([float(v) for v in vals if v is not None] or [0.0]) or 1.0
+    bw, gap, h = 10, 4, 24
+    width = len(weeks) * bw + (len(weeks) - 1) * gap
+    bars, words = [], []
+    for i, (wk, v) in enumerate(zip(weeks, vals)):
+        x = i * (bw + gap)
+        if v is None:
+            bars.append(f"<rect class=\"gap\" x=\"{x}\" y=\"{h - 2}\" width=\"{bw}\" height=\"2\" rx=\"1\"/>")
+            words.append(f"week {wk} no line")
+            continue
+        bh = max(2.0, round(float(v) / top * (h - 2), 1))
+        last = " last" if i == len(weeks) - 1 else ""
+        bars.append(f"<rect class=\"bar{last}\" x=\"{x}\" y=\"{h - bh}\" width=\"{bw}\" "
+                    f"height=\"{bh}\" rx=\"2\"><title>week {wk}: {float(v):g} opportunities"
+                    f"</title></rect>")
+        words.append(f"week {wk} {float(v):g}")
+    label = "Opportunities by week: " + ", ".join(words)
+    return (f"<svg class=\"spark\" viewBox=\"0 0 {width} {h}\" width=\"{width}\" height=\"{h}\" "
+            f"role=\"img\" aria-label=\"{_e(label)}\">{''.join(bars)}</svg>")
+
+
+def _usage_cell(d: "Dashboard", p: Player) -> str:
+    """Chip, sparkline and the last game's volume in one compact block."""
+    line = _usage_line(d, p.sleeper_id)
+    u = d.usage if isinstance(d.usage, Mapping) else {}
+    spark = _sparkline(line, u.get("through_week"), int(u.get("window") or 4))
+    stats = ""
+    if line is not None:
+        weeks = sorted((w for w in line.get("weeks") or [] if isinstance(w, Mapping)),
+                       key=lambda w: int(w.get("week") or 0))
+        last = weeks[-1] if weeks else {}
+        bits = []
+        if line.get("ppg") is not None:
+            bits.append(f"<b>{_num(line.get('ppg'))}</b> ppg")
+        if last.get("snap_pct") is not None:
+            bits.append(f"{float(last['snap_pct']):.0f}% snaps")
+        if last.get("opportunities") is not None:
+            bits.append(f"{float(last['opportunities']):g} opp")
+        stats = ("<span class=\"ustat\">" + " \u00b7 ".join(bits)
+                 + (f" <span class=\"dim\">wk {int(last['week'])}</span>" if last.get("week") else "")
+                 + "</span>") if bits else ""
+    return f"<div class=\"usage\"><div class=\"urow\">{_trend_chip(line)}{spark}</div>{stats}</div>"
+
+
+_POS_CLASS = {"QB": "qb", "RB": "rb", "WR": "wr", "TE": "te", "K": "k", "DEF": "def", "DST": "def"}
+
+
+def _roster_html(d: "Dashboard", players: Sequence[Player], slot_of: Mapping[str, str]) -> str:
+    """The roster as cards in three groups (starters, bench, reserve), each
+    row carrying the projection beside what the player has actually done."""
+    groups = (("Starters", ("START",)), ("Bench", ("BENCH",)), ("Reserve", ("IR",)))
+    seen: set[str] = set()
+    out = []
+    for title, keys in (*groups, ("Other", None)):
+        members = [p for p in players if p.sleeper_id not in seen
+                   and (keys is None or p.lineup in keys)]
+        if not members:
+            continue
+        seen.update(p.sleeper_id for p in members)
+        out.append(f"<h3 class=\"rgroup\">{_e(title)} <span class=\"count\">{len(members)}</span></h3>"
+                   "<ol class=\"roster\">")
+        for p in members:
+            slot = slot_of.get(p.sleeper_id, p.lineup)
+            pos = _POS_CLASS.get(str(p.position).upper(), "x")
+            lock = (f"<span class=\"lk on\">{_e(p.lock_note)}</span>" if p.locked
+                    else f"<span class=\"lk\">{_e(p.lock_note)}</span>")
+            flags = "".join(f"<div class=\"warn small\">{_e(f)}</div>" for f in p.flags)
+            out.append(
+                f"<li class=\"rrow p-{pos}\">"
+                f"<div class=\"rslot\"><span class=\"slot\">{_e(slot)}</span></div>"
+                f"<div class=\"rwho\"><div class=\"rname\">{_e(p.name)}</div>"
+                f"<div class=\"rmeta\"><span class=\"pos\">{_e(p.position)}</span> {_e(p.team)}"
+                f" \u00b7 {_e(p.availability)}</div>{flags}</div>"
+                f"<div class=\"ruse\">{_usage_cell(d, p)}</div>"
+                f"<div class=\"rproj\"><span class=\"rlbl\">Projection</span>{_proj_cell(p)}</div>"
+                f"<div class=\"rlock\">{lock}</div></li>")
+        out.append("</ol>")
+    return "".join(out)
+
+
+def _bar_svg(share: float, cls: str, *, coin: bool = False) -> str:
+    """A horizontal bar for a 0-1 share. SVG geometry, not a CSS width: the
+    page's Content-Security-Policy blocks inline style attributes."""
+    w = max(0.0, min(1.0, float(share))) * 100
+    mark = "<rect class=\"coin\" x=\"49.6\" width=\"0.8\" height=\"8\"/>" if coin else ""
+    return (f"<svg class=\"{cls}\" viewBox=\"0 0 100 8\" preserveAspectRatio=\"none\" "
+            f"aria-hidden=\"true\"><rect class=\"track\" width=\"100\" height=\"8\"/>"
+            f"<rect class=\"fill\" width=\"{w:.1f}\" height=\"8\"/>{mark}</svg>")
+
+
+def _pct(n: int, k: int) -> str:
+    return f"{n / k:.0%}" if k else "\u2014"
+
+
+def _report_html(card: "ReportCard | None") -> list[str]:
+    """The season's graded weeks: how the page's numbers have held up."""
+    out = ["<h2 id=\"grades\">Report card \u2014 how this page has graded</h2>",
+           "<div class=\"card report\">"]
+    if card is None or not card.any:
+        out.append("<p class=\"empty\"><b>No week graded yet.</b> Each week is graded "
+                   "automatically once its last game is final, against the last board built "
+                   "before the Sunday slate. The first grade lands here the morning after "
+                   "Monday night.</p></div>")
+        return out
+    t = card.totals()
+    endorsed = (f"{t['agree']}/{t['scorable']}" if t["scorable"]
+                else "none yet")
+    out.append("<div class=\"kpi\">"
+               f"<div>weeks graded<b>{t['weeks']}</b></div>"
+               f"<div>projection direction<b class=\"lime\">{_pct(t['direction_agree'], t['direction_n'])}</b>"
+               f"<span class=\"kfoot\">{t['direction_agree']} of {t['direction_n']} calls</span></div>"
+               f"<div>endorsed advice right<b>{_e(endorsed)}</b>"
+               f"<span class=\"kfoot\">moves the page backed</span></div>"
+               f"<div>roster projection error<b>{_num(t['mae'])}</b>"
+               f"<span class=\"kfoot\">avg points off, n={t['mae_n']}</span></div></div>")
+    if card.shootout:
+        out.append("<h3>Start/sit shoot-out, season to date</h3>"
+                   "<p class=\"small sub\">Share of same-position pairs each system ordered the way "
+                   "the points did. 50% is a coin flip.</p><ul class=\"bars\">")
+        best = max(v for v, _ in card.shootout.values())
+        for sname, (rate, n) in sorted(card.shootout.items(), key=lambda kv: -kv[1][0]):
+            top = " top" if rate == best else ""
+            out.append(f"<li class=\"b{top}\"><span class=\"bl\">{_e(SYSTEM_LABELS.get(sname, sname))}</span>"
+                       f"{_bar_svg(rate, 'bt', coin=True)}"
+                       f"<span class=\"bv\">{rate:.1%}<span class=\"dim\"> \u00b7 {n} pairs</span></span></li>")
+        out.append("</ul>")
+    rows = []
+    for g in card.weeks:
+        built = g.built[:16].replace("T", " ") + " UTC" if g.built else "\u2014"
+        dirn = (f"{_bar_svg(g.direction_agree / g.direction_n, 'meter')} "
+                f"{g.direction_agree}/{g.direction_n}" if g.direction_n else "\u2014")
+        vs = (f"{g.rates['page']:.0%} vs {g.rates['sleeper']:.0%}"
+              if "page" in g.rates and "sleeper" in g.rates else "\u2014")
+        rows.append([f"<b>{g.week}</b>", _e(built), dirn,
+                     f"{g.agree}/{g.scorable}" if g.scorable else "<span class=\"dim\">none</span>",
+                     _num(g.mae), vs])
+    out.append(_table(["week", "board graded", "direction", "endorsed", "error", "page vs Sleeper"],
+                      rows, numeric=(4,)))
+    out.append("<p class=\"small sub\">Graded from the board frozen at decision time against the "
+               "week\u2019s box scores (rule #7: the choice, not hindsight). Direction counts every "
+               "graded comparison, endorsed or withheld; endorsed counts only the moves the page "
+               "backed. One week is noise (rule #5): nothing on this page is retuned from it.</p></div>")
+    return out
 
 
 def _player_rows(players: Sequence[Player], slots_of: Mapping[str, str] | None = None
@@ -1943,6 +2170,9 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
         meta += " <span class=\"warn\">(withheld: will not play)</span>"
     if desig:
         meta += f" · <span class=\"warn\">{_e(desig)}</span>"
+    uline = _usage_line(d, a.sleeper_id)
+    if uline is not None:
+        meta += " " + _trend_chip(uline)
     pairs: list[tuple[str, str]] = [("Verdict", f"{badge} {_e(_VERDICT_WORD.get(c.verdict, ''))}"),
                                     ("Why", _e(c.reason))]
     if c.verdict == LINEUP:
@@ -2559,12 +2789,18 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     for i, p in enumerate(d.plan.current):
         if p is not None:
             slot_of[p.sleeper_id] = f"{d.slots[i]}"
-    out.append("<h2 id=\"roster\">Roster projections</h2><div class=\"card\">")
+    u = d.usage if isinstance(d.usage, Mapping) else {}
+    thru = u.get("through_week")
+    out.append("<h2 id=\"roster\">Roster projections and usage trends</h2><div class=\"card roster-card\">")
+    out.append("<p class=\"small sub rintro\">Each player\u2019s projection beside what the player "
+               "has actually done"
+               + (f" through week {_e(thru)}" if thru else "")
+               + ". The trend reads volume only (snaps and opportunities over the last two "
+               "games against the ones before); points and efficiency never move it "
+               "(rule #6). Bars are opportunities per week.</p>")
     order = sorted(d.roster, key=lambda p: ({"START": 0, "BENCH": 1, "IR": 2}.get(p.lineup, 3),
                                             -(p.value or -1)))
-    out.append(_table(["slot", "player", "pos", "nfl", "projection (mean ± SD)",
-                       "availability (designation + source)", "lock"],
-                      _player_rows(order, slot_of)))
+    out.append(_roster_html(d, order, slot_of))
     if d.unresolved_ids:
         out.append("<p class=\"small warn\">Unresolved sleeper ids (no projection, never name-matched): "
                    + ", ".join(f"<code>{_e(i)}</code>" for i in d.unresolved_ids) + "</p>")
@@ -2614,7 +2850,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         out.append("</details>")
     out.append("</div>")
 
-    sec_roster = out
+    sec_roster = out + _report_html(d.report_card)
     # --------------------------------------------------------- track record
     ev = d.evaluation
     out = ["<div class=\"card\">"]

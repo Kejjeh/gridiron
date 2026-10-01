@@ -10,7 +10,7 @@ Sleeper's player map, or submits anything to the league.
 | any time | roster-audit | `PYTHONPATH=src python scripts/weekly/fetch_record.py`, then `scripts/weekly/weekly_review.py --record <path>` |
 | Tue-Sat | waiver-board | `weekly_review.py --record <path> --ranks <csv> --watch "Name,POS"` |
 | before kickoffs | start-sit | `weekly_review.py --record <path>` (Action Desk + "Projection vs actual usage") |
-| Tue after the week | decision-log | `scripts/weekly/grade_week.py --week W --archives <path> --before <Sunday kickoff> --actuals-nflverse [--acted KEY]` |
+| Tue after the week | decision-log | automatic in the cloud (`grade_week.py --finished`); by hand to record moves: `scripts/weekly/grade_week.py --week W --archives <path> --before <Sunday kickoff> --actuals-nflverse [--acted KEY]` |
 
 ## What each piece adds
 
@@ -41,6 +41,16 @@ Sleeper's player map, or submits anything to the league.
   never merged: `agree/scorable` (advice the page endorsed) and
   `direction_agree/direction_n` (the projection's direction on every graded
   comparison, including withheld ones — the page withholds most of game day).
+- **Cloud grading** (`gridiron.grading`, `grade_week.py --finished`): every
+  build pins one board per week (the latest built before the Sunday early
+  kickoff; the cloud keeps only ~10 h of records, so the pin is what lets a
+  Tuesday grade exist), grades each week once it is final in the schedule,
+  from the season cache the pull step already holds, and never regrades a
+  week that has a row. The ledger rides the carry store (`.carry/grades/`)
+  and the run artifact; the board renders it as the **Report card**.
+- **Board trend chips**: each roster row shows the `usage` trend label, a
+  bar sparkline of opportunities per week (a week with no line is a gap,
+  not a zero) and the last game's snaps; free-agent rows carry the chip too.
 - **Live Sleeper comparison** (`gridiron.shadow`): the pull step records
   Sleeper's weekly projections (outside the manifest; gates nothing); the
   record's `shadow` block holds each player's number and whether it was

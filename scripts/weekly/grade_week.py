@@ -23,6 +23,19 @@ that; nothing ran it. This script:
      data/ledger/grades/season<YYYY>.csv — counts and rates only, no player
      names or ids — so accuracy accumulates across the season.
 
+Cloud mode (`--finished`), run by the dashboard workflow every build:
+
+    PYTHONPATH=src python scripts/weekly/grade_week.py --finished \
+        --archives data/ledger/decisions --pins .carry/pins \
+        --carry-grades .carry/grades
+
+pins each week's board (the latest built before its main-slate kickoff;
+`gridiron.grading.pin_weeks`), then grades every week that is FINAL in the
+schedule and has no ledger row yet, from the season cache the pull step
+already fetched (`--actuals-cache`, default this season's cache; no extra
+download). It prints counts only, because the
+workflow log is public, and carries the ledger between runs.
+
 `--acted` / `--declined` take a comparison key exactly as printed
 (`start_sit:FLEX:<held id>:<alternative id>`) and are the ONLY way a row
 becomes an observed owner decision; the program never infers what the owner
@@ -33,6 +46,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import shutil
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -367,14 +381,133 @@ def render(grade: Grade, names: Mapping[str, str]) -> list[str]:
     return out
 
 
+def merge_ledger(path: Path, rows: Sequence[Mapping[str, object]]) -> int:
+    """Add every row of a carried ledger whose (season, week, archive) the
+    local ledger does not hold yet; return how many were added. A row both
+    files hold is left as the local file has it."""
+    from gridiron.grading import read_ledger
+    have = {(str(r["season"]), str(r["week"]), str(r["archive"])) for r in read_ledger(path)}
+    added = 0
+    for r in rows:
+        key = (str(r["season"]), str(r["week"]), str(r["archive"]))
+        if key in have:
+            continue
+        upsert(path, {k: r.get(k, "") for k in FIELDS})
+        have.add(key)
+        added += 1
+    return added
+
+
+def defense_actuals_from_cache(season_dir: Path, season: int, week: int) -> dict[str, float]:
+    """`DEF:<team>` actuals from the advanced model's saved inputs, which the
+    pull step writes beside the season cache. {} when they are absent."""
+    from gridiron.models.advanced import load_inputs
+    blob = load_inputs(season_dir, season)
+    dh = None if blob is None else blob.get("defense")
+    if dh is None or len(dh) == 0 or "points_allowed" not in dh:
+        return {}
+    return defense_actuals(dh, week)
+
+
+def run_finished(args: argparse.Namespace) -> int:
+    """Pin, then grade every final week nobody has graded. Counts only."""
+    from gridiron import grading
+    from gridiron.carryover import inspect_archive
+    from gridiron.ingest import Manifest
+    from gridiron.league_config import SEASON_YEAR
+
+    from gridiron.ingest import season_cache
+
+    season = int(args.season or SEASON_YEAR)
+    now = datetime.now(timezone.utc)
+    cache = args.actuals_cache or season_cache(season)
+    ledger_path = args.grades_dir / f"season{season}.csv"
+    carry = (args.carry_grades / f"season{season}.csv") if args.carry_grades else None
+    if carry is not None:
+        carried = grading.read_ledger(carry)
+        if carried:
+            print(f"[grade] carried ledger: {merge_ledger(ledger_path, carried)} row(s) added "
+                  f"of {len(carried)}")
+        else:
+            print("[grade] no carried ledger to merge (first run, or the cache was evicted)")
+    try:
+        schedule = Manifest.load(cache, season).read_frame("schedules")
+    except Exception as exc:                                   # noqa: BLE001
+        schedule = None
+        print(f"[grade] the season cache could not be read ({type(exc).__name__})")
+    if schedule is None:
+        print("[grade] no schedule in the season cache; nothing pinned or graded")
+        return 0
+
+    folder = args.archives / f"season{season}"
+    folder = folder if folder.is_dir() else args.archives
+    weeks = set()
+    for p in folder.glob("week*.json"):
+        try:
+            weeks.add(int(p.name[4:6]))
+        except ValueError:
+            continue
+    cutoffs = {w: grading.main_slate_kickoff(schedule, w) for w in sorted(weeks)}
+    for line in grading.pin_weeks(args.archives, args.pins, season=season,
+                                  cutoffs=cutoffs).lines():
+        print(f"[grade] {line}")
+
+    rows = grading.read_ledger(ledger_path)
+    done = grading.graded_weeks(rows, season)
+    for week, pin in sorted(grading.pinned(args.pins, season).items()):
+        if week in done:
+            continue
+        if not grading.week_is_final(schedule, week):
+            print(f"[grade] week {week}: not final yet; waits")
+            continue
+        verdict = inspect_archive(pin, season=season, now=now, max_age_days=400)
+        if not verdict.accepted:
+            print(f"[grade] week {week}: pinned board refused: {verdict.reason}")
+            continue
+        try:
+            actuals = actuals_from_cache(cache, season, week)
+        except SystemExit as exc:
+            print(f"[grade] week {week}: no actuals in the season cache ({exc})")
+            continue
+        if not actuals:
+            print(f"[grade] week {week}: final, but the box scores are not in yet; waits")
+            continue
+        actuals = {**actuals, **defense_actuals_from_cache(cache, season, week)}
+        archive = read_archive(pin)
+        built = archive_stamp(pin) or now
+        grade = grade_archive(archive, actuals, observed={})
+        shoot = shootout(archive, actuals)
+        special = special_shootouts(archive, actuals)
+        d_agree, d_n = direction(grade)
+        agree, n = grade.agreement()
+        print(f"[grade] week {week}: graded the board built {built.isoformat()}: "
+              f"{sum(1 for c in grade.comparisons if c.status == 'graded')} comparison(s), "
+              f"direction {d_agree}/{d_n}, endorsed {agree}/{n}"
+              + (f", shoot-out {shoot['pairs']} pair(s)" if shoot and shoot.get("pairs") else ""))
+        if not args.no_save:
+            rows = upsert(ledger_path, aggregate(grade, season, pin, built, shoot, special))
+    if rows:
+        t = grading.report_card(rows, season).totals()
+        print(f"[grade] season to date over {t['weeks']} graded week(s): projection direction "
+              f"{t['direction_agree']}/{t['direction_n']}, endorsed advice "
+              f"{t['agree']}/{t['scorable']}"
+              + (f", roster MAE {t['mae']:.2f}" if t["mae"] is not None else ""))
+    else:
+        print("[grade] the ledger is empty; nothing graded yet")
+    if carry is not None and ledger_path.is_file() and not args.no_save:
+        carry.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ledger_path, carry)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--week", type=int, required=True)
+    ap.add_argument("--week", type=int, default=None)
     ap.add_argument("--season", type=int, default=None)
     ap.add_argument("--archives", type=Path, default=LEDGER / "decisions")
     ap.add_argument("--archive", type=Path, default=None, help="grade this file")
     ap.add_argument("--before", default=None, help="ISO time; latest archive before it")
-    src = ap.add_mutually_exclusive_group(required=True)
+    src = ap.add_mutually_exclusive_group()
     src.add_argument("--actuals-record", type=Path)
     src.add_argument("--actuals-cache", type=Path, help="a season<YYYY> cache dir")
     src.add_argument("--actuals-nflverse", action="store_true",
@@ -383,7 +516,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--declined", action="append", default=[])
     ap.add_argument("--grades-dir", type=Path, default=GRADES_DIR)
     ap.add_argument("--no-save", action="store_true")
+    ap.add_argument("--finished", action="store_true",
+                    help="cloud mode: pin each week's board, grade every final, ungraded week "
+                         "(needs --pins and --actuals-cache; prints counts only)")
+    ap.add_argument("--pins", type=Path, default=None,
+                    help="where --finished keeps one board per week")
+    ap.add_argument("--carry-grades", type=Path, default=None,
+                    help="a carry-store folder holding season<YYYY>.csv: merged in first, "
+                         "written back after")
     args = ap.parse_args(argv)
+
+    if args.finished:
+        if args.pins is None:
+            ap.error("--finished needs --pins")
+        return run_finished(args)
+    if args.week is None:
+        ap.error("--week is required (or use --finished)")
+    if not (args.actuals_record or args.actuals_cache or args.actuals_nflverse):
+        ap.error("one of --actuals-record, --actuals-cache, --actuals-nflverse is required")
 
     if args.archive:
         blob = read_archive(args.archive)
