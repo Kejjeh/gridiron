@@ -26,6 +26,7 @@ all others training. Blocks (`gridiron.models.advanced.EXPANSION_FEATURES`):
 
 | block | adds |
 |---|---|
+| `+routes` | routes run (dropbacks on the field, participation × play-by-play), route share, last game's routes, targets per route (RB/WR/TE) — added 2026-10-01, later |
 | `+xtd` | expected touchdowns (last 3, season), share of the team's expected points |
 | `+epa` | EPA per game, season (efficiency, slow — rule #6) |
 | `+ngs2` | depth of target, intended-air-yards share, cushion (WR/TE); stacked boxes, rushing efficiency (RB); time to throw, aggressiveness (QB) |
@@ -54,6 +55,7 @@ seasons beat two; the lift is small on ordering and real on error.
 | set | start/sit | MAE | folds better on both |
 |---|---|---|---|
 | shipped | 63.45% | 4.098 | — |
+| `+routes` | 63.45% | 4.096 | 2 of 7 |
 | `+xtd` | 63.47% | 4.098 | 3 of 7 |
 | `+epa` | 63.43% | 4.096 | 1 of 7 |
 | `+ngs2` | 63.48% | 4.097 | 3 of 7 |
@@ -77,10 +79,13 @@ on error in 2024 and 2025 and worse on ordering in 2019.
 - **The line and the offense's pace are the closest misses** (4 of 7 folds).
   Spread and weather are already partly in the implied total; pace is
   partly in the player's own opportunities.
-- **Not tried**: routes run (nflverse participation is play-level with only
-  the targeted receiver's route, and exists from 2023), player props (not a
-  free source), more seasons still (Sleeper's projections thin out before
-  2019).
+- **Routes run was the one genuinely new input available for every season**
+  (participation lists the offense on every play back to 2016; joined to
+  play-by-play dropbacks it gives routes per game and route share). It adds
+  nothing: snap share, target share and expected points already carry it
+  for a linear model. It stays in the builder and the pull step, unread.
+- **Not tried**: player props (not a free source), more seasons still
+  (Sleeper's projections thin out before 2019).
 
 ## What ships
 

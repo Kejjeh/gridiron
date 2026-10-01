@@ -56,7 +56,10 @@ composed into one ridge: ahead of Sleeper on ordering in 6 of 7 seasons
 EVERY season: nested blend weights, knob selection on inner folds, residual-
 model structure, and the role/reserve features were all tried on seven folds
 (STACK_CALIBRATION.md, "Trying to win every season"); 2020 stays behind by
-0.12-0.19 under every untuned variant. Six of seven is the verified state.
+0.12-0.19 under every untuned variant. Six of seven is the verified state. Routes run (participation x pbp,
+all seven seasons) was then built and tested as the last new input: no gain
+(FEATURE_EXPANSION.md). The remaining levers are not in public history:
+player props, or the live shoot-out.
 
 Non-linear learner (2026-10-01, owner-approved scikit-learn, research only):
 gradient-boosted trees lose to the ridge on ordering in every fold and every
