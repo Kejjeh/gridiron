@@ -678,8 +678,15 @@ def _matchup(opp_id: int, mine: tuple[Player | None, ...],
     else:
         pwin = round(matchup_win_prob(my_mean, my_sd, opp_mean, opp_sd), 4)
         lev = round(leverage_per_point(my_mean, my_sd, opp_mean, opp_sd), 5)
-        reason = ("DST slots excluded on both sides (no DST scoring implementation); "
-                  "independence assumed between all starters")
+        # Every projected starter counts, kickers and team defenses included
+        # (advanced_v1 projects both with a residual SD). A defense with no
+        # projection is the one slot that may be left out without abstaining,
+        # and it is named here rather than silently dropped.
+        left_out = my_missing + opp_missing
+        reason = (("every projected starter counted on both sides" if not left_out else
+                   "counted every projected starter; unprojected and left out: "
+                   + ", ".join(left_out))
+                  + "; independence assumed between all starters")
     return MatchupView(opp_id, mine, theirs, my_mean, my_sd, opp_mean, opp_sd, pwin,
                        reason, lev, tuple(my_missing), tuple(opp_missing))
 

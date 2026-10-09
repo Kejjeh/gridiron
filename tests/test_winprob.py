@@ -92,3 +92,28 @@ def test_norm_cdf_reference_points():
     assert norm_cdf(0.0) == pytest.approx(0.5)
     assert norm_cdf(1.959964) == pytest.approx(0.975, abs=1e-5)
     assert norm_cdf(-1.281552) == pytest.approx(0.10, abs=1e-5)
+
+
+def test_the_matchup_view_counts_every_projected_starter_and_names_what_it_left_out():
+    """P(win) sums every projected starter, kickers and team defenses
+    included; the reason says so, and names an unprojected defense instead
+    of claiming defenses are excluded (they were, before advanced_v1
+    projected them)."""
+    from gridiron.dashboard import _matchup
+    from gridiron.lineup import Player
+    from gridiron.projection import Projection, abstain
+
+    def P(sid, pos, mean, *, unprojected=False):
+        proj = abstain("no admissible box scores") if unprojected else Projection(mean, 4.0)
+        return Player(sid, f"p{sid}", pos, "T" + sid, proj, "START", False, "kicks off Sun")
+
+    mine = (P("q1", "QB", 20), P("k1", "K", 8), P("d1", "DST", 9))
+    theirs = (P("q2", "QB", 18), P("k2", "K", 7), P("d2", "DST", 0, unprojected=True))
+    m = _matchup(7, mine, theirs)
+    assert m.my_mean == 37.0 and m.opp_mean == 25.0          # K and DST counted
+    assert m.pwin is not None and m.pwin > 0.5
+    assert "every projected starter" in m.pwin_reason
+    assert "pd2 (DST)" in m.pwin_reason and "excluded" not in m.pwin_reason.split(";")[0] \
+        or "left out: pd2 (DST)" in m.pwin_reason
+    full = _matchup(7, mine, (P("q2", "QB", 18), P("k2", "K", 7), P("d2", "DST", 6)))
+    assert full.pwin_reason.startswith("every projected starter counted")
