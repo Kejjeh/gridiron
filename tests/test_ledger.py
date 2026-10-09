@@ -80,3 +80,24 @@ def test_grade_availability_scores_predictions_against_who_was_really_there():
     assert g["by_pick"][3]["available"] == 1 and g["by_pick"][3]["expected"] == 0.5
     # a pick that never happened (draft cut short) is skipped, not an error
     assert ledger.grade_availability(led, board, my_picks=[3, 24])["n"] == 3
+
+
+def test_compare_models_uses_only_common_prediction_support():
+    b = _board()
+    b["p3"] = [0.0, 0.0, 0.5]
+    b["ph3"] = [0.0, float("nan"), 0.8]
+    picks = [_pick(1, "9221", "111", "Jahmyr", "Gibbs", "RB", "DET"),
+             _pick(2, "9509", "222", "Bijan", "Robinson", "RB", "ATL"),
+             _pick(3, "7564", ME, "Ja'Marr", "Chase", "WR", "CIN")]
+    grades = ledger.compare_availability(ledger.record_draft(picks, b, ME), b, [3])
+    assert grades["adp"]["n"] == grades["room_snapshot"]["n"] == 2
+    assert abs(grades["adp"]["brier"] - 0.125) < 1e-9
+    assert abs(grades["room_snapshot"]["brier"] - 0.02) < 1e-9
+
+
+def test_autopick_ownership_uses_draft_slot_when_user_id_missing():
+    pick = _pick(1, "9221", None, "Jahmyr", "Gibbs", "RB", "DET")
+    pick["draft_slot"] = 1
+    row = ledger.record_draft([pick], _board(), ME, my_draft_slot=1).iloc[0]
+    assert row.mine
+    assert row.alt_source == "retrospective_best_vor_benchmark"

@@ -1,0 +1,4538 @@
+{
+  "generated": "2026-09-08T23:06:10.158886+00:00",
+  "season": 2026,
+  "historical_season": 2025,
+  "source": "ESPN Analytics",
+  "source_url": "https://www.espn.com/nfl/story/_/id/46138675/2025-nfl-win-rates-top-teams-players-rankings-pass-run-block",
+  "published": "2026-01-06T10:51:00-05:00",
+  "retrieved": "2026-09-08T23:06:10.072778+00:00",
+  "schedule_saved": "2026-09-08T20:47:13.494546+00:00",
+  "inputs": [
+    {
+      "name": "draft2026_context_source.json",
+      "sha256": "f3395a7958e4cfbde1a7d4f4ad15de3e4b4f263aed256cb2f2f62415133f522d",
+      "saved": "2026-09-08T23:06:10.072976+00:00"
+    },
+    {
+      "name": "schedules_2026.csv",
+      "sha256": "e0ebb0b527b5d0753f5ad330c00c09f1e0447e91644cd17c9b13399346afdff5",
+      "saved": "2026-09-08T20:47:13.494546+00:00"
+    }
+  ],
+  "adjustment": 0,
+  "validated": false,
+  "teams": {
+    "ARI": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "LAC",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "SEA",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "SF",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "NYG",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 37
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "LAC",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "SEA",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "SF",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "DET",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "DEN",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "SEA",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "LA",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "KC",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "WAS",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "PHI",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.9,
+          "pass_rush_coverage": 13,
+          "pass_rush": 38.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "NO",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "LV",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 35
+        }
+      },
+      "run_block": {
+        "rate": 71,
+        "rank": 15
+      },
+      "pass_block": {
+        "rate": 63,
+        "rank": 21
+      }
+    },
+    "ATL": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "GB",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "NO",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 28.8,
+          "pass_rush_coverage": 4,
+          "pass_rush": 37.2
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "GB",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "NO",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "CHI",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "SF",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "KC",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "MIN",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "DET",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "CLE",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.5,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "WAS",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "TB",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "NO",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 37
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 30
+      },
+      "pass_block": {
+        "rate": 64,
+        "rank": 14
+      }
+    },
+    "BAL": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "IND",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "NO",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "TEN",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 35.2
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "IND",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "NO",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "TEN",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "ATL",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "CLE",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "BUF",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "JAX",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "LAC",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "CAR",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "HOU",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "TB",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.3
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "CIN",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 38.7
+        }
+      },
+      "run_block": {
+        "rate": 71,
+        "rank": 17
+      },
+      "pass_block": {
+        "rate": 69,
+        "rank": 7
+      }
+    },
+    "BUF": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "HOU",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "DET",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "LAC",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "NE",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 34.8
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "HOU",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "DET",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "LAC",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "LV",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "MIN",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "NYJ",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "KC",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "NE",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "GB",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.4
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "CHI",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "DEN",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "MIA",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 36
+        }
+      },
+      "run_block": {
+        "rate": 75,
+        "rank": 1
+      },
+      "pass_block": {
+        "rate": 71,
+        "rank": 4
+      }
+    },
+    "CAR": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "CHI",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "ATL",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "CLE",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "DET",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 37
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "CHI",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "ATL",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "CLE",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "DET",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "PHI",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "TB",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "GB",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "DEN",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "NO",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "MIN",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "NO",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.4,
+          "pass_rush_coverage": 13,
+          "pass_rush": 37.9
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "SEA",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30,
+          "pass_rush_coverage": 3,
+          "pass_rush": 37
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 28
+      },
+      "pass_block": {
+        "rate": 59,
+        "rank": 23
+      }
+    },
+    "CHI": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "CAR",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "MIN",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "PHI",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "NYJ",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29,
+          "pass_rush_coverage": 4,
+          "pass_rush": 37
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "CAR",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "MIN",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "PHI",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "GB",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "ATL",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "SEA",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "TB",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "NO",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "JAX",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "MIA",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.7,
+          "pass_rush_coverage": 13,
+          "pass_rush": 37.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "BUF",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "DET",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29,
+          "pass_rush_coverage": 3,
+          "pass_rush": 34
+        }
+      },
+      "run_block": {
+        "rate": 74,
+        "rank": 5
+      },
+      "pass_block": {
+        "rate": 74,
+        "rank": 1
+      }
+    },
+    "CIN": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "TB",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "HOU",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "JAX",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29.8,
+          "pass_rush_coverage": 4,
+          "pass_rush": 38.5
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "TB",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "HOU",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "JAX",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "MIA",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "BAL",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "TEN",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "ATL",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "PIT",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "WAS",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "NO",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "CLE",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "KC",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 13,
+          "pass_rush": 38
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "CAR",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "IND",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "BAL",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 28.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 31
+        }
+      },
+      "run_block": {
+        "rate": 72,
+        "rank": 10
+      },
+      "pass_block": {
+        "rate": 58,
+        "rank": 28
+      }
+    },
+    "CLE": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "JAX",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "PIT",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 28.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 38.2
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "JAX",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "PIT",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "NYJ",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "TEN",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "NO",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "HOU",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "LV",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "ATL",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.6,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "BAL",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "IND",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29,
+          "pass_rush_coverage": 3,
+          "pass_rush": 33.3
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 24
+      },
+      "pass_block": {
+        "rate": 63,
+        "rank": 20
+      }
+    },
+    "DAL": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "WAS",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "HOU",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 35.5
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "WAS",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "HOU",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "TB",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "GB",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "PHI",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "IND",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "SF",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "TEN",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "PHI",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "SEA",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 13,
+          "pass_rush": 35.8
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "JAX",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "NYG",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30,
+          "pass_rush_coverage": 3,
+          "pass_rush": 39.7
+        }
+      },
+      "run_block": {
+        "rate": 72,
+        "rank": 11
+      },
+      "pass_block": {
+        "rate": 63,
+        "rank": 19
+      }
+    },
+    "DEN": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "KC",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "JAX",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "LA",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "SF",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 36.8
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "KC",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "JAX",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "LA",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "SF",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "LAC",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "SEA",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "ARI",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "KC",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "CAR",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "LV",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "NYJ",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.7,
+          "pass_rush_coverage": 13,
+          "pass_rush": 37.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "LV",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "BUF",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "NE",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 34.3
+        }
+      },
+      "run_block": {
+        "rate": 74,
+        "rank": 4
+      },
+      "pass_block": {
+        "rate": 68,
+        "rank": 8
+      }
+    },
+    "DET": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "NO",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "BUF",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "CAR",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 33.2
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "NO",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "BUF",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "CAR",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "ARI",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "MIN",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "MIA",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "TB",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "CHI",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "ATL",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "TEN",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.8,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.4
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "MIN",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "NYG",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "CHI",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29,
+          "pass_rush_coverage": 3,
+          "pass_rush": 38.7
+        }
+      },
+      "run_block": {
+        "rate": 71,
+        "rank": 20
+      },
+      "pass_block": {
+        "rate": 56,
+        "rank": 31
+      }
+    },
+    "GB": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "MIN",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "NYJ",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "ATL",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "TB",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 40
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "MIN",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "NYJ",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "ATL",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "CHI",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "DAL",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "NE",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "MIN",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "NO",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "BUF",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 13,
+          "pass_rush": 37.1
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "HOU",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 32.7
+        }
+      },
+      "run_block": {
+        "rate": 71,
+        "rank": 19
+      },
+      "pass_block": {
+        "rate": 69,
+        "rank": 6
+      }
+    },
+    "HOU": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "BUF",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "IND",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "DAL",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30,
+          "pass_rush_coverage": 4,
+          "pass_rush": 32.2
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "BUF",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "IND",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "DAL",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "TEN",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "JAX",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "NYG",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "LAC",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "CLE",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "IND",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "WAS",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.9,
+          "pass_rush_coverage": 13,
+          "pass_rush": 35.7
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "JAX",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "PHI",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "GB",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29,
+          "pass_rush_coverage": 3,
+          "pass_rush": 37.3
+        }
+      },
+      "run_block": {
+        "rate": 68,
+        "rank": 32
+      },
+      "pass_block": {
+        "rate": 56,
+        "rank": 30
+      }
+    },
+    "IND": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "KC",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "HOU",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "WAS",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 35.2
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "KC",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "HOU",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "WAS",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "PIT",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "TEN",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "MIN",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "JAX",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "DAL",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "HOU",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "NYG",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "PHI",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30,
+          "pass_rush_coverage": 13,
+          "pass_rush": 37.5
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "TEN",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "CLE",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 31,
+          "pass_rush_coverage": 3,
+          "pass_rush": 37.3
+        }
+      },
+      "run_block": {
+        "rate": 73,
+        "rank": 7
+      },
+      "pass_block": {
+        "rate": 58,
+        "rank": 27
+      }
+    },
+    "JAX": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "DEN",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "CIN",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 31.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 38.8
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "DEN",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "CIN",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "PHI",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "HOU",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "IND",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "BAL",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "TEN",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "TEN",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "PIT",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.1
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "HOU",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "WAS",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 31.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 37
+        }
+      },
+      "run_block": {
+        "rate": 73,
+        "rank": 6
+      },
+      "pass_block": {
+        "rate": 68,
+        "rank": 9
+      }
+    },
+    "KC": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "DEN",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "IND",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "MIA",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "LV",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 36.2
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "DEN",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "IND",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "MIA",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "LV",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "LAC",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "SEA",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "DEN",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "ATL",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "BUF",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "CIN",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.7,
+          "pass_rush_coverage": 13,
+          "pass_rush": 37
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "SF",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "LAC",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 33.7
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 25
+      },
+      "pass_block": {
+        "rate": 71,
+        "rank": 2
+      }
+    },
+    "LA": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "SF",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "NYG",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "DEN",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "PHI",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 37.5
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "SF",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "NYG",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "DEN",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "PHI",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "BUF",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "LV",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "LAC",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "WAS",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "ARI",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "KC",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "SF",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.7
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "DAL",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "SEA",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "TB",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 31.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 40.3
+        }
+      },
+      "run_block": {
+        "rate": 74,
+        "rank": 2
+      },
+      "pass_block": {
+        "rate": 69,
+        "rank": 5
+      }
+    },
+    "LAC": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "LV",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "BUF",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "SEA",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 37
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "LV",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "BUF",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "SEA",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "DEN",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "KC",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "HOU",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "BAL",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "LV",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.7,
+          "pass_rush_coverage": 13,
+          "pass_rush": 37.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "SF",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "MIA",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "KC",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 34.3
+        }
+      },
+      "run_block": {
+        "rate": 69,
+        "rank": 31
+      },
+      "pass_block": {
+        "rate": 54,
+        "rank": 32
+      }
+    },
+    "LV": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "LAC",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "NO",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "KC",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29.8,
+          "pass_rush_coverage": 4,
+          "pass_rush": 36.5
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "LAC",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "NO",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "KC",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "NE",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "BUF",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "LA",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "NYJ",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "SF",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "SEA",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "DEN",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "CLE",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "LAC",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 31,
+          "pass_rush_coverage": 13,
+          "pass_rush": 37.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "DEN",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "TEN",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "ARI",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 40.3
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 22
+      },
+      "pass_block": {
+        "rate": 61,
+        "rank": 22
+      }
+    },
+    "MIA": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "LV",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "SF",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "KC",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "MIN",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29.8,
+          "pass_rush_coverage": 4,
+          "pass_rush": 38
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "LV",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "SF",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "KC",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "MIN",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "NYJ",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "DET",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "IND",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "BUF",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "DEN",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "CHI",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.8,
+          "pass_rush_coverage": 13,
+          "pass_rush": 34.5
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "GB",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "LAC",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "BUF",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 35.7
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 29
+      },
+      "pass_block": {
+        "rate": 59,
+        "rank": 24
+      }
+    },
+    "MIN": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "MIA",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 35.5
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "NO",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "IND",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "BUF",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "GB",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "SF",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "ATL",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "NE",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.5,
+          "pass_rush_coverage": 13,
+          "pass_rush": 34.4
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "DET",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "WAS",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "NYJ",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 33.7
+        }
+      },
+      "run_block": {
+        "rate": 74,
+        "rank": 3
+      },
+      "pass_block": {
+        "rate": 59,
+        "rank": 25
+      }
+    },
+    "NE": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "SEA",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "PIT",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "JAX",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "BUF",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29.8,
+          "pass_rush_coverage": 4,
+          "pass_rush": 37.8
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "SEA",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "PIT",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "JAX",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "BUF",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "LV",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "MIA",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "LAC",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "BUF",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "MIN",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.6,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.1
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "KC",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "NYJ",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "DEN",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30,
+          "pass_rush_coverage": 3,
+          "pass_rush": 39.3
+        }
+      },
+      "run_block": {
+        "rate": 72,
+        "rank": 12
+      },
+      "pass_block": {
+        "rate": 64,
+        "rank": 13
+      }
+    },
+    "NO": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "BAL",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "LV",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "ATL",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29.8,
+          "pass_rush_coverage": 4,
+          "pass_rush": 35
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "BAL",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "LV",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "ATL",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "MIN",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "PIT",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "CIN",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "CAR",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.2,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.8
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "ATL",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 40
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 23
+      },
+      "pass_block": {
+        "rate": 56,
+        "rank": 29
+      }
+    },
+    "NYG": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "DAL",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "TEN",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "ARI",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 31.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 39
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "DAL",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "TEN",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "WAS",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "NO",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "HOU",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "PHI",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "WAS",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "JAX",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "IND",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "SF",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "SEA",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.8,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "DAL",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 31.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 39.3
+        }
+      },
+      "run_block": {
+        "rate": 71,
+        "rank": 18
+      },
+      "pass_block": {
+        "rate": 65,
+        "rank": 11
+      }
+    },
+    "NYJ": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "TEN",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "CHI",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29,
+          "pass_rush_coverage": 4,
+          "pass_rush": 34.2
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "TEN",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "NE",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "LV",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "KC",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "BUF",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "LAC",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "MIA",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "DEN",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.1,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.6
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "ARI",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "MIN",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 40
+        }
+      },
+      "run_block": {
+        "rate": 71,
+        "rank": 14
+      },
+      "pass_block": {
+        "rate": 58,
+        "rank": 26
+      }
+    },
+    "PHI": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "WAS",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "TEN",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "LA",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 31,
+          "pass_rush_coverage": 4,
+          "pass_rush": 35.5
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "WAS",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "TEN",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "LA",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "JAX",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "DAL",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "WAS",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "NYG",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "PIT",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "ARI",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "IND",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.9,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.9
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "SEA",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "HOU",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "SF",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 31.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 35
+        }
+      },
+      "run_block": {
+        "rate": 71,
+        "rank": 16
+      },
+      "pass_block": {
+        "rate": 64,
+        "rank": 17
+      }
+    },
+    "PIT": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "ATL",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "NE",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "CLE",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 31.2,
+          "pass_rush_coverage": 4,
+          "pass_rush": 37.8
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "ATL",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "NE",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "CLE",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "IND",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "TB",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "NO",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "CIN",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "PHI",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "DEN",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "HOU",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "JAX",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.8,
+          "pass_rush_coverage": 13,
+          "pass_rush": 37.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "BAL",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "TEN",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 28.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 33.7
+        }
+      },
+      "run_block": {
+        "rate": 72,
+        "rank": 9
+      },
+      "pass_block": {
+        "rate": 71,
+        "rank": 3
+      }
+    },
+    "SEA": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "ARI",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "WAS",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "LAC",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 36.8
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "NE",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "ARI",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "WAS",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "LAC",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "SF",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "DEN",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "KC",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "CHI",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "LV",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "SF",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "DAL",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "NYG",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.2,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.6
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "PHI",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "LA",
+              "venue": "home"
+            },
+            {
+              "week": 17,
+              "opponent": "CAR",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 30,
+          "pass_rush_coverage": 3,
+          "pass_rush": 36.3
+        }
+      },
+      "run_block": {
+        "rate": 73,
+        "rank": 8
+      },
+      "pass_block": {
+        "rate": 65,
+        "rank": 12
+      }
+    },
+    "SF": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "DEN",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 31.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 39.5
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "LA",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "MIA",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "ARI",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "DEN",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "SEA",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "WAS",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "ATL",
+              "venue": "away"
+            },
+            {
+              "week": 9,
+              "opponent": "LV",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "MIN",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "SEA",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "LA",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 31.2,
+          "pass_rush_coverage": 13,
+          "pass_rush": 40.1
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "LAC",
+              "venue": "away"
+            },
+            {
+              "week": 16,
+              "opponent": "KC",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "PHI",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 37.3
+        }
+      },
+      "run_block": {
+        "rate": 72,
+        "rank": 13
+      },
+      "pass_block": {
+        "rate": 67,
+        "rank": 10
+      }
+    },
+    "TB": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "CIN",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "MIN",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "GB",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 40
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "CIN",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "MIN",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "GB",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 6,
+              "opponent": "PIT",
+              "venue": "home"
+            },
+            {
+              "week": 7,
+              "opponent": "CAR",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "ATL",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "CHI",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "DET",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "CAR",
+              "venue": "home"
+            },
+            {
+              "week": 13,
+              "opponent": "LAC",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "BAL",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.5,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.8
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "NO",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "ATL",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "LA",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 32,
+          "pass_rush_coverage": 3,
+          "pass_rush": 38.7
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 27
+      },
+      "pass_block": {
+        "rate": 64,
+        "rank": 15
+      }
+    },
+    "TEN": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "PHI",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "BAL",
+              "venue": "away"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 29.5,
+          "pass_rush_coverage": 4,
+          "pass_rush": 34.8
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "NYJ",
+              "venue": "home"
+            },
+            {
+              "week": 2,
+              "opponent": "PHI",
+              "venue": "home"
+            },
+            {
+              "week": 3,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 4,
+              "opponent": "BAL",
+              "venue": "away"
+            },
+            {
+              "week": 5,
+              "opponent": "HOU",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "IND",
+              "venue": "away"
+            },
+            {
+              "week": 7,
+              "opponent": "CLE",
+              "venue": "home"
+            },
+            {
+              "week": 8,
+              "opponent": "CIN",
+              "venue": "away"
+            },
+            {
+              "week": 10,
+              "opponent": "JAX",
+              "venue": "home"
+            },
+            {
+              "week": 11,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 12,
+              "opponent": "JAX",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "WAS",
+              "venue": "home"
+            },
+            {
+              "week": 14,
+              "opponent": "DET",
+              "venue": "away"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 29.9,
+          "pass_rush_coverage": 13,
+          "pass_rush": 35.5
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "IND",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "LV",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "PIT",
+              "venue": "home"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29.3,
+          "pass_rush_coverage": 3,
+          "pass_rush": 35.7
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 26
+      },
+      "pass_block": {
+        "rate": 64,
+        "rank": 16
+      }
+    },
+    "WAS": {
+      "adjustment": 0,
+      "confidence": "low",
+      "periods": {
+        "early": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "PHI",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "SEA",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "IND",
+              "venue": "home"
+            }
+          ],
+          "games": 4,
+          "run_stop_coverage": 4,
+          "run_stop": 30.8,
+          "pass_rush_coverage": 4,
+          "pass_rush": 36.2
+        },
+        "regular": {
+          "opponents": [
+            {
+              "week": 1,
+              "opponent": "PHI",
+              "venue": "away"
+            },
+            {
+              "week": 2,
+              "opponent": "DAL",
+              "venue": "away"
+            },
+            {
+              "week": 3,
+              "opponent": "SEA",
+              "venue": "home"
+            },
+            {
+              "week": 4,
+              "opponent": "IND",
+              "venue": "home"
+            },
+            {
+              "week": 5,
+              "opponent": "NYG",
+              "venue": "home"
+            },
+            {
+              "week": 6,
+              "opponent": "SF",
+              "venue": "away"
+            },
+            {
+              "week": 8,
+              "opponent": "PHI",
+              "venue": "home"
+            },
+            {
+              "week": 9,
+              "opponent": "LA",
+              "venue": "home"
+            },
+            {
+              "week": 10,
+              "opponent": "NYG",
+              "venue": "away"
+            },
+            {
+              "week": 11,
+              "opponent": "CIN",
+              "venue": "home"
+            },
+            {
+              "week": 12,
+              "opponent": "ARI",
+              "venue": "away"
+            },
+            {
+              "week": 13,
+              "opponent": "TEN",
+              "venue": "away"
+            },
+            {
+              "week": 14,
+              "opponent": "HOU",
+              "venue": "home"
+            }
+          ],
+          "games": 13,
+          "run_stop_coverage": 13,
+          "run_stop": 30.4,
+          "pass_rush_coverage": 13,
+          "pass_rush": 36.2
+        },
+        "playoffs": {
+          "opponents": [
+            {
+              "week": 15,
+              "opponent": "ATL",
+              "venue": "home"
+            },
+            {
+              "week": 16,
+              "opponent": "MIN",
+              "venue": "away"
+            },
+            {
+              "week": 17,
+              "opponent": "JAX",
+              "venue": "away"
+            }
+          ],
+          "games": 3,
+          "run_stop_coverage": 3,
+          "run_stop": 29.7,
+          "pass_rush_coverage": 3,
+          "pass_rush": 41.7
+        }
+      },
+      "run_block": {
+        "rate": 70,
+        "rank": 21
+      },
+      "pass_block": {
+        "rate": 63,
+        "rank": 18
+      }
+    }
+  }
+}

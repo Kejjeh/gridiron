@@ -11,7 +11,7 @@
     const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
     return z > 0 ? 1 - p : p;
   }
-  const pUncond = (p, pick) => 1 - Phi((pick - 0.5 - p.adp) / p.adp_sd);
+  const pUncond = (p, pick) => 1 - Phi((pick - 0.5 - (p.adp_model ?? p.adp)) / p.adp_sd);
   // P(still there at `pick` | still there at `now`), ADP model
   function pAvailAdp(p, pick, now) {
     if (pick <= now) return 1;
@@ -19,22 +19,16 @@
     if (pn <= 1e-12) return 0;
     return Math.max(0, Math.min(1, pUncond(p, pick) / pn));
   }
-  // Room model: simulated survival odds p.ph = {myPick: prob} (history-aware
-  // Monte Carlo) conditioned on the last of my picks already passed; falls back
-  // to the ADP model when the sim gave this player no chance of being here.
+  // Pre-draft neutral-room snapshot. It is NOT conditioned on actual picks.
   function pAvailRoom(p, pick, now, MY) {
     if (pick <= now) return 1;
-    const ph = p.ph;
-    if (ph && MY && ph[pick] != null) {
-      const passed = MY.filter((k) => k <= now && ph[k] != null);
-      const k0 = passed.length ? Math.max(...passed) : null;
-      const base = k0 === null ? 1 : ph[k0];
-      if (base > 0.02) return Math.max(0, Math.min(1, ph[pick] / base));
-    }
+    if (p.ph && Number.isFinite(p.ph[pick])) return Math.max(0, Math.min(1, p.ph[pick]));
     return pAvailAdp(p, pick, now);
   }
   // opts.mode: "room" (default) | "adp" | "hybrid" (w = weight on the room, default 0.5)
   function pAvail(p, pick, now, MY, opts) {
+    // At consecutive user picks no opponent can remove a passed player.
+    if (MY && MY.includes(now) && pick === now + 1 && MY.includes(pick)) return 1;
     const mode = (opts && opts.mode) || "room";
     if (mode === "adp") return pAvailAdp(p, pick, now);
     if (mode === "hybrid") {
@@ -109,5 +103,54 @@
       },
     };
   }
-  return { Phi, pAvail, pAvailAdp, pAvailRoom, curPick, nextMine, nextTarget, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
+  function validateState(value) {
+    if (!value || typeof value !== "object" || !Array.isArray(value.picks)) throw Error("Invalid draft state");
+    const offset = value.offset == null ? 0 : value.offset;
+    if (!Number.isInteger(offset) || offset < 0 || offset + value.picks.length > 180) throw Error("Invalid pick offset");
+    const seen = new Set();
+    const picks = value.picks.map(x => {
+      if (!x || (x.id !== null && (typeof x.id !== "string" || !x.id.length)) || typeof x.mine !== "boolean")
+        throw Error("Invalid pick entry");
+      if (x.id && seen.has(x.id)) throw Error("Invalid duplicate player");
+      if (x.id) seen.add(x.id);
+      return {...x};
+    });
+    return {...value, picks, offset,
+      mode:["adp","room","hybrid"].includes(value.mode) ? value.mode : "adp",
+      w: typeof value.w === "number" && value.w >= 0 && value.w <= 1 ? value.w : 0.5};
+  }
+
+  function replacePick(state, index, entry, MY) {
+    const next = validateState(state);
+    if (!Number.isInteger(index) || index < 0 || index > next.picks.length ||
+        next.offset + index >= 180) throw Error("Invalid pick number");
+    if (entry.id && next.picks.some((x,i)=>i!==index && x.id===entry.id)) throw Error("Player already drafted");
+    if (entry.mine !== MY.includes(index + next.offset + 1)) throw Error("Wrong turn: check Mine/Gone and the pick counter");
+    next.picks[index] = {...entry};
+    return validateState(next);
+  }
+
+  function persistState(storage, key, state) {
+    try { storage.setItem(key, JSON.stringify(validateState(state))); return {ok:true}; }
+    catch (error) { return {ok:false, error:String(error.message || error)}; }
+  }
+
+  function bestFlex(players, picks) {
+    const taken = new Set(picks.map(p=>p.id));
+    return players.filter(p=>FLEXABLE.includes(p.pos)&&!p.excluded&&!taken.has(p.id))
+      .sort((a,b)=>b.proj-a.proj || String(a.id).localeCompare(String(b.id)))[0] || null;
+  }
+  function draftSlot(pick) {const round=Math.floor((pick-1)/12);const col=(pick-1)%12+1;return round%2?13-col:col;}
+  function sleeperPicks(rows, config) {
+    if(!Array.isArray(rows)||rows.length>180)throw Error("Invalid Sleeper pick list");
+    const seen=new Set();
+    return [...rows].sort((a,b)=>a.pick_no-b.pick_no).map((r,i)=>{
+      if(r.pick_no!==i+1||r.draft_id!==config.draftId||typeof r.player_id!=="string"||!r.player_id||seen.has(r.player_id))throw Error("Incomplete or duplicate Sleeper picks; preserving current board");
+      const slot=draftSlot(i+1), roster=Number(r.roster_id ?? config.slotToRoster[slot]);
+      if(Number(r.draft_slot)!==slot||roster!==Number(config.slotToRoster[slot]))throw Error("Traded or changed draft order is unsupported; use manual mode");
+      seen.add(r.player_id);
+      return {id:r.player_id,mine:roster===config.rosterId,rosterId:roster,draftSlot:slot,source:"sleeper",metadata:r.metadata||{}};
+    });
+  }
+  return { bestFlex, draftSlot, sleeperPicks, validateState, replacePick, persistState, Phi, pAvail, pAvailAdp, pAvailRoom, curPick, nextMine, nextTarget, lineup, lineupTotal, filterSort, resetMachine, TAG_SETS };
 });

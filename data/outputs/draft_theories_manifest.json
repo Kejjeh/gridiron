@@ -1,0 +1,497 @@
+{
+  "generated_at": "2026-09-08T23:57:14.273963+00:00",
+  "seed": 20260908,
+  "source_hashes": {
+    "draft_theories\\rankings_all.parquet": "1d624a4f459a92b1fdff0f11b9f91b96cef3eece604b28e2f1146618aabca978",
+    "draft_theories\\schedules.parquet": "bf70479fd2f9777ed18bf8848866f91fcf28f921eb670d37b84d5d67cb72da18",
+    "draft2026\\ff_playerids.csv": "df234f344e565cf23a8d0c83f5c2d544081e1f23f30c981761cef036b136e218",
+    "draft_theories\\stats_2019.parquet": "2eec3fd460d22b88224769db5a2152526a531fcc01ca05fd7b33c40f9d022d68",
+    "draft_theories\\stats_2020.parquet": "f2f45ff9852f2dd73f77efe4027d519b1b61bf120aec06d38b74038f7e0a5ef4",
+    "draft_theories\\stats_2021.parquet": "e264feb54380794f98b33da62d4eb62ec34d33e7c324ec0b293edd0c504fe6c8",
+    "draft_theories\\stats_2022.parquet": "b6a86865760bb11eb86bad0d3f51380a1d25287e74eaa2fae5c0ded99c21ba20",
+    "draft_theories\\stats_2023.parquet": "dc712abfb4f650be151ae11d3cc3aeb896b9c4cc2c9cf74a236604930c96ba51",
+    "draft_theories\\stats_2024.parquet": "9f828ff37574728e7c1815f9283d98401d436820e4c648cd985509149023b9c3",
+    "draft_theories\\stats_2025.parquet": "782c689a762e93508b9b6e11f1f9002bc7cde12aa0bfb0a6058aa00896bb9ae9"
+  },
+  "code_hashes": {
+    "src/gridiron/draft_theories.py": "37a33f54e9b2c62a3681d714360ea19169b0155d44e11760594ef11d7bbc1eda",
+    "scripts/research/test_draft_theories.py": "8f0a84b45d3e6455a34a0eaa972fdd4ec170454142668026d21af020cba6a2aa",
+    "src/gridiron/scoring.py": "ed0f31646179da6ba69cd922b3727f9b964d1a74c10ea45c5da5d38e096cce99",
+    "src/gridiron/league_config.py": "acbd4c46a4dd1d8ee7e2d978f9abde5c8c1182404a1a410932560b6684f5ee34"
+  },
+  "package_versions": {
+    "numpy": "2.5.2",
+    "pandas": "3.0.5",
+    "polars": "1.44.1",
+    "nflreadpy": "0.1.5"
+  },
+  "parameters": {
+    "quantiles": "0.05 to 0.95 step 0.05",
+    "subgroup_pooled_prior": 20,
+    "rank_bands": 3,
+    "upside_margin_points": 25,
+    "bootstrap_season_draws": 5000
+  },
+  "coverage": [
+    {
+      "season": 2020,
+      "pos": "QB",
+      "snapshot": "2020-09-03",
+      "ranked": 24,
+      "matched": 24,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2020,
+      "pos": "RB",
+      "snapshot": "2020-09-03",
+      "ranked": 72,
+      "matched": 72,
+      "zero_outcome": 3,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2020,
+      "pos": "TE",
+      "snapshot": "2020-09-03",
+      "ranked": 36,
+      "matched": 36,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2020,
+      "pos": "WR",
+      "snapshot": "2020-09-03",
+      "ranked": 96,
+      "matched": 95,
+      "zero_outcome": 1,
+      "unmatched_ids": [
+        19912
+      ]
+    },
+    {
+      "season": 2021,
+      "pos": "QB",
+      "snapshot": "2021-09-03",
+      "ranked": 24,
+      "matched": 24,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2021,
+      "pos": "RB",
+      "snapshot": "2021-09-03",
+      "ranked": 72,
+      "matched": 72,
+      "zero_outcome": 2,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2021,
+      "pos": "TE",
+      "snapshot": "2021-09-03",
+      "ranked": 36,
+      "matched": 36,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2021,
+      "pos": "WR",
+      "snapshot": "2021-09-03",
+      "ranked": 96,
+      "matched": 96,
+      "zero_outcome": 2,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2022,
+      "pos": "QB",
+      "snapshot": "2022-09-02",
+      "ranked": 24,
+      "matched": 24,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2022,
+      "pos": "RB",
+      "snapshot": "2022-09-02",
+      "ranked": 72,
+      "matched": 72,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2022,
+      "pos": "TE",
+      "snapshot": "2022-09-02",
+      "ranked": 36,
+      "matched": 36,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2022,
+      "pos": "WR",
+      "snapshot": "2022-09-02",
+      "ranked": 96,
+      "matched": 96,
+      "zero_outcome": 1,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2023,
+      "pos": "QB",
+      "snapshot": "2023-09-01",
+      "ranked": 24,
+      "matched": 24,
+      "zero_outcome": 1,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2023,
+      "pos": "RB",
+      "snapshot": "2023-09-01",
+      "ranked": 72,
+      "matched": 72,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2023,
+      "pos": "TE",
+      "snapshot": "2023-09-01",
+      "ranked": 36,
+      "matched": 36,
+      "zero_outcome": 1,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2023,
+      "pos": "WR",
+      "snapshot": "2023-09-01",
+      "ranked": 96,
+      "matched": 96,
+      "zero_outcome": 1,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2024,
+      "pos": "QB",
+      "snapshot": "2024-08-30",
+      "ranked": 24,
+      "matched": 24,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2024,
+      "pos": "RB",
+      "snapshot": "2024-08-30",
+      "ranked": 72,
+      "matched": 72,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2024,
+      "pos": "TE",
+      "snapshot": "2024-08-30",
+      "ranked": 36,
+      "matched": 36,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2024,
+      "pos": "WR",
+      "snapshot": "2024-08-30",
+      "ranked": 96,
+      "matched": 96,
+      "zero_outcome": 2,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2025,
+      "pos": "QB",
+      "snapshot": "2025-08-29",
+      "ranked": 24,
+      "matched": 24,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2025,
+      "pos": "RB",
+      "snapshot": "2025-08-29",
+      "ranked": 72,
+      "matched": 72,
+      "zero_outcome": 3,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2025,
+      "pos": "TE",
+      "snapshot": "2025-08-29",
+      "ranked": 36,
+      "matched": 36,
+      "zero_outcome": 0,
+      "unmatched_ids": []
+    },
+    {
+      "season": 2025,
+      "pos": "WR",
+      "snapshot": "2025-08-29",
+      "ranked": 96,
+      "matched": 96,
+      "zero_outcome": 4,
+      "unmatched_ids": []
+    }
+  ],
+  "ambiguous_crosswalk_ids": 0,
+  "test_seasons": [
+    2023,
+    2024,
+    2025
+  ],
+  "rank_limits": {
+    "QB": 24,
+    "RB": 72,
+    "WR": 96,
+    "TE": 36
+  },
+  "replacement_ranks": {
+    "QB": 16,
+    "RB": 40,
+    "WR": 48,
+    "TE": 20
+  },
+  "distribution_results": [
+    {
+      "metric": "pinball",
+      "model": "position",
+      "baseline": 17.935222746576024,
+      "candidate": 17.788849102403173,
+      "delta": -0.14637364417285306,
+      "interval": [
+        -0.20999161054092852,
+        -0.11016882888306867
+      ],
+      "improved_seasons": 3,
+      "by_season": {
+        "2023": -0.11016882888306867,
+        "2024": -0.11896049309456203,
+        "2025": -0.20999161054092852
+      }
+    },
+    {
+      "metric": "pinball",
+      "model": "position_rank",
+      "baseline": 17.935222746576024,
+      "candidate": 17.529959212571217,
+      "delta": -0.4052635340048039,
+      "interval": [
+        -0.6208640848078169,
+        -0.04637390963089416
+      ],
+      "improved_seasons": 3,
+      "by_season": {
+        "2023": -0.04637390963089416,
+        "2024": -0.5485526075757008,
+        "2025": -0.6208640848078169
+      }
+    },
+    {
+      "metric": "upside_brier",
+      "model": "position",
+      "baseline": 0.20388476114410867,
+      "candidate": 0.20267840808246199,
+      "delta": -0.0012063530616466533,
+      "interval": [
+        -0.002617352544292517,
+        0.0001780477761448851
+      ],
+      "improved_seasons": 2,
+      "by_season": {
+        "2023": -0.001179754416792328,
+        "2024": -0.002617352544292517,
+        "2025": 0.0001780477761448851
+      }
+    },
+    {
+      "metric": "upside_brier",
+      "model": "position_rank",
+      "baseline": 0.20388476114410867,
+      "candidate": 0.1987522471278879,
+      "delta": -0.005132514016220742,
+      "interval": [
+        -0.007401962820435898,
+        -0.0020670252264725075
+      ],
+      "improved_seasons": 3,
+      "by_season": {
+        "2023": -0.0020670252264725075,
+        "2024": -0.007401962820435898,
+        "2025": -0.005928554001753822
+      }
+    }
+  ],
+  "sos_results": [
+    {
+      "pos": "RB",
+      "window": "all",
+      "baseline_rmse": 3.8535644704695087,
+      "candidate_rmse": 3.859914432657295,
+      "delta_mse": 0.048980299371147375,
+      "interval": [
+        -0.1420488232048065,
+        0.16136925150551562
+      ],
+      "improved_seasons": 1
+    },
+    {
+      "pos": "RB",
+      "window": "early",
+      "baseline_rmse": 5.384193037365591,
+      "candidate_rmse": 5.382982689551127,
+      "delta_mse": -0.013032027609027589,
+      "interval": [
+        -0.04348562527666644,
+        0.009338133622318168
+      ],
+      "improved_seasons": 2
+    },
+    {
+      "pos": "RB",
+      "window": "middle",
+      "baseline_rmse": 4.3079119526736145,
+      "candidate_rmse": 4.315314392676988,
+      "delta_mse": 0.06383291565697213,
+      "interval": [
+        -0.18210544740818513,
+        0.33266055239831616
+      ],
+      "improved_seasons": 1
+    },
+    {
+      "pos": "RB",
+      "window": "playoffs",
+      "baseline_rmse": 6.536746451094309,
+      "candidate_rmse": 6.562499165518729,
+      "delta_mse": 0.33734113153997686,
+      "interval": [
+        -0.7721319827096877,
+        0.9587813968919434
+      ],
+      "improved_seasons": 1
+    },
+    {
+      "pos": "TE",
+      "window": "all",
+      "baseline_rmse": 2.770663156623544,
+      "candidate_rmse": 2.7697195127237473,
+      "delta_mse": -0.005228148308466333,
+      "interval": [
+        -0.014044172267889898,
+        0.011545316584271603
+      ],
+      "improved_seasons": 2
+    },
+    {
+      "pos": "TE",
+      "window": "early",
+      "baseline_rmse": 3.39997954982935,
+      "candidate_rmse": 3.410566138719453,
+      "delta_mse": 0.072100447321926,
+      "interval": [
+        -0.017925307574488514,
+        0.23613712716990065
+      ],
+      "improved_seasons": 2
+    },
+    {
+      "pos": "TE",
+      "window": "middle",
+      "baseline_rmse": 3.3492196376079386,
+      "candidate_rmse": 3.354202618272552,
+      "delta_mse": 0.03340302348779171,
+      "interval": [
+        -0.025903165989277,
+        0.08451534802151883
+      ],
+      "improved_seasons": 1
+    },
+    {
+      "pos": "TE",
+      "window": "playoffs",
+      "baseline_rmse": 4.677201041593777,
+      "candidate_rmse": 4.694470972695224,
+      "delta_mse": 0.16184812999213705,
+      "interval": [
+        -0.0493014740181863,
+        0.3470816806283601
+      ],
+      "improved_seasons": 1
+    },
+    {
+      "pos": "WR",
+      "window": "all",
+      "baseline_rmse": 4.954262611277138,
+      "candidate_rmse": 4.92073413816377,
+      "delta_mse": -0.3310935630082348,
+      "interval": [
+        -1.3236821110136212,
+        0.3479324538349289
+      ],
+      "improved_seasons": 2
+    },
+    {
+      "pos": "WR",
+      "window": "early",
+      "baseline_rmse": 6.315266098304627,
+      "candidate_rmse": 6.3618484522006735,
+      "delta_mse": 0.5905298363723569,
+      "interval": [
+        -4.7876954550209945,
+        4.866476789747573
+      ],
+      "improved_seasons": 1
+    },
+    {
+      "pos": "WR",
+      "window": "middle",
+      "baseline_rmse": 6.024607461918838,
+      "candidate_rmse": 5.99875471264541,
+      "delta_mse": -0.31083696772261976,
+      "interval": [
+        -0.6206075928237098,
+        -0.10998021295269211
+      ],
+      "improved_seasons": 3
+    },
+    {
+      "pos": "WR",
+      "window": "playoffs",
+      "baseline_rmse": 8.764356896786843,
+      "candidate_rmse": 8.763383134912527,
+      "delta_mse": -0.01706784498583147,
+      "interval": [
+        -0.08338861856637436,
+        0.0852237145699064
+      ],
+      "improved_seasons": 2
+    }
+  ],
+  "production_approved": false,
+  "scope": "Partial rank-based test, NOT replication using archived preseason point projections",
+  "sources": {
+    "rankings": "https://github.com/DynastyProcess/data",
+    "outcomes": "https://nflreadr.nflverse.com/reference/load_player_stats.html",
+    "schedule": "https://github.com/nflverse/nfldata",
+    "crosswalk": "https://github.com/dynastyprocess/data/blob/master/files/db_playerids.csv"
+  }
+}

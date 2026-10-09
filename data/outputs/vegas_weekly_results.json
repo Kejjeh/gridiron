@@ -1,0 +1,78 @@
+{
+  "scope": "Weekly retrospective closing lines, not preseason or draft-time inputs",
+  "baseline": "Previous four team offensive and opponent defensive games; lagged before current game",
+  "results": [
+    {
+      "position": "QB",
+      "correlation": 0.3337897811502868,
+      "n": 1632,
+      "baseline_rmse": 7.3136382013503045,
+      "candidate_rmse": 7.078557246170024,
+      "better_seasons": 3,
+      "delta_mse_interval": [
+        -3.838142412138012,
+        -2.8329439403986143
+      ]
+    },
+    {
+      "position": "RB",
+      "correlation": 0.28183340261640083,
+      "n": 1632,
+      "baseline_rmse": 9.124464640254487,
+      "candidate_rmse": 8.960311867689978,
+      "better_seasons": 3,
+      "delta_mse_interval": [
+        -4.337186986227721,
+        -2.185385173813785
+      ]
+    },
+    {
+      "position": "WR",
+      "correlation": 0.26854579750927426,
+      "n": 1632,
+      "baseline_rmse": 11.550145925153608,
+      "candidate_rmse": 11.321239619440865,
+      "better_seasons": 3,
+      "delta_mse_interval": [
+        -5.934659015531963,
+        -3.872335034088252
+      ]
+    },
+    {
+      "position": "TE",
+      "correlation": 0.12340861922992656,
+      "n": 1632,
+      "baseline_rmse": 6.726997180371014,
+      "candidate_rmse": 6.697323024056828,
+      "better_seasons": 3,
+      "delta_mse_interval": [
+        -0.8651024012489756,
+        -0.14478378110568002
+      ]
+    },
+    {
+      "position": "K",
+      "correlation": 0.15035549695657613,
+      "n": 1632,
+      "baseline_rmse": 4.805073379335935,
+      "candidate_rmse": 4.75445388550662,
+      "better_seasons": 3,
+      "delta_mse_interval": [
+        -0.5125778822582525,
+        -0.44718018961060224
+      ]
+    }
+  ],
+  "excluded_rows": 690,
+  "production_approved": false,
+  "hashes": {
+    "schedules.parquet": "bf70479fd2f9777ed18bf8848866f91fcf28f921eb670d37b84d5d67cb72da18",
+    "stats_2019.parquet": "2eec3fd460d22b88224769db5a2152526a531fcc01ca05fd7b33c40f9d022d68",
+    "stats_2020.parquet": "f2f45ff9852f2dd73f77efe4027d519b1b61bf120aec06d38b74038f7e0a5ef4",
+    "stats_2021.parquet": "e264feb54380794f98b33da62d4eb62ec34d33e7c324ec0b293edd0c504fe6c8",
+    "stats_2022.parquet": "b6a86865760bb11eb86bad0d3f51380a1d25287e74eaa2fae5c0ded99c21ba20",
+    "stats_2023.parquet": "dc712abfb4f650be151ae11d3cc3aeb896b9c4cc2c9cf74a236604930c96ba51",
+    "stats_2024.parquet": "9f828ff37574728e7c1815f9283d98401d436820e4c648cd985509149023b9c3",
+    "stats_2025.parquet": "782c689a762e93508b9b6e11f1f9002bc7cde12aa0bfb0a6058aa00896bb9ae9"
+  }
+}

@@ -7,8 +7,8 @@
 pydantic-settings>=2.0  # gridiron.config (credentials from .env, rule #9)
 numpy>=2.0              # ridge fits and the research sims
 nflreadpy>=0.1.5        # polars-native; NOT the deprecated nfl_data_py
-pandas>=2.0,<4          # tested on 3.x (copy-on-write, new string dtype)
-pyarrow>=15             # parquet cache: NaN stays NaN, counts stay ints
+pandas>=2.2,<4          # draft board, ledger, draft math; tested on 3.x
+pyarrow>=18             # parquet cache: NaN stays NaN, counts stay ints
 
 # Not needed: espn-api (the league is on Sleeper, whose read API needs no
 # auth — gridiron.sleeper uses stdlib urllib). No markdown/table library:

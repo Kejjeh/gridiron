@@ -514,13 +514,15 @@ def render(kind: str, out: Path, *, take_screenshot: bool, now: datetime = NOW) 
         build_scenario(root, kind, now=NOW, run=1)
         rc = cli.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
                        "--anonymous", "--out-dir", str(out / kind / "run1"),
-                       "--archive-root", str(archive), "--now", NOW.isoformat()])
+                       "--archive-root", str(archive), "--now", NOW.isoformat(),
+                       "--grades-dir", str(root / "grades")])
         build_scenario(root, kind, now=now, run=2)
     else:
         build_scenario(root, kind, now=now)
     rc = max(rc, cli.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
                            "--anonymous", "--out-dir", str(out / kind),
-                           "--archive-root", str(archive), "--now", now.isoformat()]))
+                           "--archive-root", str(archive), "--now", now.isoformat(),
+                           "--grades-dir", str(root / "grades")]))
     html_path = out / kind / "dashboard_latest.html"
     if take_screenshot:
         for label, width in VIEWPORTS:

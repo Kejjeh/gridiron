@@ -103,3 +103,19 @@ def test_optimal_lineup_uses_flex_for_the_best_leftover():
 def test_optimal_lineup_tolerates_missing_positions():
     total, starters = draft.optimal_lineup([("RB", 50)], {"QB": 1, "RB": 2, "FLEX": 1})
     assert total == 50 and starters == [0]
+
+
+def test_temporarily_ineligible_player_is_revisited():
+    order, available, positions = [0, 1, 2], [True]*3, ["QB", "WR", "RB"]
+    first = draft.first_eligible(order, available, positions, lambda p: p != "QB")
+    assert first == 1
+    available[first] = False
+    assert draft.first_eligible(order, available, positions, lambda p: True) == 0
+
+
+def test_cannot_spend_last_pick_on_bench_when_kicker_missing():
+    counts = {"QB": 1, "RB": 4, "WR": 6, "TE": 1, "K": 0, "DEF": 1}
+    slots = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 2, "K": 1, "DST": 1}
+    assert draft.slots_missing(counts, slots) == 1
+    assert not draft.can_complete_after_pick(counts, "WR", 1, slots)
+    assert draft.can_complete_after_pick(counts, "K", 1, slots)

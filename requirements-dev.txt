@@ -4,3 +4,6 @@ pytest>=8.0
 # Research only (scripts/research/gbm_backtest.py), owner-approved 2026-10-01.
 # A boosted model would ship as JSON trees read by numpy; none has earned it.
 scikit-learn>=1.5
+# Research-only pulls (scripts/research/, draft 2026):
+requests>=2.32          # research data pulls
+lxml>=5                 # FantasyPros HTML table parser

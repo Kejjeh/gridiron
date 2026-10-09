@@ -27,11 +27,11 @@ test("pAvail prefers simulated survival odds (ph) when the player has them", () 
   const p = {adp:20, adp_sd:3, ph:{1:1, 24:0.4, 25:0.3, 48:0.02}};
   // before my first pick: use ph directly
   assert.equal(L.pAvail(p, 24, 1, MY), 0.4);
-  // at pick 24 (still there): survival to 25 is conditional on having survived to 24
-  assert.ok(Math.abs(L.pAvail(p, 25, 24, MY) - 0.3/0.4) < 1e-9);
-  // mid-round: condition on the last of my picks already passed (25, not 24)
-  assert.ok(Math.abs(L.pAvail(p, 48, 30, MY) - 0.02/0.3) < 1e-9);
-  // he fell far past what the sim expected (ph at the last pick ~0): fall back to the ADP model
+  // at consecutive user picks nobody else can select the player
+  assert.equal(L.pAvail(p, 25, 24, MY), 1); // consecutive picks: no opponent acts
+  // mid-round: retain the unconditioned room snapshot; no fabricated live conditioning
+  assert.equal(L.pAvail(p, 48, 30, MY), 0.02); // explicitly a pre-draft snapshot
+  // zero snapshots are retained as scenarios, with consecutive picks handled exactly
   const q = {adp:5, adp_sd:1.2, ph:{1:1, 24:0.0, 25:0.0}};
   const f = L.pAvail(q, 25, 24, MY);
   assert.ok(f >= 0 && f <= 1 && !Number.isNaN(f));
@@ -113,4 +113,69 @@ test("reset machine: first tap arms, second tap fires, timeout disarms", () => {
   assert.equal(m.armed(), false);
   assert.equal(m.tap(), "armed");       // needs two taps again
   assert.equal(fired, 1);
+});
+
+
+test("correcting an old pick preserves later picks and the clock", () => {
+  const s = {picks:[{id:"a",mine:true},{id:"b",mine:false},{id:"c",mine:false}],offset:0};
+  const n = L.replacePick(s,1,{id:"d",mine:false},MY);
+  assert.equal(L.curPick(n),4);
+  assert.deepEqual(n.picks.map(x=>x.id),["a","d","c"]);
+  assert.deepEqual(s.picks.map(x=>x.id),["a","b","c"]);
+  const cleared = L.replacePick(n,1,{id:null,mine:false},MY);
+  assert.equal(L.curPick(cleared),4);
+  assert.equal(cleared.picks[1].id,null);
+});
+
+test("pick recording rejects duplicates, wrong ownership, and out-of-range edits", () => {
+  const s={picks:[{id:"a",mine:true}],offset:0};
+  assert.throws(()=>L.replacePick(s,1,{id:"a",mine:false},MY),/already/);
+  assert.throws(()=>L.replacePick(s,1,{id:"b",mine:true},MY),/turn/);
+  assert.throws(()=>L.replacePick(s,4,{id:"b",mine:false},MY),/pick/);
+  assert.equal(L.replacePick(s,1,{id:"b",mine:false},MY).picks.length,2);
+});
+
+test("backup validation rejects corrupt input without mutating the live state", () => {
+  assert.throws(()=>L.validateState(null),/state/);
+  assert.throws(()=>L.validateState({picks:[{id:"a",mine:true},{id:"a",mine:false}]}),/duplicate/);
+  assert.throws(()=>L.validateState({picks:[],offset:-2}),/offset/);
+  assert.equal(L.validateState({picks:[],offset:2}).offset,2);
+});
+
+test("save errors are observable and successful storage round-trips", () => {
+  const s={picks:[{id:"a",mine:true}],offset:0};
+  const broken={setItem(){throw Error("quota");}};
+  assert.equal(L.persistState(broken,"k",s).ok,false);
+  const storage={setItem(k,v){this[k]=v;}};
+  assert.equal(L.persistState(storage,"k",s).ok,true);
+  assert.equal(L.validateState(JSON.parse(storage.k)).picks[0].id,"a");
+});
+
+test("no opponent pick occurs between my consecutive turn selections", () => {
+  const p=P("pass","RB",120,{adp:10,adp_sd:2,ph:{25:0}});
+  for(const mode of ["adp","room","hybrid"])
+    assert.equal(L.pAvail(p,25,24,MY,{mode,w:0.5}),1);
+});
+
+test('FLEX uses projected points across RB WR TE and excludes drafted or excluded players',()=>{
+  const p=[{id:'q',pos:'QB',proj:400},{id:'r',pos:'RB',proj:250,vor:100},{id:'w',pos:'WR',proj:260,vor:80},{id:'t',pos:'TE',proj:300,excluded:true}];
+  assert.equal(L.bestFlex(p,[]).id,'w');
+  assert.equal(L.bestFlex(p,[{id:'w'}]).id,'r');
+  assert.equal(L.bestFlex(p,[{id:'w'},{id:'r'}]),null);
+});
+test('Sleeper picks preserve roster ownership including autopicks',()=>{
+  const cfg={draftId:'d',rosterId:3,slotToRoster:{1:3,2:9}};
+  const picks=[{draft_id:'d',pick_no:2,player_id:'b',draft_slot:2,roster_id:9,picked_by:''},{draft_id:'d',pick_no:1,player_id:'a',draft_slot:1,roster_id:3,picked_by:''}];
+  const actual=L.sleeperPicks(picks,cfg);
+  assert.equal(actual[0].mine,true);assert.equal(actual[1].mine,false);assert.equal(actual[1].rosterId,9);
+  assert.equal(L.draftSlot(24),1);assert.equal(L.draftSlot(25),1);
+});
+test('Sleeper sync rejects missing pick numbers, duplicates, wrong draft and traded ownership',()=>{
+  const cfg={draftId:'d',rosterId:3,slotToRoster:{1:3,2:9}};
+  const p={draft_id:'d',pick_no:1,player_id:'a',draft_slot:1,roster_id:3};
+  for(const bad of [{...p,pick_no:2},{...p,draft_id:'other'},{...p,roster_id:9}])assert.throws(()=>L.sleeperPicks([bad],cfg));
+  assert.throws(()=>L.sleeperPicks([p,{...p,pick_no:2,draft_slot:2,roster_id:9}],cfg));
+});
+test('Missing displayed ADP uses separately labeled model value for odds',()=>{
+  assert.equal(L.pAvailAdp({adp:null,adp_model:50,adp_sd:10},60,20),L.pAvailAdp({adp:50,adp_sd:10},60,20));
 });

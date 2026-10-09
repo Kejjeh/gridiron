@@ -18,21 +18,26 @@ import json
 import math
 import re
 import sys
+import hashlib
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 
 from gridiron.draft import (adp_sd, optimal_lineup, p_available, p_survive,
-                            replacement_levels, snake_picks)
+                            replacement_levels, snake_picks, slots_missing,
+                            can_complete_after_pick, first_eligible)
 from gridiron.league_config import (DEFAULT_SCORING, DRAFT_ROUNDS, MY_DRAFT_SLOT,
-                                    NUM_TEAMS, ROSTER_SLOTS)
+                                    NUM_TEAMS, ROSTER_SLOTS, SETTINGS_VERIFIED)
 from gridiron.paths import OUTPUTS, RESEARCH_CACHE
 from gridiron.scoring import fantasy_points
 
 CACHE = RESEARCH_CACHE / "draft2026"
 POS = ["QB", "RB", "WR", "TE", "K", "DEF"]
 SUFFIX = re.compile(r"\b(jr|sr|ii|iii|iv|v)\b")
-rng = np.random.default_rng(20260908)
+SEED = 20260908
+if not SETTINGS_VERIFIED:
+    raise RuntimeError("Verify the league settings before building draft outputs.")
 
 
 def name_key(s: str) -> str:
@@ -96,7 +101,7 @@ ecr["fp_team"] = ecr.fp_team.replace({"JAC": "JAX"})
 ecr.loc[ecr.fp_pos == "DEF", "name_key"] = "def" + ecr.loc[ecr.fp_pos == "DEF", "fp_team"].str.lower()
 ecr_cols = ["fantasypros_id", "rank_ecr", "rank_ave", "rank_std", "rank_min", "rank_max", "tier", "pos_rank", "bye", "fp_name", "fp_pos", "name_key"]
 m1 = sl.merge(ecr[ecr_cols].drop(columns=["name_key", "fp_pos"]), on="fantasypros_id", how="left")
-need = m1.rank_ave.isna()
+need = m1.rank_ave.isna() & ~m1.duplicated(["name_key", "pos"], keep=False)
 fallback = (ecr[ecr_cols].drop(columns=["fantasypros_id"]).rename(columns={"fp_pos": "pos"})
             .sort_values("rank_ave").drop_duplicates(["name_key", "pos"]))
 m2 = m1.loc[need, ["name_key", "pos"]].merge(fallback, on=["name_key", "pos"], how="left")
@@ -119,7 +124,10 @@ ffc["name_key"] = ffc.name.map(name_key)
 ffc.loc[ffc.position == "DEF", "name_key"] = "def" + ffc.loc[ffc.position == "DEF", "team"].str.lower()
 ffc_cols = ffc[["name_key", "position", "adp", "stdev", "times_drafted"]].rename(
     columns={"position": "pos", "adp": "ffc_adp", "stdev": "ffc_sd", "times_drafted": "ffc_n"})
-board = board.merge(ffc_cols, on=["name_key", "pos"], how="left")
+assert not ffc_cols.duplicated(["name_key", "pos"]).any(), "ambiguous FFC source names"
+board = board.merge(ffc_cols, on=["name_key", "pos"], how="left", validate="many_to_one")
+ambiguous = board.duplicated(["name_key", "pos"], keep=False)
+board.loc[ambiguous, ["ffc_adp", "ffc_sd", "ffc_n"]] = np.nan
 
 # 2025 stats via gsis
 def col(df, *names):
@@ -176,16 +184,22 @@ board["proj"] = np.where(board.pts_ecr.notna() & board.pts_sl_adj.gt(0),
                          w_sl * board.pts_sl_adj + (1 - w_sl) * board.pts_ecr,
                          board.pts_ecr.fillna(board.pts_sl_adj))
 board["proj"] = board.proj.fillna(0)
-board = board[board.proj > 0].copy()
+# Keep explicitly excluded players searchable for recording other managers' picks.
+# This is the existing conservative draft exclusion scenario, not a claim that
+# an IR designation alone means a season-ending injury.
+board["draft_excluded"] = board.name_key.isin([k for k, miss in GAMES_MISSED.items() if miss >= 17])
+board.loc[board.draft_excluded, "proj"] = 0.0
+board = board[(board.proj > 0) | board.draft_excluded].copy()
+assert board.sleeper_id.dropna().is_unique, "duplicate Sleeper player IDs"
 
-# ---------------------------------------------------------------- ADP blend + availability
-board["adp"] = np.where(board.adp_half.notna() & board.ffc_adp.notna(),
-                        0.6 * board.adp_half + 0.4 * board.ffc_adp,
-                        board.adp_half.fillna(board.ffc_adp))
-# undrafted-in-ADP players: park them past the ECR-implied slot
-board["adp"] = board.adp.fillna(board.rank_ave + 25).fillna(300)
+# Sleeper half-PPR redraft ADP only. Missing values have a separate model fallback.
+adp_source = json.loads((CACHE / "sleeper_adp_2026.json").read_text(encoding="utf-8"))
+board["adp_half"] = pd.to_numeric(board.sleeper_id.astype(str).map(adp_source["values"]), errors="coerce")
+board.loc[~np.isfinite(board.adp_half) | (board.adp_half <= 0) | (board.adp_half >= 999), "adp_half"] = np.nan
+board["adp_estimated"] = board.adp_half.isna()
+board["adp"] = board.adp_half.fillna(board.rank_ave + 25).fillna(300)
 board["adp_sd"] = board.adp.map(adp_sd)
-for pk in MY_PICKS[:10]:
+for pk in MY_PICKS:
     board[f"p{pk}"] = [p_available(a, s_, pk) for a, s_ in zip(board.adp, board.adp_sd)]
 
 # ---------------------------------------------------------------- replacement levels (order-statistic fill)
@@ -207,7 +221,7 @@ board["rank_vor"] = np.arange(1, len(board) + 1)
 N_TEAMS, ROUNDS = NUM_TEAMS, DRAFT_ROUNDS
 ME = MY_DRAFT_SLOT - 1
 CAPS = {"QB": 2, "RB": 7, "WR": 8, "TE": 2, "K": 1, "DEF": 1}
-sim = board[board.adp < 260].reset_index(drop=True)
+sim = board[(~board.draft_excluded) & ((board.adp < 260) | board.pos.isin(["K", "DEF"]))].reset_index(drop=True)
 n = len(sim)
 pos_arr = sim.pos.values; proj_arr = sim.proj.values; adp_arr = sim.adp.values; sd_arr = sim.adp_sd.values
 pos_idx = {p: np.where(pos_arr == p)[0] for p in POS}
@@ -221,8 +235,12 @@ def pick_order():
 ORDER = pick_order()
 
 def opp_allowed(counts, rnd, p):
+    if not can_complete_after_pick(counts, p, ROUNDS - rnd + 1, ROSTER_SLOTS):
+        return False
     if counts[p] >= CAPS[p]:
         return False
+    if slots_missing(counts, ROSTER_SLOTS) == ROUNDS - rnd + 1:
+        return True
     if p in ("K", "DEF") and rnd < 12:
         return False
     if p == "QB" and counts["QB"] >= 1 and rnd < 11:
@@ -254,18 +272,18 @@ def expected_best(avail_mask, p, now, nxt):
     return e
 
 def my_choice(policy, avail_mask, counts, rnd, pick_no, next_pick, forced=None):
-    if forced:
+    if forced and can_complete_after_pick(counts, forced, ROUNDS - rnd + 1, ROSTER_SLOTS):
         cands = pos_idx[forced][avail_mask[pos_idx[forced]]]
         if len(cands):
             return cands[np.argmax(proj_arr[cands])]
     best, best_val = None, -1e9
     for p in POS:
         cands = pos_idx[p][avail_mask[pos_idx[p]]]
-        if len(cands) == 0 or counts[p] >= CAPS[p]:
+        if len(cands) == 0 or counts[p] >= CAPS[p] or not can_complete_after_pick(counts, p, ROUNDS - rnd + 1, ROSTER_SLOTS):
             continue
         i = cands[np.argmax(proj_arr[cands])]
         if p in ("K", "DEF"):
-            if rnd < 14:
+            if rnd < 14 and slots_missing(counts, ROSTER_SLOTS) < ROUNDS - rnd + 1:
                 continue
             val = proj_arr[i] - REPL[p]
         else:
@@ -288,12 +306,12 @@ def my_choice(policy, avail_mask, counts, rnd, pick_no, next_pick, forced=None):
 POLICIES = {
     "static_vor": ("static", {}),
     "dynamic_vona": ("dynamic", {}),
-    "rb_rb_rb": ("dynamic", {1: "RB", 2: "RB", 3: "RB"}),
-    "rb_wr_wr": ("dynamic", {1: "RB", 2: "WR", 3: "WR"}),
-    "rb_rb_wr": ("dynamic", {1: "RB", 2: "RB", 3: "WR"}),
-    "rb_te_wr": ("dynamic", {1: "RB", 2: "TE", 3: "WR"}),
-    "rb_wr_qb": ("dynamic", {1: "RB", 2: "WR", 3: "QB"}),
-    "wr_at_1": ("dynamic", {1: "WR"}),
+    "rb_rb_rb": ("static", {1: "RB", 2: "RB", 3: "RB"}),
+    "rb_wr_wr": ("static", {1: "RB", 2: "WR", 3: "WR"}),
+    "rb_rb_wr": ("static", {1: "RB", 2: "RB", 3: "WR"}),
+    "rb_te_wr": ("static", {1: "RB", 2: "TE", 3: "WR"}),
+    "rb_wr_qb": ("static", {1: "RB", 2: "WR", 3: "QB"}),
+    "wr_at_1": ("static", {1: "WR"}),
 }
 
 # Manager-specific behaviour from league history (analyze_competition.py):
@@ -313,52 +331,45 @@ else:
     USE_HISTORY = False
 
 
-def run_sim(policy_name, n_sims=300, ghost_me=False):
-    """ghost_me: my picks do not remove players from the pool, so avail_at records
-    the true counterfactual 'if I pass on him, does the room leave him for me'."""
-    kind, script = POLICIES[policy_name]
+def run_sim(policy_name, n_sims=300, *, seed=SEED):
+    """Complete legal drafts. A fresh RNG supplies common draws across policies.
+
+    "market" is a neutral reference in which every team follows its noisy
+    market board. Its availability is a PRE-DRAFT scenario, not a live
+    counterfactual or a prediction conditioned on actual draft selections.
+    """
+    if n_sims < 1:
+        raise ValueError("n_sims must be positive")
+    rng = np.random.default_rng(seed)
+    kind, script = POLICIES.get(policy_name, ("market", {}))
+    if policy_name != "market" and policy_name not in POLICIES:
+        raise ValueError("unknown policy")
     scores, rosters, avail_at = [], [], {pk: [] for pk in MY_PICKS}
     for _ in range(n_sims):
-        boards = [np.argsort(adp_arr + SHIFT[t] + rng.normal(0, 1, n) * sd_arr * SD_MULT[t]) for t in range(N_TEAMS)]
-        ptr = [0] * N_TEAMS
+        boards = [np.argsort(adp_arr + SHIFT[t] + rng.normal(0, 1, n) * sd_arr * SD_MULT[t])
+                  for t in range(N_TEAMS)]
         avail = np.ones(n, bool)
-        # Counterfactual availability for the war-room page: who the ROOM has
-        # left alone by each of my picks, ignoring my own selections, so a
-        # player I usually take at 25 still shows his true odds of lasting to 48.
-        avail_opp = np.ones(n, bool)
         counts = [dict.fromkeys(POS, 0) for _ in range(N_TEAMS)]
         mine = []
         for k, (rnd, team) in enumerate(ORDER):
             pick_no = k + 1
             if team == ME:
-                avail_at[pick_no].append(np.where(avail_opp)[0].copy())
+                avail_at[pick_no].append(np.flatnonzero(avail).copy())
+            if team == ME and kind != "market":
                 nxt = next((q for q in MY_PICKS if q > pick_no), 200)
                 i = my_choice(kind, avail, counts[ME], rnd, pick_no, nxt, script.get(rnd))
-                if i is None:
-                    i = np.where(avail)[0][0]
             else:
-                b = boards[team]
-                while True:
-                    i = b[ptr[team]]
-                    if avail[i] and opp_allowed(counts[team], rnd, pos_arr[i]):
-                        break
-                    ptr[team] += 1
-                    if ptr[team] >= n:
-                        i = np.where(avail)[0][0]; break
-                # roster-fill: last rounds force K/DEF if missing
-                if rnd >= 14 and counts[team]["K"] == 0 and rnd == 14:
-                    kk = pos_idx["K"][avail[pos_idx["K"]]]
-                    if len(kk): i = kk[np.argmax(proj_arr[kk])]
-                if rnd == 15 and counts[team]["DEF"] == 0:
-                    dd = pos_idx["DEF"][avail[pos_idx["DEF"]]]
-                    if len(dd): i = dd[np.argmax(proj_arr[dd])]
-            if not (team == ME and ghost_me):
-                avail[i] = False
+                i = first_eligible(boards[team], avail, pos_arr,
+                                   lambda p: opp_allowed(counts[team], rnd, p))
+            if i is None:
+                raise RuntimeError(f"No legal selection for slot {team + 1} at {pick_no}")
+            assert avail[i], "duplicate draft pick"
+            avail[i] = False
             counts[team][pos_arr[i]] += 1
             if team == ME:
                 mine.append(i)
-            else:
-                avail_opp[i] = False
+        assert all(slots_missing(c, ROSTER_SLOTS) == 0 for c in counts)
+        assert len(mine) == len(set(mine)) == ROUNDS
         scores.append(lineup_points(mine))
         rosters.append(mine)
     return np.array(scores), rosters, avail_at
@@ -376,8 +387,6 @@ if __name__ == "__main__":
         print(f"\n{p} top by proj\n", board[board.pos == p][["pos_rank_proj", "name", "team", "bye", "proj", "vor", "rank_ave", "adp", "p24", "p48", "p72", "p96", "injury", "ppg_2025", "age"]].head(36 if p in ("RB", "WR") else 16).round(2).to_string(index=False))
 
     OUTPUTS.mkdir(parents=True, exist_ok=True)
-    board.to_csv(OUTPUTS / "draft2026_board.csv", index=False)
-
     n_sims = int(sys.argv[1]) if len(sys.argv) > 1 else 300
     print(f"\n=== Monte Carlo, {n_sims} drafts per policy ===")
     results = {}
@@ -387,18 +396,41 @@ if __name__ == "__main__":
         print(f"{name:14s} mean {sc.mean():7.1f}  p10 {np.percentile(sc, 10):7.1f}  p90 {np.percentile(sc, 90):7.1f}")
     best = max(results, key=lambda k: results[k][0].mean())
     sc, ro, av = results[best]
-    # History-aware survival odds at each of my picks, from a larger run of the
-    # best policy; exported as ph{pick} columns for the war-room page.
+    # Neutral room reference, independent of which evaluated policy scored best.
     n_avail = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
-    _, _, av_big = run_sim(best, n_avail, ghost_me=True)
+    _, _, av_big = run_sim("market", n_avail, seed=SEED + 1)
     for pk in MY_PICKS:
         cnt = np.zeros(n)
         for arr in av_big[pk]:
             cnt[arr] += 1
-        ph = pd.Series(cnt / max(1, len(av_big[pk])), index=sim.name_key)
-        board[f"ph{pk}"] = board.name_key.map(ph).fillna(0.0).round(3)
-    board.to_csv(OUTPUTS / "draft2026_board.csv", index=False)
-    print(f"\nExported ph{{pick}} survival odds from {n_avail} history-aware drafts ({best}, ghost-me counterfactual).")
+        ph = pd.Series(cnt / len(av_big[pk]), index=sim.sleeper_id)
+        board[f"ph{pk}"] = board.sleeper_id.map(ph).round(3)
+    inputs = [CACHE / name for name in (
+        "sleeper_projections_2026.csv", "fp_ecr_half.json", "ffc_adp_half-ppr.json", "sleeper_adp_2026.json",
+        "ff_playerids.csv", "stats_season_2025.csv", "sleeper_players.json")]
+    if _shift_file.exists():
+        inputs.append(_shift_file)
+    manifest = {
+        "generated": datetime.now(timezone.utc).isoformat(),
+        "seed": SEED, "room_seed": SEED + 1, "policy_sims": n_sims, "room_sims": n_avail,
+        "adp_source": "Sleeper adp_half_ppr", "adp_retrieved": adp_source["retrieved"],
+        "room_model": "neutral-market-sleeper-v3", "validated": False,
+        "inputs": [{"name": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                    "modified": datetime.fromtimestamp(p.stat().st_mtime, timezone.utc).isoformat()}
+                   for p in inputs],
+        "policies": {k: {"mean": float(v[0].mean()), "p10": float(np.percentile(v[0], 10))}
+                     for k, v in results.items()},
+    }
+    # Stage complete files only after all simulations and invariants pass.
+    csv_text = board.to_csv(index=False)
+    manifest["board_sha256"] = hashlib.sha256(csv_text.encode("utf-8")).hexdigest()
+    staged = OUTPUTS / "draft2026_board.csv.tmp"
+    staged.write_text(csv_text, encoding="utf-8", newline="")
+    staged.replace(OUTPUTS / "draft2026_board.csv")
+    staged = OUTPUTS / "draft2026_manifest.json.tmp"
+    staged.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    staged.replace(OUTPUTS / "draft2026_manifest.json")
+    print(f"\nExported pre-draft room scenarios from {n_avail} legal neutral-market drafts.")
     print(f"\nBest policy: {best}. Most common picks by round:")
     for r, pk in enumerate(MY_PICKS, 1):
         c = pd.Series([sim.name[m[r - 1]] + " (" + sim.pos[m[r - 1]] + ")" for m in ro]).value_counts(normalize=True).head(5)

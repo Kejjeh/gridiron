@@ -8,23 +8,61 @@ file published as the artifact). Page logic: `node --test scripts/research/warro
 """
 import json
 import pathlib
+import hashlib
+import re
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 
-from gridiron.paths import OUTPUTS, REPO_ROOT
+from gridiron.paths import OUTPUTS, REPO_ROOT, RESEARCH_CACHE
+from gridiron.draft_context import team_code
+from gridiron.league_config import SETTINGS_VERIFIED
 
 SCR = REPO_ROOT / "scripts" / "research" / "warroom"
-b = pd.read_csv(OUTPUTS / "draft2026_board.csv")
-b["adp_rank"] = b.adp.rank(method="first")
-b["keep_rank"] = np.minimum(b.rank_vor, b.adp_rank)
-skill = b[b.pos.isin(["QB", "RB", "WR", "TE"])].nsmallest(230, "keep_rank")
-kd = pd.concat([b[b.pos == "K"].nsmallest(14, "adp"), b[b.pos == "DEF"].nsmallest(14, "adp")])
-out = pd.concat([skill, kd]).drop_duplicates("name_key").sort_values("rank_vor")
+if not SETTINGS_VERIFIED:
+    raise RuntimeError("Verify the league before publishing draft outputs.")
+board_path = OUTPUTS / "draft2026_board.csv"
+manifest = json.loads((OUTPUTS / "draft2026_manifest.json").read_text(encoding="utf-8"))
+board_hash = hashlib.sha256(board_path.read_bytes()).hexdigest()
+if board_hash != manifest["board_sha256"]:
+    raise RuntimeError("Board and provenance do not match; regenerate the board first.")
+context_path = OUTPUTS / "draft2026_context.json"
+context = None
+if context_path.exists():
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    if context["adjustment"] != 0 or context["validated"] is not False:
+        raise ValueError("Draft context must remain descriptive with zero adjustment")
+    for fingerprint in context["inputs"]:
+        base = RESEARCH_CACHE / "draft2026" if fingerprint["name"] == "schedules_2026.csv" else OUTPUTS
+        source = base / fingerprint["name"]
+        if hashlib.sha256(source.read_bytes()).hexdigest() != fingerprint["sha256"]:
+            raise ValueError("Context inputs changed; run build_draft_context_2026.py")
+    context["version"] = hashlib.sha256(context_path.read_bytes()).hexdigest()
+
+changes_path = OUTPUTS / "draft2026_changes.json"
+changes = None
+if changes_path.exists():
+    changes = json.loads(changes_path.read_text(encoding="utf-8"))
+    if changes["adjustment"] != 0 or changes["validated"] is not False:
+        raise ValueError("Personnel context must not activate projection weights")
+    for fingerprint in changes["inputs"]:
+        base = OUTPUTS if fingerprint["location"] == "outputs" else RESEARCH_CACHE / "draft2026"
+        source = base / fingerprint["name"]
+        if source.name != fingerprint["name"]:
+            raise ValueError("Invalid input name")
+        if hashlib.sha256(source.read_bytes()).hexdigest() != fingerprint["sha256"]:
+            raise ValueError("Personnel inputs changed; run build_personnel_2026.py")
+    changes["version"] = hashlib.sha256(changes_path.read_bytes()).hexdigest()
+
+b = pd.read_csv(board_path, dtype={"sleeper_id": str})
+assert b.sleeper_id.dropna().is_unique, "duplicate player IDs"
+# Complete board coverage, including all kickers, defenses and excluded players.
+out = b.sort_values("rank_vor").copy()
 
 NOTES = {
  "kayshonboutte": "Named the HOU starter opposite Collins with Higgins (ACL) out and Dell on IR. Beat expected points by 33 last year (regress), but the role is real now.",
- "jahmyrgibbs": "Consensus 1.01 everywhere. Montgomery gone to HOU, backup Pacheco on IR. 25.1 PPG in the 6 games without Montgomery last year.",
+ "jahmyrgibbs": "Sleeper half-PPR ADP 1.3. Montgomery traded to HOU; Pacheco on IR. Larger role is plausible, not guaranteed. Center Cade Mays is on IR. Montgomery recorded carries in all 17 games in 2025; do not use the prior six-game absence claim.",
  "bijanrobinson": "1.02 by every source. Only knock: 6.5-win Falcons offense; Tua is the ATL starter with Penix out for W1.",
  "christianmccaffrey": "Age 30, 413 touches in 2025, calf tightness = rep management. DATA: players who play on a Q tag with a calf issue score ~70% of normal that week (n=12). Fine for the season, watch the W1 tag.",
  "jamarrchase": "Knee hyperextension late Aug, back at practice, W1 expected. DATA: WR knee returns 87% for 6 games, but this was a scare not an absence. TD regression already in the projection.",
@@ -106,6 +144,17 @@ NOTES = {
  "justicehill": "Henry's backup, healthy.",
 }
 
+# These remain dated editorial notes, not measured individual injury discounts.
+for key, note in list(NOTES.items()):
+    note = re.sub(r"DATA:.*?(?= Fine for| Price in| Expect a|$)", "Historical injury sample is exploratory; recheck current status. ", note)
+    note = note.replace("the sim's favorite", "a saved shortlist option")
+    note = note.replace("The sim's favorite", "A saved shortlist option")
+    NOTES[key] = note
+NOTES["brockbowers"] = "Elite TE on the saved board. Several managers have selected TEs early historically; precise survival odds are unvalidated."
+NOTES["treymcbride"] = "Elite TE on the saved board. Historical early-TE preferences are a scenario, not proof he will be gone."
+NOTES["isiahpacheco"] = "On IR in the saved snapshot. Excluded by the conservative draft scenario; this does not establish a season-long absence."
+NOTES["joshjacobs"] = "Exempt list in the saved snapshot. The six-game absence is an uncertain modeling scenario, not a confirmed return date."
+
 # Chips shown next to the name. usage = 2025 expected-points screen; experts =
 # the multi-year-accurate rankers sit above ADP; avoid = market ahead of both
 # usage and experts, or unavailable; regress = beat expected points by 35+.
@@ -132,19 +181,28 @@ def i(v):
 recs = []
 for _, r in out.iterrows():
     recs.append(dict(
-        id=str(r["sleeper_id"]) if pd.notna(r["sleeper_id"]) else r.name_key, key=r.name_key, name=r["name"], pos=r.pos,
+        id=str(r["sleeper_id"]) if pd.notna(r["sleeper_id"]) else "fp:" + str(int(r.fantasypros_id)), key=r.name_key, name=r["name"], pos=r.pos,
         team=r.team if pd.notna(r.team) else "", bye=i(r.bye), proj=f(r.proj), vor=f(r.vor), vorw=f(r.vor_waiver),
         tier=i(r.tier), ecr=f(r.rank_ave), ecr_sd=f(r.rank_std), ecr_min=i(r.rank_min), ecr_max=i(r.rank_max),
-        adp=f(r.adp), adp_sd=f(r.adp_sd, 2), adp_sl=f(r.adp_half), adp_ffc=f(r.ffc_adp), posrank=int(r.pos_rank_proj),
+        adp=f(r.adp_half, 3), adp_model=f(r.adp, 3), adp_sd=f(r.adp_sd, 2), adp_sl=f(r.adp_half, 3), adp_ffc=f(r.ffc_adp), posrank=int(r.pos_rank_proj),
         inj=r.injury if pd.notna(r.injury) else None, injpart=r.injury_part if pd.notna(r.injury_part) else None,
         ppg25=f(r.ppg_2025), g25=i(r.g_2025), age=i(r.age), note=NOTES.get(r.name_key),
-        tag=TAG_OF.get(r.name_key),
+        tag=TAG_OF.get(r.name_key), excluded=bool(r.draft_excluded),
+        context_team=team_code(r.team) if pd.notna(r.team) else None,
         ph={int(c[2:]): f(r[c], 3) for c in b.columns if c.startswith("ph") and c[2:].isdigit() and pd.notna(r[c])} or None,
     ))
-meta = dict(repl={"QB": 292.2, "RB": 138.6, "WR": 139.0, "TE": 128.6, "K": 104.2, "DEF": 87.0},
+meta = dict(repl={p: float(g.repl.iloc[0]) for p, g in b.groupby("pos")},
             my_picks=[1, 24, 25, 48, 49, 72, 73, 96, 97, 120, 121, 144, 145, 168, 169],
-            generated="2026-09-08 5:15 PM ET",
-            sources="Sleeper projections + ADP, FantasyPros ECR (9/08), FFC ADP (12-team half-PPR, 9/3-9/8, 1,837 drafts), nflverse 2025")
+            generated=datetime.now(timezone.utc).isoformat(),
+            board_version=board_hash,
+            inputs_updated=min(x["modified"] for x in manifest["inputs"]),
+            news_reviewed="2026-09-08 (saved notes; not a live news feed)",
+            room_model=manifest["room_model"],
+            room_sims=manifest["room_sims"],
+            adp_updated=manifest["adp_retrieved"], sources="Sleeper projections and half-PPR redraft ADP; FantasyPros ECR; nflverse 2025")
+meta["sync"] = dict(draftId="1389720742551093250", leagueId="1389720742551093249", userId="1004814445714989056", rosterId=3, slot=1)
+draft_settings=json.loads((RESEARCH_CACHE/"draft2026"/"live_draft.json").read_text(encoding="utf-8"))
+meta["sync"]["slotToRoster"]=draft_settings["slot_to_roster_id"]
 # The room: one line per manager from 2023-25 league history (analyze_competition.py).
 ROOM = [
     dict(slot=1, name="Kejjeh (you)", picks="1 · 24 · 25", td="2023 champ. Value drafter (avg 5 picks later than market)."),
@@ -161,13 +219,22 @@ ROOM = [
     dict(slot=12, name="SirChadius", picks="12 · 13 · 36", td="Was coochiemoocher22. <b>Biggest reacher</b> in the league (Pitts at 70, 84 picks early; TE in R2 in 2023). QB late. Active: 32 claims, $153 FAAB."),
 ]
 meta["room"] = ROOM
+meta["context"] = context
+meta["changes"] = changes
 data = dict(meta=meta, players=recs)
-(OUTPUTS / "draft2026_warroom_data.json").write_text(json.dumps(data), encoding="utf-8")
+assert len({r["id"] for r in recs}) == len(recs)
 tpl = (SCR / "draftroom_template.html").read_text(encoding="utf-8")
 logic = (SCR / "draftroom_logic.js").read_text(encoding="utf-8")
-html = tpl.replace("/*__DATA__*/", json.dumps(data, separators=(",", ":"))).replace("/*__LOGIC__*/", logic)
+encoded = json.dumps(data, separators=(",", ":"), allow_nan=False).replace("<", "\\u003c")
+html = tpl.replace("/*__DATA__*/", encoded).replace("/*__LOGIC__*/", logic)
 assert "/*__" not in html, "unfilled template placeholder"
-(OUTPUTS / "draft2026_warroom.html").write_text(html, encoding="utf-8")
+# Stage both complete assets; HTML contains its own data and is independently usable.
+for name, content in [("draft2026_warroom_data.json", json.dumps(data, allow_nan=False)),
+                      ("draft2026_warroom.html", html)]:
+    target = OUTPUTS / name
+    staged = target.with_suffix(target.suffix + ".tmp")
+    staged.write_text(content, encoding="utf-8")
+    staged.replace(target)
 print(len(recs), "players;", sum(1 for r in recs if r["note"]), "with notes;", out.pos.value_counts().to_dict())
 print("notes unmatched:", [k for k in NOTES if k not in set(out.name_key)])
 print("tags unmatched:", [k for k in TAG_OF if k not in set(out.name_key)])

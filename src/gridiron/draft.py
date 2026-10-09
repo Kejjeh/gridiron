@@ -115,3 +115,25 @@ def optimal_lineup(
         used += cands
         total += sum(roster[i][1] for i in cands)
     return total, sorted(used)
+
+
+def slots_missing(counts: dict[str, int], slots: dict[str, int]) -> int:
+    """Fewest additional players needed for all fixed and FLEX starters."""
+    fixed = {("DEF" if p == "DST" else p): n
+             for p, n in slots.items() if p not in ("FLEX", "BENCH", "BN")}
+    missing = sum(max(0, n - counts.get(p, 0)) for p, n in fixed.items())
+    flex_filled = sum(max(0, counts.get(p, 0) - fixed.get(p, 0)) for p in FLEX_ELIGIBLE)
+    return missing + max(0, slots.get("FLEX", 0) - flex_filled)
+
+
+def can_complete_after_pick(counts: dict[str, int], position: str, picks_left: int,
+                            slots: dict[str, int]) -> bool:
+    """picks_left includes the current selection."""
+    after = dict(counts)
+    after[position] = after.get(position, 0) + 1
+    return picks_left > 0 and slots_missing(after, slots) <= picks_left - 1
+
+
+def first_eligible(order, available, positions, allowed):
+    """Re-scan the preference order: temporary bans must not discard players."""
+    return next((int(i) for i in order if available[i] and allowed(positions[i])), None)
