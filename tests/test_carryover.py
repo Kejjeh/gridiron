@@ -21,6 +21,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from gridiron import carryover
 from gridiron import ingest as ing
 from gridiron.decisions import archive_path, list_archives, read_archive, write_archive
@@ -813,3 +815,70 @@ def test_a_padded_carried_path_is_refused_rather_than_trimmed(tmp_path):
                    "sleeper_state": dict(GOOD_INPUT)}, files=BOTH_FILES)
     assert [v.name for v in report.rejected] == ["weekly_stats"]
     assert [v.name for v in report.accepted] == ["sleeper_state.json"]
+
+
+# ------------------------------------------------------------ sidecars
+
+def _cache_with_sidecars(tmp_path: Path, tag: str, fetched_at: str) -> Path:
+    cache = tmp_path / f"cache_{tag}" / "season2026"
+    cache.mkdir(parents=True)
+    ing.Manifest(cache, {"sleeper_state": ing.Entry(
+        name="sleeper_state", path="sleeper_state.json", rows=1,
+        as_of=(NOW - timedelta(hours=2)).isoformat(), source="sleeper", weeks=[3])}, 2026).save()
+    (cache / "sleeper_state.json").write_text('{"week": 3}', encoding="utf-8")
+    side = cache / carryover.SIDECAR_DIR
+    side.mkdir()
+    (side / "xfp.parquet").write_bytes(b"not really parquet, just bytes")
+    (side / "meta.json").write_text(json.dumps({"season": 2026, "fetched_at": fetched_at}),
+                                    encoding="utf-8")
+    (cache / "shadow_projections.json").write_text('{"season": 2026, "week": 3}', encoding="utf-8")
+    return cache
+
+
+def test_model_inputs_and_shadow_travel_as_sidecars_and_never_displace_local_ones(tmp_path):
+    store = tmp_path / "store"
+    cache = _cache_with_sidecars(tmp_path, "a", (NOW - timedelta(hours=1)).isoformat())
+    rep = carryover.publish_inputs(cache, store, season=2026, now=NOW)
+    names = {v.name for v in rep.verdicts if v.accepted}
+    assert carryover.SIDECAR_DIR + "/" in names and "shadow_projections.json" in names
+    stored = store / carryover.INPUTS_DIR / "season2026"
+    assert (stored / carryover.SIDECAR_DIR / "xfp.parquet").is_file()
+    assert (stored / "shadow_projections.json").is_file()
+
+    # a clean runner: both sidecars are laid down, with their stamps as they were
+    fresh = tmp_path / "cache_b" / "season2026"
+    fresh.mkdir(parents=True)
+    ing.Manifest(fresh, {}, 2026).save()
+    rep = carryover.restore_inputs(store, fresh, season=2026, now=NOW)
+    assert (fresh / carryover.SIDECAR_DIR / "meta.json").is_file()
+    assert (fresh / "shadow_projections.json").read_text(encoding="utf-8") == '{"season": 2026, "week": 3}'
+    assert "2 sidecar(s)" in rep.note
+
+    # a runner that already fetched its own: the carried copies are refused
+    own = _cache_with_sidecars(tmp_path, "c", NOW.isoformat())
+    (own / "shadow_projections.json").write_text('{"season": 2026, "week": 4}', encoding="utf-8")
+    rep = carryover.restore_inputs(store, own, season=2026, now=NOW)
+    refused = {v.name: v.reason for v in rep.verdicts if not v.accepted}
+    assert "already has its own" in refused[carryover.SIDECAR_DIR + "/"]
+    assert (own / "shadow_projections.json").read_text(encoding="utf-8") == '{"season": 2026, "week": 4}'
+
+
+@pytest.mark.parametrize("meta, why", [
+    ({"season": 2025, "fetched_at": NOW.isoformat()}, "season 2025"),
+    ({"season": 2026, "fetched_at": (NOW + timedelta(days=1)).isoformat()}, "future"),
+    ({"season": 2026, "fetched_at": (NOW - timedelta(days=40)).isoformat()}, "days old"),
+    ({"season": 2026}, "no fetched_at"),
+])
+def test_carried_model_inputs_are_refused_on_their_own_meta(tmp_path, meta, why):
+    store = tmp_path / "store"
+    cache = _cache_with_sidecars(tmp_path, "a", NOW.isoformat())
+    (cache / carryover.SIDECAR_DIR / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    carryover.publish_inputs(cache, store, season=2026, now=NOW)
+    fresh = tmp_path / "cache_b" / "season2026"
+    fresh.mkdir(parents=True)
+    ing.Manifest(fresh, {}, 2026).save()
+    rep = carryover.restore_inputs(store, fresh, season=2026, now=NOW)
+    reasons = {v.name: v.reason for v in rep.verdicts}
+    assert why in reasons[carryover.SIDECAR_DIR + "/"]
+    assert not (fresh / carryover.SIDECAR_DIR).exists()
+    assert (fresh / "shadow_projections.json").is_file()           # judged on its own

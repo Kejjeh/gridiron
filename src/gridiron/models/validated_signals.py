@@ -26,11 +26,16 @@ from __future__ import annotations
 BASELINE = "usage_prior x positional_efficiency x line_multiplier"
 
 #: Signals layered on the baseline.
-FEATS: tuple[str, ...] = ("advanced_v1", "advanced_v1_k", "advanced_v1_def", "ros_v1")
+FEATS: tuple[str, ...] = ("advanced_v1", "advanced_v1_k", "advanced_v1_def", "ros_v1",
+                          "role_change_v1")
 
 #: feature name -> {"evidence": path, "weeks": (lo, hi), "mae_delta": float}
 VALIDATED: dict[str, dict] = {
     # gridiron.models.advanced: the full baseline as an input plus expected
+    # (Coefficients refit on 2019-2025 since 2026-10-01 — six training
+    # seasons beat two on both metrics in every held-out season,
+    # docs/research/FEATURE_EXPANSION.md; the evidence below is the original
+    # out-of-sample test of the feature set.)
     # fantasy points, snap/target/air-yards share, NGS, opponent, vacated
     # opportunity and depth-chart rank. Trained 2023-2024, scored on 2025
     # weeks 4-18 (4,798 player-weeks, 60,813 start/sit pairs): start/sit
@@ -63,16 +68,32 @@ VALIDATED: dict[str, dict] = {
         "mae_delta": -0.344, "pairwise_delta": 0.0751,
     },
     # Rest-of-season rankings (gridiron.ros): per position, the method that
-    # ordered players best in season-fold cross-validation over 2023-2025
+    # ordered players best in season-fold cross-validation over 2019-2025
     # (cuts at weeks 4-14, through week 17) — advanced_v1 rates, schedule-
     # nudged or combined; points per game so far was weakest everywhere.
-    # Spearman gain over ppg: QB +.059, RB +.019, WR +.052, TE +.075,
-    # K +.058, DEF +.077.
+    # Spearman gain over ppg: QB +.073, RB +.045, WR +.058, TE +.092,
+    # K +.064, DEF +.095; pairwise +1.8 to +4.1 points.
     "ros_v1": {
         "evidence": "docs/research/ROS_BACKTEST.md",
         "script": "scripts/research/ros_backtest.py",
-        "season": (2023, 2025), "weeks": (4, 14),
-        "mae_delta": None, "pairwise_delta": 0.024,
+        "season": (2019, 2025), "weeks": (4, 14),
+        "mae_delta": None, "pairwise_delta": 0.030,
+    },
+    # The role-change block inside advanced_v1 (gridiron.models.advanced
+    # ROLE_FEATURES): the player's LAST game — expected points,
+    # opportunities, snap share — beside the trailing averages, so a backup
+    # who carried the team's last game is priced on it the next week.
+    # Season-fold CV 2023-2025, weeks 4-18 (14,115 player-weeks, 178,947
+    # pairs), against the shipped set (all existing features): start/sit
+    # 63.72% vs 63.62%, MAE 3.983 vs 3.997, better on BOTH in every fold.
+    # Tested and not shipped: team-share and jump features, teammates
+    # missing from the box score, teammates on a reserve list (the depth
+    # chart already carries that), exponential averages (a tie with +last).
+    "role_change_v1": {
+        "evidence": "docs/research/ROLE_CHANGE_BACKTEST.md",
+        "script": "scripts/research/role_change_backtest.py",
+        "season": (2023, 2025), "weeks": (4, 18),
+        "mae_delta": -0.014, "pairwise_delta": 0.0010,
     },
 }
 

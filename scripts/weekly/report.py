@@ -29,7 +29,7 @@ from gridiron.league_config import (MY_SLEEPER_USERNAME, SEASON_YEAR,
                                     SETTINGS_VERIFIED)
 from gridiron.paths import OUTPUTS, ensure_dirs
 from gridiron.scoring import ScoringCoverage, scoring_coverage
-from gridiron.sleeper import owner_roster
+from gridiron.sleeper import find_owner_id, owner_roster
 from gridiron.usage import player_weeks, season_to_date, weeks_present
 from gridiron.weekly import build_report
 
@@ -63,17 +63,6 @@ def kickoffs_for(schedule: pd.DataFrame | None, week: int) -> list[datetime]:
     return out
 
 
-def find_owner_id(snapshot: dict, owner: str) -> str | None:
-    """Match the owner by user_id or display name. This is the ONE place a
-    human handle is used, and it resolves to an id immediately — it never
-    becomes a join key for player data (rule #3)."""
-    owner = str(owner)
-    for u in snapshot.get("users") or []:
-        if str(u.get("user_id")) == owner:
-            return owner
-        if str(u.get("display_name") or "").lower() == owner.lower():
-            return str(u.get("user_id"))
-    return None
 
 
 def main(argv: list[str] | None = None) -> int:

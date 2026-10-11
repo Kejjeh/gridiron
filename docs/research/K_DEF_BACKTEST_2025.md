@@ -143,3 +143,17 @@ These are standardised weights: points per 1 SD of each input.
 - **Grading:**
   - `grade_week.py` runs separate K and DEF shoot-outs.
   - Defense actuals are keyed `DEF:<team>`.
+
+## Update 2026-10-01 — refit on 2019–2024
+
+`k_def_backtest.py --train 2019 2020 2021 2022 2023 2024 --test 2025 --save`
+(docs/research/FEATURE_EXPANSION.md: more seasons help). Same 2025 test rows:
+
+| | K adv (2 train seasons) | K adv (6) | DEF adv (2) | DEF adv (6) |
+|---|---|---|---|---|
+| start/sit | 56.8% | **57.3%** | 61.5% | **62.0%** |
+| MAE | 3.82 | **3.81** | 4.57 | 4.59 |
+| weeks adv beats reference | 11/15 | 11/15 | 13/15 | **14/15** |
+
+Sleeper on the same rows: K 54.2%, DEF 61.0%. Residual SDs now K 4.483,
+DEF 5.96.

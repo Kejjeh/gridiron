@@ -213,6 +213,8 @@ class Dashboard:
             "current_lineup": [p.sleeper_id if p else None for p in self.plan.current],
             "best_lineup": [p.sleeper_id if p else None for p in self.plan.best],
             "current_points": round(self.plan.current_points, 3),
+            "current_points_partial": self.plan.partial,
+            "unprojected_starters": [p.sleeper_id for p in self.plan.unprojected_starters],
             "best_points": round(self.plan.best_points, 3),
             "lineup_abstained": self.plan.abstained,
             "alternatives": [{
@@ -682,8 +684,15 @@ def _matchup(opp_id: int, mine: tuple[Player | None, ...],
     else:
         pwin = round(matchup_win_prob(my_mean, my_sd, opp_mean, opp_sd), 4)
         lev = round(leverage_per_point(my_mean, my_sd, opp_mean, opp_sd), 5)
-        reason = ("DST slots excluded on both sides (no DST scoring implementation); "
-                  "independence assumed between all starters")
+        # Every projected starter counts, kickers and team defenses included
+        # (advanced_v1 projects both with a residual SD). A defense with no
+        # projection is the one slot that may be left out without abstaining,
+        # and it is named here rather than silently dropped.
+        left_out = my_missing + opp_missing
+        reason = (("every projected starter counted on both sides" if not left_out else
+                   "counted every projected starter; unprojected and left out: "
+                   + ", ".join(left_out))
+                  + "; independence assumed between all starters")
     return MatchupView(opp_id, mine, theirs, my_mean, my_sd, opp_mean, opp_sd, pwin,
                        reason, lev, tuple(my_missing), tuple(opp_missing))
 
@@ -2735,8 +2744,10 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     if plan.abstained:
         out.append(f"<p class=\"bad\"><b>ABSTAINED:</b> {_e(plan.abstained)}</p>")
     else:
+        partial = (f" (partial: {len(plan.unprojected_starters)} starter(s) unprojected, "
+                   f"counted 0)" if plan.partial else "")
         out.append("<div class=\"kpi\">"
-                   f"<div>current lineup<b>{_num(plan.current_points)}</b></div>"
+                   f"<div>current lineup{_e(partial)}<b>{_num(plan.current_points)}</b></div>"
                    f"<div>best legal lineup<b>{_num(plan.best_points)}</b></div>"
                    f"<div>improvement<b>{_num(plan.improvement, 1, True)}</b></div></div>")
         changes = plan.changes()

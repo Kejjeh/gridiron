@@ -64,6 +64,9 @@ IMPORTS = [
     "gridiron.external_ranks",
     "gridiron.shadow",
     "gridiron.models.advanced",
+    "gridiron.ros",
+    "gridiron.radar",
+    "gridiron.theme",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on

@@ -1,4 +1,4 @@
-# Rest-of-season rankings: which method orders players best? (2026-09-30)
+# Rest-of-season rankings: which method orders players best? (2026-09-30, re-run 2026-10-01)
 
 **Short answer: build ROS rankings on the advanced weekly model, not on
 points per game.** In season-fold cross-validation over 2023–2025, ranking
@@ -10,8 +10,8 @@ with the schedule nudge or with a learned combination, won everywhere.
 
 Command: `PYTHONPATH=src python scripts/research/ros_backtest.py --save`.
 
-**Folds.** Each season (2023, 2024 and 2025) is held out in turn, and the
-other two train. The weekly models are refit on the train seasons only.
+**Folds.** Each season is held out in turn and the others train (2023–2025
+at first; 2019–2025 since 2026-10-01). The weekly models are refit on the train seasons only.
 
 **Cuts.** At each cut week 4–14 of the held-out season, every method
 projects each player's points from the cut through week 17:
@@ -56,27 +56,37 @@ never by one test season.
 - It is fit to actual points per remaining game.
 - It is trained only on out-of-fold weekly rates.
 
-## Results (cross-validated mean, 2023–2025)
+## Results (cross-validated mean, 2019–2025)
+
+Re-run 2026-10-01 over seven seasons (docs/research/FEATURE_EXPANSION.md:
+more seasons help every model here), each held out in turn, weekly models
+refit per fold; the method per position was re-chosen on this run.
 
 | pos | ppg | base | adv | adv_sched | ros_model | **shipped** | gain vs ppg |
 |---|---|---|---|---|---|---|---|
-| QB | .491 | .505 | .500 | .521 | **.550** | ros_model | +.059 |
-| RB | .661 | .646 | .671 | **.680** | .673 | adv_sched | +.019 |
-| WR | .551 | .551 | **.603** | .601 | .596 | adv | +.052 |
-| TE | .402 | .407 | .472 | **.477** | .475 | adv_sched | +.075 |
-| K | .135 | .160 | .130 | **.193** | .188 | adv_sched | +.058 |
-| DEF | .110 | .110 | .161 | .186 | **.187** | ros_model | +.077 |
+| QB | .477 | .502 | .516 | .532 | **.550** | ros_model | +.073 |
+| RB | .590 | .615 | .624 | .628 | **.635** | ros_model | +.045 |
+| WR | .512 | .524 | **.570** | .570 | .569 | adv | +.058 |
+| TE | .394 | .425 | .475 | .484 | **.486** | ros_model | +.092 |
+| K | .158 | .176 | .149 | .183 | **.222** | ros_model | +.064 |
+| DEF | .139 | .139 | .174 | **.234** | .218 | adv_sched | +.095 |
 
 Pairwise order, shipped method vs ppg:
 
 | pos | shipped | ppg |
 |---|---|---|
-| QB | 70.0% | 68.1% |
-| RB | 74.8% | 74.0% |
-| WR | 71.6% | 69.2% |
-| TE | 67.1% | 63.8% |
-| K | 56.2% | 53.7% |
-| DEF | 56.5% | 53.3% |
+| QB | 70.2% | 67.5% |
+| RB | 73.1% | 71.3% |
+| WR | 70.6% | 68.0% |
+| TE | 67.4% | 63.5% |
+| K | 57.9% | 54.9% |
+| DEF | 58.4% | 54.3% |
+
+With seven folds the learned combination wins at QB, RB, TE and K; WR keeps
+the plain advanced rate (a three-way tie at .570) and DEF the schedule-
+nudged rate. The three-season run (2023–2025, first shipped) had chosen
+adv_sched for RB and K and ros_model for DEF; those were the hairline calls
+and they moved, which is what a three-fold choice is worth.
 
 Per-fold tables are saved in `src/gridiron/models/ros_weights.json` under
 `evidence.folds`.
@@ -90,11 +100,10 @@ Per-fold tables are saved in `src/gridiron/models/ros_weights.json` under
   streaming call (`advanced_v1` K/DEF) is where the edge is.
 - **The schedule nudge helps where the weekly model leans on the matchup**
   (K, DEF, TE, RB) and is neutral for WR.
-- **The learned combination wins only at QB and DEF.**
+- **The learned combination wins at QB, RB, TE and K** on seven seasons.
   - QB: it rewards a longer track record. Games played carries weight, a
     proxy for job security.
-  - DEF: it leans on the schedule-nudged rate.
-  - DEF's lead over `adv_sched` is a tie (.187 vs .186).
+  - DEF leans on the schedule-nudged rate and ships it outright.
 - **Playoff-week (15–17) ordering is weaker than full-ROS ordering** at every
   position. It is shown as a separate column, not ranked on.
 - **ROS is points, not ΔP(win) (rule #7).** It is for holds, drops and
@@ -107,8 +116,12 @@ Per-fold tables are saved in `src/gridiron/models/ros_weights.json` under
     played and stated.
   - A player ruled Out on the week's official report gets 0 for that week
     only.
-  - IR and other player-map statuses are flags and never change the number
-    (rule #11).
+  - A player on a reserve list per the official weekly roster is credited 0
+    for the first four games of the stint (`IR_MIN_GAMES`, the NFL minimum
+    before activation) and flagged; a return after them is never guessed
+    (added 2026-09-30, `docs/research/ROLE_CHANGE_BACKTEST.md`).
+  - The player map's IR tag and other statuses are flags and never change
+    the number (rule #11).
 - **Weights:** `src/gridiron/models/ros_weights.json`.
   - The chosen method per position.
   - The learned combination, fit on every season's out-of-fold rows.

@@ -569,6 +569,12 @@ class LineupPlan:
     def unprojected_starters(self) -> tuple[Player, ...]:
         return tuple(p for p in self.current if p is not None and not p.projected)
 
+    @property
+    def partial(self) -> bool:
+        """True when `current_points` leaves a starter out: an unprojected
+        starter counts 0 in the sum, so the total is a floor, not a total."""
+        return bool(self.unprojected_starters)
+
     def changes(self) -> tuple[tuple[int, Player | None, Player | None], ...]:
         """(slot index, current occupant, best occupant) where they differ."""
         out = []

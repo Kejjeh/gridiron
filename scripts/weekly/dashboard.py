@@ -37,7 +37,7 @@ from gridiron.scoring import ScoringCoverage, scoring_coverage
 from gridiron.models import advanced as adv_model
 from gridiron.shadow import read_shadow
 from gridiron.usage import player_weeks, weeks_present
-from gridiron.sleeper import player_map_status_note
+from gridiron.sleeper import find_owner_id, player_map_status_note
 
 #: Every source this dashboard READS (same rule as report.py: if a value
 #: from a source reaches the page, its as-of line is on the page).
@@ -123,11 +123,12 @@ def ros_block(*, weeks, schedule, injuries, directory, season, week, players, cr
             wk = injuries.loc[(injuries["week"] == week)
                               & (injuries["report_status"].astype(str).str.upper() == "OUT")]
             out_ids = {str(g) for g in wk["gsis_id"].dropna()}
+        inputs = adv_model.load_inputs(directory, season)
         table, status = ros.build_table(
             weeks=None if weeks is None else weeks.loc[weeks["week"] < week],
-            schedule=schedule, injuries=injuries,
-            inputs=adv_model.load_inputs(directory, season), week=week,
-            positions=positions, teams=teams, out=out_ids)
+            schedule=schedule, injuries=injuries, inputs=inputs, week=week,
+            positions=positions, teams=teams, out=out_ids,
+            reserve=(inputs or {}).get("reserve"))
         if len(table) == 0:
             return {"status": status, "players": []}
         table = ros.ownership(table, snapshot=snapshot, players=players,
@@ -135,25 +136,20 @@ def ros_block(*, weeks, schedule, injuries, directory, season, week, players, cr
         keep = (table["pos_rank"] <= table["position"].map(ROS_DEPTH).fillna(30)) \
             | (table["held_by"] == "MINE")
         cols = ["sleeper_id", "gsis_id", "name", "position", "team", "held_by", "pos_rank",
-                "ros", "ros_pg", "playoff", "games_left", "byes", "method", "next_week"]
+                "ros", "ros_pg", "playoff", "games_left", "byes", "method", "next_week",
+                "reserve_since"]
         return {"status": status, "from_week": week, "through_week": ros.HORIZON_END,
                 "playoff_weeks": list(ros.PLAYOFF_WEEKS),
                 "note": "points, not ΔP(win): for holds, drops and trades; the page "
                         "still makes every lineup call",
                 "players": table.loc[keep, cols].to_dict("records")}
     except Exception as exc:                                  # noqa: BLE001
+        import traceback
+        print(f"[ros] rankings failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return {"status": f"ROS rankings failed: {type(exc).__name__}: {exc}", "players": []}
 
 
-def find_owner_id(snapshot: dict, owner: str) -> str | None:
-    """The ONE place a human handle is used; it resolves to an id at once."""
-    owner = str(owner)
-    for u in snapshot.get("users") or []:
-        if str(u.get("user_id")) == owner:
-            return owner
-        if str(u.get("display_name") or "").lower() == owner.lower():
-            return str(u.get("user_id"))
-    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -253,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
             teams[gid] = nflverse_team(rec.get("team"))
     advanced = adv_model.build_context(
         weeks=weeks, inputs=adv_model.load_inputs(directory, state_season),
-        injuries=injuries, schedule=schedule, week=report_week, teams=teams)
+        injuries=injuries, schedule=schedule, week=report_week, teams=teams, now=now)
 
     owner_id = find_owner_id(snapshot, args.owner)
     if owner_id is None:

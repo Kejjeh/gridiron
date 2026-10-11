@@ -148,3 +148,15 @@ def test_league_id_resolution_prefers_the_environment(monkeypatch):
 def test_no_credential_is_read_anywhere_in_the_adapter():
     """Sleeper's read API needs no auth; a cookie here would be a smell."""
     assert not re.search(r"espn_s2|swid|cookie|api_key|token", SOURCE, re.I)
+
+
+def test_find_owner_id_is_id_first_and_refuses_an_ambiguous_name():
+    from gridiron.sleeper import find_owner_id
+    snap = {"users": [{"user_id": "1", "display_name": "Josh"},
+                      {"user_id": "2", "display_name": "josh"},
+                      {"user_id": "3", "display_name": "Dana"}]}
+    assert find_owner_id(snap, "3") == "3"                       # an id wins outright
+    assert find_owner_id(snap, "dana") == "3"                    # one exact name, any case
+    assert find_owner_id(snap, "Josh") is None                   # two users share it: nobody
+    assert find_owner_id(snap, "") is None and find_owner_id({}, "Dana") is None
+    assert find_owner_id({"users": [None, "x"]}, "Dana") is None  # junk rows are skipped
