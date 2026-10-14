@@ -90,6 +90,51 @@ def week_is_final(schedule: pd.DataFrame | None, week: int) -> bool:
     return bool(rows["home_score"].notna().all() and rows["away_score"].notna().all())
 
 
+#: How long after kickoff a game's score is expected in the schedule feed. A
+#: game runs about three and a half hours and nflverse posts the result within
+#: a few hours of the final whistle; six hours leaves room for overtime and the
+#: feed's own lag without calling a game still in progress "overdue".
+SCORE_GRACE_HOURS = 6.0
+
+
+def scores_overdue(schedule: pd.DataFrame | None, now: datetime,
+                   grace_hours: float = SCORE_GRACE_HOURS) -> bool:
+    """True when some regular-season game kicked off more than `grace_hours`
+    before `now` and still carries no score in `schedule`.
+
+    This is the sign that the cached schedule is behind the games. A week is
+    graded only when every game has a score (`week_is_final`), and a schedule
+    pulled on Sunday night says nothing about Monday's game until it is
+    pulled again; the pull step re-fetches it on this signal instead of
+    waiting out the schedule's slow cadence. A row whose kickoff cannot be
+    read is skipped (absence is never evidence), so a schedule with no
+    readable rows is never overdue.
+    """
+    if schedule is None or len(schedule) == 0:
+        return False
+    if not {"gameday", "gametime", "home_score", "away_score"} <= set(schedule.columns):
+        return False
+    rows = schedule
+    if "game_type" in rows.columns:
+        types = rows["game_type"].astype(str).str.strip().str.upper()
+        rows = rows.loc[types == "REG"]
+    now_utc = now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    cutoff = now_utc - timedelta(hours=float(grace_hours))
+    missing = rows.loc[rows["home_score"].isna() | rows["away_score"].isna()]
+    for row in missing.itertuples():
+        day = str(getattr(row, "gameday", "") or "").strip()
+        time_ = str(getattr(row, "gametime", "") or "").strip()
+        if not day or day.lower() == "nan" or not time_ or time_.lower() == "nan":
+            continue
+        try:
+            kick = pd.Timestamp(f"{day} {time_}", tz="America/New_York")
+        except (ValueError, TypeError):
+            continue
+        if kick.to_pydatetime().astimezone(timezone.utc) <= cutoff:
+            return True
+    return False
+
+
 # ------------------------------------------------------------------- pins
 @dataclass(frozen=True)
 class PinReport:

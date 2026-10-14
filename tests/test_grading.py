@@ -11,7 +11,7 @@ from __future__ import annotations
 import csv
 import importlib.util
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -84,6 +84,79 @@ def test_a_week_is_final_only_when_every_game_has_a_score():
     assert not grading.week_is_final(_schedule(final3=False), 3)   # Monday night pending
     assert not grading.week_is_final(_schedule(), 4)
     assert not grading.week_is_final(_schedule(), 9)                # no rows is not final
+
+
+def test_a_finished_game_with_no_score_makes_the_schedule_overdue():
+    # Monday night 20:15 ET on 2026-09-28 is 00:15 UTC on the 29th.
+    kick = datetime(2026, 9, 29, 0, 15, tzinfo=UTC)
+    pending = _schedule(final3=False)
+    assert not grading.scores_overdue(pending, kick - timedelta(hours=1))   # not kicked off
+    assert not grading.scores_overdue(pending, kick + timedelta(hours=5))   # inside the grace
+    assert grading.scores_overdue(pending, kick + timedelta(hours=7))       # score is late
+    # Every played game scored; week 4's unscored game is still in the future.
+    assert not grading.scores_overdue(_schedule(final3=True), kick + timedelta(hours=7))
+    assert not grading.scores_overdue(None, kick)
+    assert not grading.scores_overdue(pd.DataFrame(), kick)
+
+
+def test_an_unreadable_kickoff_is_never_overdue():
+    # No time on the unscored row: absence is not evidence that the game was played.
+    rows = pd.DataFrame([_game(3, "2026-09-28", None, "GB", "CHI")])
+    assert not grading.scores_overdue(rows, datetime(2026, 10, 1, tzinfo=UTC))
+    rows = pd.DataFrame([_game(3, "2026-09-28", "20:15", "GB", "CHI", gt="BYE")])
+    assert not grading.scores_overdue(rows, datetime(2026, 10, 1, tzinfo=UTC))
+
+
+def test_the_pull_refetches_a_current_schedule_whose_scores_are_late(tmp_path, monkeypatch):
+    """The cloud's week-5 grade waited on a schedule pulled before Monday night
+    ended: by age it was current for days. A finished game with no score now
+    forces the re-pull, and a fully scored schedule is left alone."""
+    import sys as _sys
+    from gridiron.ingest import Manifest
+
+    pw = _load("grade_week_pull_week", "scripts/ingest/pull_week.py")
+    calls: list[str] = []
+
+    class FakeNfl:
+        def __getattr__(self, name):
+            def load(*a, **kw):
+                calls.append(name)
+                if name == "load_schedules":
+                    return _schedule(final3=True)
+                raise RuntimeError("offline")
+            return load
+
+    monkeypatch.setitem(_sys.modules, "nflreadpy", FakeNfl())
+    now = datetime(2026, 9, 29, 12, tzinfo=UTC)          # Tuesday noon UTC, Monday's score late
+
+    def cache_with(schedule, tag, age_hours=2.0):
+        cache = tmp_path / f"cache_{tag}"
+        cache.mkdir()
+        schedule.to_parquet(cache / "schedules.parquet", index=False)
+        m = Manifest.load(cache, 2026)
+        m.record("schedules", path=cache / "schedules.parquet", rows=len(schedule),
+                 source="t", weeks=[3, 4])
+        e = m.get("schedules")
+        from dataclasses import replace as _replace
+        stamp = (now - timedelta(hours=age_hours)).isoformat(timespec="seconds")
+        m.entries["schedules"] = _replace(e, as_of=stamp)
+        m.save()
+        return Manifest.load(cache, 2026)
+
+    m = cache_with(_schedule(final3=False), "late")
+    pw.pull_nflverse(m, 2026, now, force=False)
+    assert "load_schedules" in calls, "a late score must force the schedule re-pull"
+    assert m.get("schedules").error == "" and m.get("schedules").rows == 6
+
+    calls.clear()
+    m2 = cache_with(_schedule(final3=True), "scored")
+    pw.pull_nflverse(m2, 2026, now, force=False)
+    assert "load_schedules" not in calls, "a scored schedule two hours old is current"
+
+    calls.clear()
+    m3 = cache_with(_schedule(final3=False), "just_tried", age_hours=0.5)
+    pw.pull_nflverse(m3, 2026, now, force=False)
+    assert "load_schedules" not in calls, "a late score is retried at most hourly"
 
 
 # ------------------------------------------------------------------ pins
