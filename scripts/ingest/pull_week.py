@@ -39,6 +39,7 @@ from pathlib import Path
 
 from gridiron import ingest as ing
 from gridiron.carryover import CARRIED_FORWARD
+from gridiron import grading
 from gridiron.freshness import CADENCES
 from gridiron.ids import CROSSWALK_URL
 from gridiron import livesync as ls
@@ -52,6 +53,8 @@ from gridiron.sleeper import (USER_AGENT, SleeperReadOnly, note_player_map_check
                               read_player_map_history, write_player_map_status)
 
 NFLVERSE_SOURCES = ("weekly_stats", "snap_counts", "schedules", "injuries")
+#: A schedule re-pulled for a late score is tried again no sooner than this.
+SCORE_RETRY_HOURS = 1.0
 
 
 def atomic(path: Path, write) -> None:
@@ -117,6 +120,30 @@ def _current(manifest: ing.Manifest, name: str, now: datetime) -> bool:
     return True
 
 
+def _scores_overdue(manifest: ing.Manifest, now: datetime) -> bool:
+    """A cached schedule whose finished games carry no score is behind the games.
+
+    `grade_week.py --finished` grades a week only once every game of it has a
+    score (`gridiron.grading.week_is_final`). The schedule moves slowly (a
+    168 h cadence, so an 84 h refresh), and a copy pulled on Sunday night sat
+    "current" by age past Monday's game: the week-5 grade waited most of a
+    week for a 272-row re-pull while the box scores were already in. A
+    readable kickoff more than `grading.SCORE_GRACE_HOURS` ago with no score
+    forces the re-pull, at most once per `SCORE_RETRY_HOURS`: a game the feed
+    never scores (postponed, cancelled) must not re-download the schedule on
+    every 15-minute run. An unreadable cache is not overdue; the pull itself
+    reports a frame it cannot read."""
+    entry = manifest.get("schedules")
+    pulled = entry.as_of_dt if entry is not None else None
+    if pulled is not None and (now - pulled).total_seconds() / 3600.0 < SCORE_RETRY_HOURS:
+        return False
+    try:
+        frame = manifest.read_frame("schedules")
+    except Exception:  # noqa: BLE001 — a broken cache file is the pull's problem, not the grader's
+        return False
+    return grading.scores_overdue(frame, now)
+
+
 def pull_nflverse(manifest: ing.Manifest, season: int, now: datetime,
                   force: bool) -> None:
     import nflreadpy as nfl
@@ -133,8 +160,12 @@ def pull_nflverse(manifest: ing.Manifest, season: int, now: datetime,
     }
     for name, (fn, source) in jobs.items():
         if not force and _current(manifest, name, now):
-            print(f"  {name}: cached, skipping")
-            continue
+            if name == "schedules" and _scores_overdue(manifest, now):
+                print("  schedules: current by age, but a finished game still has no "
+                      "score — re-pulled so the week can be graded")
+            else:
+                print(f"  {name}: cached, skipping")
+                continue
         path = manifest.directory / f"{name}.parquet"
         try:
             df = fn()

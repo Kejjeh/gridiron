@@ -46,6 +46,12 @@ The two "next candidates" from the weekly-routine section are built.
   log). Pins live in `.carry/pins/`, the ledger in `.carry/grades/` and the
   run artifact. First automatic grade: week 4, the morning after Monday
   night. Week 3's hand grade is kept and never regraded.
+  Week 5 showed the gap: a schedule pulled Sunday night was "current" by
+  age (168 h cadence) past Monday's game, so the cloud said "not final"
+  for days while the box scores were in. The pull now re-fetches the
+  schedule whenever a finished game has no score
+  (`grading.scores_overdue`, `pull_week._scores_overdue`); week 5 was
+  graded by hand on 10-14 and the ledger committed.
 - **Report card** section on the Board (KPIs, start/sit shoot-out bars with
   the 50% coin-flip mark, one row per week). Page-only, never archived.
 - **Restyle** in `theme.CSS` (shared by both pages): glow background,
