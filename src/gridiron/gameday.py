@@ -32,7 +32,7 @@ UNKNOWN and the page says so. Elapsed hours, a zero, and an absent row are
 never read as "final", "bye" or "not playing". Game status, injury status,
 roster eligibility and the kickoff lock are four separate columns.
 
-WHAT IS NOT HERE. No live win probability: the pregame board's UNCALIBRATED
+WHAT IS NOT HERE. No live win probability: the pregame board's
 number is shown as pregame context and is not updated by the score. No
 "remaining projection": points already earned are never added to a
 projection, and a full-game projection is never scaled by the clock. No
@@ -1123,10 +1123,13 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
         m = rec.get("matchup") if isinstance(rec.get("matchup"), Mapping) else None
         if m:
             pw = m.get("pwin")
+            cal = m.get("calibration") if isinstance(m.get("calibration"), Mapping) else {}
+            tag = str(cal.get("short") or (f"calibrated, SD x{float(cal.get('k') or 1):.2f}"
+                                            if cal.get("validated") else "UNCALIBRATED"))
             projection = (f"pregame projection: you {_num(m.get('my_mean')) or 0:.1f} vs roster "
                           f"#{m.get('opponent_roster_id')} {_num(m.get('opp_mean')) or 0:.1f}; "
                           f"P(win) {'abstained' if pw is None else f'{float(pw):.0%}'} "
-                          f"(UNCALIBRATED, pregame; not updated by the score, and never "
+                          f"({tag}, pregame; not updated by the score, and never "
                           f"added to points already earned)")
         else:
             projection = "the pregame board had no matchup projection"

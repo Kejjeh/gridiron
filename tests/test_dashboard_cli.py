@@ -547,3 +547,51 @@ def test_the_archive_this_run_wrote_is_content_addressed(tmp_path):
     stem = files[0].stem
     assert re.fullmatch(r"week03_\d{8}T\d{6}Z_[0-9a-f]{8}", stem), stem
     assert rec["week"] == 3
+
+
+def test_a_tested_calibration_relabels_the_win_probability_and_logs_the_league(tmp_path, monkeypatch):
+    from gridiron import winprob
+    cal = tmp_path / "cal.json"
+    cal.write_text(json.dumps({
+        "kind": "sd_scale", "k": 1.15, "bar_cleared": True, "doc": "docs/research/PWIN_CALIBRATION.md",
+        "synthetic": {"n_fit": 900, "fit_seasons": [2019, 2022], "n_test": 700,
+                      "test_seasons": [2023, 2025], "test_brier": 0.231, "test_brier_raw": 0.235},
+        "league_history": {"n": 140, "seasons": [2023, 2025], "brier": 0.22, "brier_raw": 0.23}}),
+        encoding="utf-8")
+    monkeypatch.setattr(winprob, "CALIBRATION_PATH", cal)
+    _, html, rec = render(tmp_path, "complete")
+    m = rec["matchup"]
+    assert m["label"].startswith("CALIBRATED") and m["calibration"]["validated"] is True
+    assert m["calibration"]["k"] == 1.15
+    assert abs(m["pwin"] - 0.5) < abs(m["pwin_raw"] - 0.5)          # pulled toward even
+    assert "CALIBRATED" in html and "before calibration" in html and "NOT validated" not in html
+    assert rec["evaluation"]["pwin_calibrated"] is True
+    # every league matchup is recorded; the owner's is the page's own view
+    lm = rec["league_matchups"]
+    assert lm and all(len(x["roster_ids"]) == 2 for x in lm)
+    own = [x for x in lm if m["opponent_roster_id"] in x["roster_ids"]]
+    assert len(own) == 1
+    o = own[0]
+    p_mine = o["pwin"] if o["roster_ids"][1] == m["opponent_roster_id"] else round(1 - o["pwin"], 4)
+    assert p_mine == m["pwin"]
+
+
+def test_a_test_that_found_no_factor_shows_the_raw_number_labelled_tested(tmp_path, monkeypatch):
+    from gridiron import winprob
+    cal = tmp_path / "cal.json"
+    cal.write_text(json.dumps({
+        "kind": "sd_scale", "k": 1.0, "k_tested": 1.03, "bar_cleared": False, "raw_tested": True,
+        "doc": "docs/research/PWIN_CALIBRATION.md",
+        "synthetic": {"n_fit": 900, "fit_seasons": [2019, 2022], "n_test": 700,
+                      "test_seasons": [2023, 2025], "test_logloss": 0.667, "test_logloss_raw": 0.666},
+        "league_history": {"n": 140, "seasons": [2023, 2025], "fav_stated": 0.62, "fav_won": 0.64}}),
+        encoding="utf-8")
+    monkeypatch.setattr(winprob, "CALIBRATION_PATH", cal)
+    _, html, rec = render(tmp_path, "complete")
+    m = rec["matchup"]
+    assert m["label"].startswith("TESTED") and m["calibration"]["badge"] == "TESTED"
+    assert m["pwin"] == m["pwin_raw"]                               # no factor applied
+    assert "TESTED" in html and "UNCALIBRATED" not in html
+    assert "before calibration" not in html and "NOT validated" not in html
+    assert "tested, no correction" in html
+    assert rec["evaluation"]["pwin_calibrated"] is True

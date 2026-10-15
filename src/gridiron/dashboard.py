@@ -25,8 +25,11 @@ evidence and the evidence stays one tap away:
      and the roster players deliberately protected from the drop list.
   6. **Roster projections** — mean ± SD, the components, the designation and
      its source, the lock state, the reason for every abstention.
-  7. **Matchup** — the margin as context. P(win) is real but UNCALIBRATED,
-     so it sits behind a disclosure and ranks nothing.
+  7. **Matchup** — the margin as context. P(win) is the closed form under
+     the tested calibration (`gridiron.winprob.load_calibration`): CALIBRATED
+     with its factor and evidence, TESTED when the test found no factor worth
+     applying, UNCALIBRATED when nothing tested is on file; either way it
+     sits behind a disclosure and ranks nothing.
   8. **How the baseline has fared** out-of-sample, and its n.
   9. Where the decision-time archive was written.
 
@@ -82,10 +85,10 @@ from gridiron.waivers import (
 from gridiron.weekly import (
     BYE, NO_SCHEDULE, availability, injury_index, schedule_index,
 )
-from gridiron.winprob import leverage_per_point, matchup_win_prob
+from gridiron.winprob import (RAW as RAW_CALIBRATION, Calibration, load_calibration,
+                              matchup_win_prob)
 
-PWIN_LABEL = ("UNCALIBRATED — closed-form Φ(margin/SD) on independent, "
-              "literature-CV projections; no resolved-matchup calibration exists yet")
+PWIN_LABEL = RAW_CALIBRATION.label
 
 #: Designations that mean the player will NOT play. "Questionable" and
 #: "Doubtful" are NOT here (rule #11): they are flagged, never zeroed.
@@ -107,6 +110,10 @@ class MatchupView:
     my_unprojected: tuple[str, ...]
     opp_unprojected: tuple[str, ...]
     label: str = PWIN_LABEL
+    #: The closed form without the tested spread factor, kept beside the
+    #: calibrated number so the grader can score both.
+    pwin_raw: float | None = None
+    calibration: Calibration = RAW_CALIBRATION
 
     @property
     def margin(self) -> float:
@@ -163,6 +170,12 @@ class Dashboard:
     #: Other systems' numbers for the same players, for weekly grading only:
     #: the pre-advanced baseline and the stack (advanced + Sleeper).
     contenders: Mapping[str, object] | None = None
+    #: The P(win) calibration in force (`gridiron.winprob.load_calibration`).
+    pwin_calibration: Calibration = RAW_CALIBRATION
+    #: Every matchup in the league this week, projected the same way as the
+    #: owner's, so the grader can check P(win) on six matchups a week instead
+    #: of one. Record-only: no action reads it.
+    league_matchups: tuple[Mapping[str, object], ...] = field(default=())
     #: The season's graded weeks (`gridiron.grading.report_card`), read from
     #: the ledger after the page is built. Page-only: never archived, so a
     #: record never carries a grade of itself.
@@ -230,8 +243,10 @@ class Dashboard:
                 "opponent_roster_id": m.opponent_roster_id,
                 "my_mean": round(m.my_mean, 3), "my_sd": round(m.my_sd, 3),
                 "opp_mean": round(m.opp_mean, 3), "opp_sd": round(m.opp_sd, 3),
-                "pwin": m.pwin, "pwin_reason": m.pwin_reason, "label": m.label,
+                "pwin": m.pwin, "pwin_raw": m.pwin_raw, "pwin_reason": m.pwin_reason,
+                "label": m.label, "calibration": m.calibration.record(),
                 "opp_starters": [player(p) for p in m.opp_starters]},
+            "league_matchups": [dict(x) for x in self.league_matchups],
             "matchup_reason": self.matchup_reason,
             "upgrades": [{
                 "add": player(u.add), "drop_id": u.drop.sleeper_id if u.drop else None,
@@ -284,7 +299,7 @@ class Dashboard:
             "evaluation": {
                 "verdict": self.evaluation.verdict(),
                 "scores": [s.line() for s in self.evaluation.scores],
-                "pwin_calibrated": self.evaluation.pwin_calibrated},
+                "pwin_calibrated": self.pwin_calibration.validated},
         }
 
     # --------------------------------------------------------------- html
@@ -312,10 +327,10 @@ def _covers(frame: pd.DataFrame | None, week: int, sources: Sequence[SourceFresh
 
 
 ADVANCED_LABEL = ("ADVANCED v1 (baseline + advanced stats) — beat the baseline out "
-                  "of sample, rule #5; P(win) still uncalibrated")
+                  "of sample, rule #5")
 STACK_LABEL = ("STACK v1 (advanced_v1 + Sleeper's pre-kickoff projection, mean scale) — "
                "ahead of advanced alone on start/sit AND error in every held-out season "
-               "2019-2025, rule #5; P(win) still uncalibrated")
+               "2019-2025, rule #5")
 #: Marker on a projection abstained because a fresh Sleeper feed omits him.
 FEED_ABSENT = "missing from Sleeper's pre-kickoff projections"
 
@@ -594,6 +609,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
 
     # ---- matchup
     matchup, matchup_reason = None, ""
+    cal = load_calibration()
     matchups = list(snapshot.get("matchups") or [])
     mine = next((m for m in matchups if my_roster_id is not None
                  and str(m.get("roster_id")) == str(my_roster_id)), None)
@@ -617,7 +633,12 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             opp_line = tuple(opp_by.get(s) if s and s != "0" else None
                              for s in opp_starters_ids[:len(slots)])
             opp_line = opp_line + (None,) * (len(slots) - len(opp_line))
-            matchup = _matchup(int(opp.get("roster_id")), plan.current, opp_line)
+            matchup = _matchup(int(opp.get("roster_id")), plan.current, opp_line, cal)
+
+    # ---- every league matchup, for the P(win) check (record-only)
+    league_matchups = _league_matchups(matchups, rosters, slots, make, cal,
+                                       mine_id=my_roster_id if matchup is not None else None,
+                                       mine_view=matchup)
 
     # ---- waivers
     ids = available_ids(sleeper_players, rosters,
@@ -744,7 +765,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                                    if advanced is not None and advanced.active
                                    else BASELINE_LABEL + (f" ({advanced.status})"
                                                           if advanced is not None else "")),
-                     contenders=contenders_block(advanced, shadow, (*roster, *pool)))
+                     contenders=contenders_block(advanced, shadow, (*roster, *pool)),
+                     pwin_calibration=cal, league_matchups=tuple(league_matchups))
 
     # What changed since the previous frozen page. Read-only: the diff never
     # feeds a projection, so yesterday's numbers cannot enter today's evidence.
@@ -775,8 +797,75 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
     return dash
 
 
+def _actual_key(p: Player) -> str:
+    """The grader's key for this player's actual points (`grade_week.actual_key`):
+    the gsis id, or `DEF:<team>` for a team defense; "" when unresolved."""
+    if is_dst_id(p.sleeper_id) or p.position in ("DEF", "DST"):
+        team = nflverse_team(p.team or p.sleeper_id)
+        return f"DEF:{team}" if team else ""
+    return str(p.gsis_id or "")
+
+
+def _league_matchups(matchups: Sequence[Mapping[str, object]],
+                     rosters: Sequence[Mapping[str, object]], slots: Sequence[str],
+                     make, cal: Calibration, *, mine_id: int | None,
+                     mine_view: "MatchupView | None") -> list[dict]:
+    """Every matchup in this week's snapshot, both sides projected exactly as
+    the owner's is, with the raw and calibrated P(win) for the first side.
+
+    The owner's own matchup reuses the view the page already built, so the
+    two can never disagree. A starter the page cannot key to actual points
+    (an unresolved id) is listed with an empty key and the grader skips the
+    matchup rather than scoring a hole as zero."""
+    by_mid: dict[object, list[Mapping[str, object]]] = {}
+    for m in matchups:
+        if m.get("matchup_id") is None or m.get("roster_id") is None:
+            continue
+        by_mid.setdefault(m.get("matchup_id"), []).append(m)
+    out: list[dict] = []
+    for mid, rows in sorted(by_mid.items(), key=lambda kv: str(kv[0])):
+        if len(rows) != 2:
+            continue
+        a, b = sorted(rows, key=lambda r: int(r.get("roster_id")))
+        ids = (int(a.get("roster_id")), int(b.get("roster_id")))
+
+        def line(row) -> tuple[Player | None, ...]:
+            roster = next((r for r in rosters
+                           if str(r.get("roster_id")) == str(row.get("roster_id"))), {})
+            sids = [normalize_id(x) for x in (row.get("starters") or roster.get("starters") or [])]
+            made = {x: make(x, "START") for x in sids if x and x != "0"}
+            ln = tuple(made.get(x) if x and x != "0" else None for x in sids[:len(slots)])
+            return ln + (None,) * (len(slots) - len(ln))
+
+        view = None
+        if mine_view is not None and mine_id is not None and mine_id in ids:
+            # the page's own view is (mine, theirs); flip if mine is side b
+            view = mine_view
+            first_is_mine = ids[0] == mine_id
+        else:
+            first_is_mine = True
+        if view is None:
+            view = _matchup(ids[1], line(a), line(b), cal)
+        sides = ([view.my_starters, view.opp_starters] if first_is_mine
+                 else [view.opp_starters, view.my_starters])
+        means = [view.my_mean, view.opp_mean] if first_is_mine else [view.opp_mean, view.my_mean]
+        sds = [view.my_sd, view.opp_sd] if first_is_mine else [view.opp_sd, view.my_sd]
+        pwin = view.pwin if (view.pwin is None or first_is_mine) else round(1 - view.pwin, 4)
+        raw = view.pwin_raw if (view.pwin_raw is None or first_is_mine) else round(1 - view.pwin_raw, 4)
+        out.append({
+            "matchup_id": mid, "roster_ids": list(ids),
+            "means": [round(x, 3) for x in means], "sds": [round(x, 3) for x in sds],
+            "pwin": pwin, "pwin_raw": raw, "k": cal.k if cal.validated else 1.0,
+            "reason": view.pwin_reason,
+            "starters": [[{"id": p.sleeper_id, "key": _actual_key(p), "position": p.position,
+                           "projected": p.projection.mean if p.projected else None}
+                          for p in side if p is not None] for side in sides]})
+    return out
+
+
 def _matchup(opp_id: int, mine: tuple[Player | None, ...],
-             theirs: tuple[Player | None, ...]) -> MatchupView:
+             theirs: tuple[Player | None, ...],
+             cal: Calibration = RAW_CALIBRATION) -> MatchupView:
     def total(line: Sequence[Player | None]) -> tuple[float, float, list[str]]:
         mean = var = 0.0
         missing: list[str] = []
@@ -793,6 +882,7 @@ def _matchup(opp_id: int, mine: tuple[Player | None, ...],
     my_mean, my_sd, my_missing = total(mine)
     opp_mean, opp_sd, opp_missing = total(theirs)
     blockers = [m for m in my_missing + opp_missing if "(DST)" not in m and "(DEF)" not in m]
+    raw = None
     if blockers:
         pwin, reason, lev = None, ("ABSTAINED — unprojected non-DST starter(s): "
                                    + ", ".join(blockers)), None
@@ -801,8 +891,9 @@ def _matchup(opp_id: int, mine: tuple[Player | None, ...],
         pwin, reason, lev = None, ("ABSTAINED — a lineup has no projected starter at all "
                                    "(empty or unprojected lineup)"), None
     else:
-        pwin = round(matchup_win_prob(my_mean, my_sd, opp_mean, opp_sd), 4)
-        lev = round(leverage_per_point(my_mean, my_sd, opp_mean, opp_sd), 5)
+        raw = round(matchup_win_prob(my_mean, my_sd, opp_mean, opp_sd), 4)
+        pwin = round(cal.win_prob(my_mean, my_sd, opp_mean, opp_sd), 4)
+        lev = round(cal.leverage(my_mean, my_sd, opp_mean, opp_sd), 5)
         # Every projected starter counts, kickers and team defenses included
         # (advanced_v1 projects both with a residual SD). A defense with no
         # projection is the one slot that may be left out without abstaining,
@@ -811,9 +902,14 @@ def _matchup(opp_id: int, mine: tuple[Player | None, ...],
         reason = (("every projected starter counted on both sides" if not left_out else
                    "counted every projected starter; unprojected and left out: "
                    + ", ".join(left_out))
-                  + "; independence assumed between all starters")
+                  + ("; independence assumed between all starters, then the spread "
+                     f"widened x{cal.k:.2f} (tested)" if cal.widens else
+                     "; independence assumed between all starters (tested: no spread "
+                     "correction needed)" if cal.validated
+                     else "; independence assumed between all starters"))
     return MatchupView(opp_id, mine, theirs, my_mean, my_sd, opp_mean, opp_sd, pwin,
-                       reason, lev, tuple(my_missing), tuple(opp_missing))
+                       reason, lev, tuple(my_missing), tuple(opp_missing),
+                       label=cal.label, pwin_raw=raw, calibration=cal)
 
 
 # --------------------------------------------------------------------------
@@ -2078,6 +2174,18 @@ def _report_html(card: "ReportCard | None") -> list[str]:
                        f"{_bar_svg(rate, 'bt', coin=True)}"
                        f"<span class=\"bv\">{rate:.1%}<span class=\"dim\"> \u00b7 {n} pairs</span></span></li>")
         out.append("</ul>")
+    pw = card.pwin
+    if pw:
+        out.append("<h3>Win probability, season to date</h3>"
+                   f"<p>Across <b>{int(pw['n'])}</b> graded league matchups the favourite was "
+                   f"given <b>{pw['fav_stated']:.0%}</b> on average and won "
+                   f"<b>{int(pw['fav_won'])}</b> ({int(pw['fav_won']) / pw['n']:.0%}). Brier "
+                   f"{pw['brier']:.3f} with the tested spread factor, {pw['raw_brier']:.3f} "
+                   f"without (lower is better; 0.250 is a coin flip).</p>"
+                   "<p class=\"small sub\">Every matchup in the league is recorded on the "
+                   "board frozen before the Sunday slate and scored by what its recorded "
+                   "starters actually put up. A season holds about 80; it is a running check "
+                   "of the calibration, never a refit of it (rule #5).</p>")
     rows = []
     for g in card.weeks:
         built = g.built[:16].replace("T", " ") + " UTC" if g.built else "\u2014"
@@ -2948,26 +3056,37 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    f"<div>my lineup<b>{_num(m.my_mean)} ± {_num(m.my_sd)}</b></div>"
                    f"<div>roster #{m.opponent_roster_id}<b>{_num(m.opp_mean)} ± {_num(m.opp_sd)}</b></div>"
                    f"<div>margin<b>{_num(m.margin, 1, True)}</b></div></div>")
-        out.append("<details><summary>uncalibrated win probability (not used to rank any "
-                   "action above)</summary>")
+        cal = m.calibration
+        out.append(f"<details><summary>{cal.badge.lower()} "
+                   "win probability (not used to rank any action above)</summary>")
         pw = ("<span class=\"bad\">abstained</span>" if m.pwin is None
               else f"<b>{m.pwin:.0%}</b>")
+        badge = f"<span class=\"badge {'go' if cal.validated else 'warn'}\">{cal.badge}</span>"
+        raw = ("" if not cal.widens or m.pwin_raw is None
+               else f"<div>before calibration<b>{m.pwin_raw:.0%}</b></div>")
         out.append("<div class=\"kpi\">"
-                   f"<div>P(win) <span class=\"badge warn\">UNCALIBRATED</span>{pw}</div>"
+                   f"<div>P(win) {badge}{pw}</div>{raw}"
                    f"<div>leverage<b>{'—' if m.leverage is None else f'{m.leverage*100:.2f} pp/pt'}</b></div>"
                    "</div>")
         out.append(f"<p class=\"small sub\">{_e(m.pwin_reason)}. {_e(m.label)}.</p>")
-        out.append("<p class=\"small warn\">Rule #7 denominates decisions in ΔP(win), and "
-                   "this page deliberately does not yet: the number below has never been "
-                   "checked against a resolved matchup, so ranking start/sit calls by it "
-                   "would dress an unvalidated projection in a second unvalidated layer. "
-                   "The actions above are ranked by deadline and by projected points.</p>")
+        if cal.validated:
+            out.append("<p class=\"small warn\">Rule #7 denominates decisions in ΔP(win). "
+                       "This number is now tested against past matchups, but the actions "
+                       "above are still ranked by deadline and by projected points; ranking "
+                       "them by ΔP(win) is a separate change. Every matchup in the league is "
+                       "recorded each week and graded once it is final.</p>")
+        else:
+            out.append("<p class=\"small warn\">Rule #7 denominates decisions in ΔP(win), and "
+                       "this page deliberately does not yet: the number below has never been "
+                       "checked against a resolved matchup, so ranking start/sit calls by it "
+                       "would dress an unvalidated projection in a second unvalidated layer. "
+                       "The actions above are ranked by deadline and by projected points.</p>")
         if d.plan.alternatives and m.leverage is not None:
             rows = [[_e(a.bench.name), _e(a.slot), _num(a.delta_points, 2, True),
                      f"{(_dpwin(m, a.delta_points) or 0.0)*100:+.2f} pp"]
                     for a in d.plan.alternatives[:10]]
-            out.append(_table(["bench player", "into", "Δ pts", "ΔP(win) (uncalibrated)"],
-                              rows, numeric=(2, 3)))
+            out.append(_table(["bench player", "into", "Δ pts",
+                               f"ΔP(win) ({cal.short})"], rows, numeric=(2, 3)))
         out.append("</details>")
         if m.my_unprojected or m.opp_unprojected:
             out.append("<p class=\"small warn\">Unprojected starters — mine: "
@@ -2995,9 +3114,12 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                                 [[_e(k), str(v.n), _num(v.mae, 2), _num(v.rmse, 2), _num(v.bias, 2, True)]
                                  for k, v in sorted(ev.by_position.items())], numeric=(1, 2, 3, 4))
                        + "</details>")
+    pc = d.pwin_calibration
     out.append("<p class=\"small sub\">P(win) calibration: "
-               f"<b class=\"warn\">{'validated' if ev.pwin_calibrated else 'NOT validated'}</b> — "
-               "every P(win) on this page is an uncalibrated closed-form number.</p>")
+               + (f"<b class=\"ok\">{pc.badge}</b> — {_e(pc.label.split(' — ', 1)[-1])}.</p>"
+                  if pc.validated else
+                  "<b class=\"warn\">NOT validated</b> — every P(win) on this page is an "
+                  f"uncalibrated closed-form number ({_e(pc.reason)}).</p>"))
     for n in ev.notes:
         out.append(f"<p class=\"small sub\">{_e(n)}</p>")
     out.append("</div>")

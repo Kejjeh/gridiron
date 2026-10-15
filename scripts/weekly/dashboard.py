@@ -11,7 +11,9 @@ any number, and ABSTAINS — per row, per section — wherever the inputs
 cannot support a number.
 
 The projections are the rule #5 BASELINE and are labelled so on the page.
-P(win) is the closed form from gridiron.winprob, labelled UNCALIBRATED.
+P(win) is the closed form from gridiron.winprob under its tested calibration:
+CALIBRATED (a tested factor applied), TESTED (tested, no factor needed), or
+UNCALIBRATED when nothing tested is on file.
 """
 from __future__ import annotations
 
@@ -290,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
     if m is None:
         print(f"matchup: {dash.matchup_reason}")
     else:
-        pw = "abstained" if m.pwin is None else f"{m.pwin:.0%} (UNCALIBRATED)"
+        pw = "abstained" if m.pwin is None else f"{m.pwin:.0%} ({m.calibration.short})"
         print(f"matchup vs roster #{m.opponent_roster_id}: {m.my_mean:.1f}±{m.my_sd:.1f} "
               f"vs {m.opp_mean:.1f}±{m.opp_sd:.1f}; P(win) {pw}")
     print(f"start/sit: {dash.plan.abstained or f'current {dash.plan.current_points:.1f}, best legal {dash.plan.best_points:.1f}, {len(dash.plan.alternatives)} alternative(s)'}")
