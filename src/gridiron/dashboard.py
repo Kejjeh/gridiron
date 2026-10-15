@@ -41,7 +41,7 @@ import html
 import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from math import sqrt
 from pathlib import Path
 
@@ -67,7 +67,9 @@ from gridiron.projection import (
 )
 from gridiron.radar import RadarChanges, diff_radar, move_deadline, radar_record
 from gridiron.scoring import ScoringCoverage
-from gridiron.models.advanced import NAME as ADVANCED_NAME, AdvancedContext
+from gridiron.models.advanced import (FEED_MIN_PER_POSITION, NAME as ADVANCED_NAME,
+                                      POSITIONS as SKILL_POSITIONS, STACK_NAME,
+                                      STACK_SHADOW_MAX_AGE_HOURS, AdvancedContext)
 from gridiron.shadow import shadow_block
 from gridiron.grading import SYSTEM_LABELS, ReportCard
 from gridiron.trends import (FALLING, MIXED, RISING, STEADY, TOO_FEW,
@@ -192,6 +194,7 @@ class Dashboard:
                     "projected": p.projection.mean, "sd": p.projection.sd,
                     "withheld": p.projection.is_withheld,
                     "model_mean": p.projection.model_mean,
+                    "system": p.projection.inputs.get("system"),
                     "reasons": list(p.projection.reasons), "locked": p.locked,
                     "lock_known": p.lock_known, "lock_note": p.lock_note,
                     "availability": p.availability, "flags": list(p.flags),
@@ -310,16 +313,105 @@ def _covers(frame: pd.DataFrame | None, week: int, sources: Sequence[SourceFresh
 
 ADVANCED_LABEL = ("ADVANCED v1 (baseline + advanced stats) — beat the baseline out "
                   "of sample, rule #5; P(win) still uncalibrated")
+STACK_LABEL = ("STACK v1 (advanced_v1 + Sleeper's pre-kickoff projection, mean scale) — "
+               "ahead of advanced alone on start/sit AND error in every held-out season "
+               "2019-2025, rule #5; P(win) still uncalibrated")
+#: Marker on a projection abstained because a fresh Sleeper feed omits him.
+FEED_ABSENT = "missing from Sleeper's pre-kickoff projections"
+
+
+def _feed_usable(shadow: Mapping[str, object] | None, kickoff: datetime | None,
+                 now: datetime) -> bool:
+    if not shadow or kickoff is None:
+        return False
+    fetched = shadow.get("fetched_at_dt")
+    return (isinstance(fetched, datetime) and fetched < kickoff
+            and (now - fetched) <= timedelta(hours=STACK_SHADOW_MAX_AGE_HOURS))
+
+
+def feed_absence(shadow: Mapping[str, object] | None, sid: str, position: str,
+                 kickoff: datetime | None, now: datetime) -> str | None:
+    """Why the page abstains on a skill player, or None.
+
+    Only when Sleeper's projections are usable for him (fetched before his
+    kickoff, within `STACK_SHADOW_MAX_AGE_HOURS`), list at least
+    `FEED_MIN_PER_POSITION` players at his position (a thin feed is a failed
+    fetch, not news), and do not list him. Absence from a COMPLETE feed is
+    nearly always "will not play" (`gridiron.models.advanced
+    .FEED_MIN_PER_POSITION`); the page still does not turn it into a 0."""
+    if position not in SKILL_POSITIONS or not _feed_usable(shadow, kickoff, now):
+        return None
+    players = shadow.get("players") or {}
+    if normalize_id(sid) in players:
+        return None
+    at_pos = sum(1 for v in players.values()
+                 if isinstance(v, Mapping) and str(v.get("position") or "") == position)
+    if at_pos < FEED_MIN_PER_POSITION:
+        return None
+    fetched = shadow["fetched_at_dt"]
+    age = (now - fetched).total_seconds() / 3600.0
+    return (f"{FEED_ABSENT} (fetched {age:.1f} h ago, {at_pos} {position}s listed): "
+            f"nearly every player missing from that feed does not play (2026 weeks 4-5: "
+            f"23 of 24; of 18,284 player-weeks that were played in 2019-2025, 23 were "
+            f"missing), so no number is given; verify his status in Sleeper")
+
+
+def shadow_number(shadow: Mapping[str, object] | None, sid: str, kickoff: datetime | None,
+                  now: datetime) -> float | None:
+    """Sleeper's pre-kickoff number for `sid`, or None when there is nothing
+    the page may stack on: no shadow, a shadow fetched longer ago than
+    `STACK_SHADOW_MAX_AGE_HOURS`, a player it does not cover, a kickoff it
+    cannot time, or a number fetched after that kickoff. The same
+    pre-kickoff rule the grader applies (`gridiron.shadow.shadow_block`)."""
+    if not _feed_usable(shadow, kickoff, now):
+        return None
+    hit = (shadow.get("players") or {}).get(normalize_id(sid))
+    if not isinstance(hit, Mapping) or hit.get("points") is None:
+        return None
+    try:
+        return float(hit["points"])
+    except (TypeError, ValueError):
+        return None
+
+
+def stack_serving_note(roster_and_pool: Sequence["Player"], shadow: Mapping[str, object] | None,
+                       now: datetime) -> str:
+    """One clause for the model status: how many advanced-projected skill
+    players got the stack, and why the rest did not."""
+    adv = [p for p in roster_and_pool
+           if p.projection.usable and p.position in SKILL_POSITIONS
+           and p.projection.inputs.get("advanced")]
+    served = sum(1 for p in adv if p.projection.inputs.get("system") == STACK_NAME)
+    if not adv:
+        return ""
+    fetched = (shadow or {}).get("fetched_at_dt") if shadow else None
+    if not isinstance(fetched, datetime):
+        why = "no shadow projections in the cache"
+    else:
+        age = (now - fetched).total_seconds() / 3600.0
+        why = (f"Sleeper's numbers fetched {age:.0f} h ago, over the "
+               f"{STACK_SHADOW_MAX_AGE_HOURS:g} h limit" if age > STACK_SHADOW_MAX_AGE_HOURS
+               else f"Sleeper's numbers fetched {age:.1f} h ago; the rest had no pre-kickoff "
+                    f"number or an untimed kickoff")
+    absent = sum(1 for p in roster_and_pool if not p.projection.usable
+                 and any(FEED_ABSENT in r for r in p.projection.reasons))
+    return (f"; {STACK_NAME} served for {served} of {len(adv)} advanced-projected skill "
+            f"players ({why})"
+            + (f"; {absent} skill player(s) not projected: {FEED_ABSENT}" if absent else ""))
 
 
 def contenders_block(advanced: AdvancedContext | None,
                      shadow: Mapping[str, object] | None,
                      players: Sequence[Player]) -> dict | None:
     """The numbers other systems give the same players, for the weekly
-    shoot-out only: `baseline_v1` (the model before advanced stats) and
-    `stack` (advanced + Sleeper's pre-kickoff projection). Nothing reads
-    these to project, rank, gate or recommend."""
+    shoot-out only: `baseline_v1` (the model before advanced stats),
+    `adv_v1` (advanced_v1 alone, the number the page served before the stack
+    did and still serves where Sleeper's number is missing) and `stack`
+    (advanced + Sleeper's pre-kickoff projection). Nothing reads these to
+    project, rank, gate or recommend; the page's own number comes from
+    `refine`."""
     base: dict[str, float] = {}
+    adv_only: dict[str, float] = {}
     stack: dict[str, float] = {}
     sleeper = (shadow or {}).get("players") or {}
     for p in players:
@@ -337,6 +429,8 @@ def contenders_block(advanced: AdvancedContext | None,
             continue
         b = proj.inputs.get("baseline_mean", proj.mean)
         base[p.sleeper_id] = round(float(b), 3)
+        if proj.inputs.get("adv_mean") is not None and p.position in SKILL_POSITIONS:
+            adv_only[p.sleeper_id] = round(float(proj.inputs["adv_mean"]), 3)
         if advanced is not None and hit and p.gsis_id:
             st = advanced.stacked(p.gsis_id, p.position, float(b),
                                   proj.inputs.get("ppg_to_date"), hit.get("points"))
@@ -344,8 +438,11 @@ def contenders_block(advanced: AdvancedContext | None,
             stack[p.sleeper_id] = st
     if not base:
         return None
-    return {"baseline_v1": base, "stack": stack,
-            "note": "grading only: never used by any projection, gate or action"}
+    out = {"baseline_v1": base, "stack": stack,
+           "note": "grading only: never used by any projection, gate or action"}
+    if adv_only:
+        out["adv_v1"] = adv_only
+    return out
 
 
 def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
@@ -378,21 +475,32 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         players_source.reason if players_source is not None
         else "the player dump's freshness was never assessed")
 
-    def refine(proj: Projection, gid: str, pos: str) -> Projection:
+    def refine(proj: Projection, sid: str, gid: str, pos: str,
+               kickoff: datetime | None) -> Projection:
         """The advanced model's mean in place of the baseline's, before any
-        withholding; the baseline's own number stays in `inputs`."""
+        withholding; the baseline's own number stays in `inputs`. For a skill
+        player whose pre-kickoff Sleeper number is in (`shadow_number`), the
+        page serves the stack of the two on the mean scale (`STACK_NAME`,
+        `AdvancedContext.stacked_mean`), keeping the advanced mean in
+        `inputs['adv_mean']` for the shoot-out."""
         if advanced is None or not proj.usable or not gid:
             return proj
         pe = evidence.players.get(gid)
         ppg = (pe.points / pe.games) if pe is not None and pe.games else None
-        hit = advanced.refine(gid, pos, float(proj.mean), ppg)
+        baseline = float(proj.mean)
+        hit = advanced.refine(gid, pos, baseline, ppg)
         if hit is None:
             return proj
-        return dataclass_replace(
-            proj, mean=hit[0],
-            inputs={**proj.inputs, "baseline_mean": float(proj.mean),
-                    "advanced": ADVANCED_NAME, "ppg_to_date": ppg},
-            label=ADVANCED_LABEL)
+        inputs = {**proj.inputs, "baseline_mean": baseline, "advanced": ADVANCED_NAME,
+                  "ppg_to_date": ppg, "adv_mean": hit[0], "system": ADVANCED_NAME}
+        outside = shadow_number(shadow, sid, kickoff, now) if pos in SKILL_POSITIONS else None
+        if outside is not None:
+            st = advanced.stacked_mean(gid, pos, baseline, ppg, outside)
+            if st is not None:
+                return dataclass_replace(
+                    proj, mean=st, label=STACK_LABEL,
+                    inputs={**inputs, "sleeper_mean": outside, "system": STACK_NAME})
+        return dataclass_replace(proj, mean=hit[0], inputs=inputs, label=ADVANCED_LABEL)
 
     def defense(team: str) -> Projection | None:
         """A team defense's projection from the advanced model, or None
@@ -425,7 +533,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                            week=week, implied_total=implied, evidence=evidence)
         if not gid and not dst:
             proj = abstain("sleeper id unresolved against the crosswalk (never name-matched)")
-        proj = refine(proj, gid, pos)
+        lk = lock_state(team, kickoffs, now)
+        proj = refine(proj, sid, gid, pos, lk.kickoff)
         if dst:
             proj = defense(team) or proj
         note = availability(gid, rec, inj, report_week=week,
@@ -449,7 +558,10 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                 flags.append("no injury report loaded for this week — status UNRESOLVED")
             if game is NO_SCHEDULE:
                 flags.append("no schedule: opponent and line unknown")
-        lk = lock_state(team, kickoffs, now)
+            if proj.usable and not proj.is_withheld:
+                absent = feed_absence(shadow, sid, pos, lk.kickoff, now)
+                if absent:
+                    proj = abstain(absent, *proj.reasons)
         if not lk.known:
             flags.append("lock state UNKNOWN — no lineup move involving him can be "
                          "shown legal: " + lk.note)
@@ -521,7 +633,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         if not scoring.scorable(pos) and pos in ("QB", "K"):
             return abstain(f"scoring inputs incomplete for {pos}")
         p = refine(project(evidence.players.get(gid), position=pos, week=week,
-                           implied_total=game.implied_total, evidence=evidence), gid, pos)
+                           implied_total=game.implied_total, evidence=evidence),
+                   sid, gid, pos, lock_state(team, kickoffs, now).kickoff)
         if p.usable and game is BYE:
             p = p.withheld("BYE week: projected 0")
         rec = sleeper_players.get(sid) or {}
@@ -529,6 +642,10 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         if p.usable and desig in WITHHOLD_DESIGNATIONS:
             p = p.withheld(f"designated {rec.get('injury_status')}: projected 0"
                            + ("" if designation_fresh else " (STALE player pull)"))
+        if p.usable and not p.is_withheld:
+            absent = feed_absence(shadow, sid, pos, lock_state(team, kickoffs, now).kickoff, now)
+            if absent:
+                p = abstain(absent, *p.reasons)
         return p
 
     pool = pool_players(ids, sleeper_players, crosswalk, projector,
@@ -622,7 +739,9 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                                        through_week=context.stats_through),
                      shadow=shadow_block(shadow, [(p.sleeper_id, p.kickoff)
                                                   for p in (*roster, *pool)]),
-                     model_status=(advanced.status if advanced is not None and advanced.active
+                     model_status=((advanced.status
+                                    + stack_serving_note((*roster, *pool), shadow, now))
+                                   if advanced is not None and advanced.active
                                    else BASELINE_LABEL + (f" ({advanced.status})"
                                                           if advanced is not None else "")),
                      contenders=contenders_block(advanced, shadow, (*roster, *pool)))

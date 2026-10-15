@@ -49,8 +49,8 @@ GRADES = "grades"
 
 #: The systems the weekly shoot-out compares, as the page names them.
 SYSTEM_LABELS: dict[str, str] = {
-    "page": "This page", "baseline_v1": "Old baseline", "sleeper": "Sleeper",
-    "blend": "Page + Sleeper blend", "stack": "Stack",
+    "page": "This page", "baseline_v1": "Old baseline", "adv_v1": "Advanced alone",
+    "sleeper": "Sleeper", "blend": "Page + Sleeper blend", "stack": "Stack",
 }
 
 #: Evening games run past midnight UTC; shifting back six hours files every

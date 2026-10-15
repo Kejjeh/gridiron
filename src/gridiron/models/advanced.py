@@ -46,6 +46,27 @@ from gridiron.weekly import schedule_index
 POSITIONS = ("QB", "RB", "WR", "TE")
 WEIGHTS_PATH = Path(__file__).with_name("advanced_weights.json")
 NAME = "advanced_v1"
+#: What the page serves for a skill player whose pre-kickoff Sleeper number
+#: is in: the stack (ours + Sleeper, `stack_form`) on the mean scale
+#: (`AdvancedContext.stacked_mean`). Season-fold CV 2019-2025 puts it ahead
+#: of `advanced_v1` alone on start/sit AND error in every held-out season
+#: (docs/research/STACK_SERVING.md). Without that
+#: number the page keeps `advanced_v1`; kickers and defenses stay on it too
+#: (their stack added nothing: `k_def_evidence`).
+STACK_NAME = "stack_v1"
+#: Sleeper revises its number through the week as news lands. A shadow fetched
+#: longer ago than this is not a current outside opinion, so the page keeps
+#: `advanced_v1` for everyone and says so, rather than stacking stale news.
+STACK_SHADOW_MAX_AGE_HOURS = 36.0
+#: A fresh Sleeper feed that does not list a skill player is the strongest
+#: timely availability signal the page has: in 2026 weeks 4-5, 23 of 24 such
+#: players projected at 5+ did not play, and in 2019-2025 only 23 of 18,284
+#: player-weeks that DID play were missing from the feed (none since 2021).
+#: The page abstains on them rather than invent a number either way (rule
+#: #11): never 0, never the model's 9. A feed thinner than this many players
+#: at a position is treated as incomplete, and nobody at that position is
+#: judged by it.
+FEED_MIN_PER_POSITION = 20
 
 #: ff_opportunity expected-stat column -> nflverse column fantasy_points reads.
 XFP_MAP = {
@@ -790,6 +811,34 @@ class AdvancedContext:
         return None if mean is None else round(mean, 3)
 
 
+    def stacked_mean(self, gsis_id: str, position: str, baseline: float,
+                     ppg_to_date: float | None, sleeper: float | None) -> float | None:
+        """The stack on the MEAN scale: what the page serves.
+
+        The shipped stack has the per-position median line folded into its
+        coefficients (`stack_form.calibration`), which is right for its error
+        metric and wrong for a page that sums projections into lineups and
+        P(win) and compares them with advanced_v1 means. The line is linear,
+        so the mean-scale number is the composed ridge's raw output pushed
+        back through it: (raw - a) / b, then floored at 0. Same start/sit
+        ordering within a position; season-fold CV 2019-2025 ahead of
+        advanced_v1 alone on start/sit AND error in every held-out season
+        (docs/research/STACK_SERVING.md)."""
+        if not self.active or sleeper is None or position not in POSITIONS \
+                or position not in self.model.stack:
+            return None
+        line = ((self.model.meta.get("stack_form") or {}).get("calibration") or {}).get(position)
+        if not line or float(line[1]) <= 0:
+            return None
+        row = self.features.get(normalize_id(gsis_id))
+        if row is None or row.get("_kind") == "K":
+            return None
+        full = {**row, "baseline": baseline, "sleeper": sleeper,
+                "ppg_to_date": baseline if ppg_to_date is None else ppg_to_date}
+        full["adv"] = self.model.predict(position, full)
+        raw = self.model.stack[position].predict_row(full)
+        return round(max(0.0, (raw - float(line[0])) / float(line[1])), 3)
+
     def defense_projection(self, team: str) -> tuple[float, float] | None:
         """(mean, sd) for a team defense this week, or None."""
         if self.model is None or "DEF" not in self.model.adv:
@@ -869,9 +918,15 @@ def build_context(*, weeks: pd.DataFrame | None, inputs: Mapping | None,
                    for r in df.to_dict("records")}
     as_of = str((inputs.get("meta") or {}).get("fetched_at") or "")
     ev = model.meta.get("evidence") or {}
-    status = (f"{NAME}: baseline refined by advanced stats (out of sample "
-              f"{ev.get('test')}: start/sit {float(ev.get('adv_pairwise', 0)):.1%} vs "
-              f"baseline {float(ev.get('baseline_pairwise', 0)):.1%}); inputs as of {as_of}")
+    when = (f"season-fold CV {ev['seasons'][0]}-{ev['seasons'][-1]}"
+            if ev.get("seasons") else f"out of sample {ev.get('test')}")
+    status = (f"{NAME}: baseline refined by advanced stats ({when}: start/sit "
+              f"{float(ev.get('adv_pairwise', 0)):.1%} vs baseline "
+              f"{float(ev.get('baseline_pairwise', 0)):.1%}")
+    if ev.get("stack_pairwise") is not None:
+        status += (f"; {STACK_NAME} where Sleeper's pre-kickoff number is in: "
+                   f"{float(ev['stack_pairwise']):.1%}, Sleeper {float(ev.get('sleeper_pairwise', 0)):.1%}")
+    status += f"); inputs as of {as_of}"
     return AdvancedContext(model, rows, week, status, as_of, defense)
 
 

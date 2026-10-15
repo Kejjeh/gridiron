@@ -14,19 +14,33 @@
   "fit_rows": 31908,
   "min_week": 4,
   "evidence": {
-   "train": [
+   "kind": "season_fold_cv",
+   "seasons": [
+    2019,
+    2020,
+    2021,
+    2022,
     2023,
-    2024
+    2024,
+    2025
    ],
-   "test": 2025,
-   "pairs": 60813,
-   "baseline_pairwise": 0.6313,
-   "adv_pairwise": 0.6401,
-   "baseline_mae": 4.015,
-   "adv_mae": 3.941,
-   "sleeper_pairwise": 0.6542,
-   "stack_pairwise": 0.6543,
-   "doc": "docs/research/ADVANCED_STATS_BACKTEST_2025.md"
+   "pairs": 421457,
+   "universe": "week >= 4, Sleeper >= 5, skill positions",
+   "baseline_pairwise": 0.6252,
+   "adv_pairwise": 0.6345,
+   "stack_pairwise": 0.6468,
+   "sleeper_pairwise": 0.6461,
+   "baseline_mae": 4.1992,
+   "adv_mae": 4.0982,
+   "stack_mae": 3.8625,
+   "sleeper_mae": 3.9708,
+   "adv_beats_baseline_every_fold": true,
+   "stack_beats_adv_every_fold": true,
+   "doc": "docs/research/STACK_SERVING.md",
+   "script": "scripts/research/stack_vs_page.py",
+   "stack_mean_pairwise": 0.6468,
+   "stack_mean_mae": 3.9765,
+   "stack_mean_beats_adv_every_fold": true
   },
   "written": "2026-10-01T00:59:32+00:00",
   "resid_sd": {
@@ -1493,6 +1507,468 @@
    },
    "seasons_win": true,
    "doc": "docs/research/FEATURE_EXPANSION.md"
+  },
+  "evidence_holdout_2025_plus_depth": {
+   "train": [
+    2023,
+    2024
+   ],
+   "test": 2025,
+   "pairs": 60813,
+   "baseline_pairwise": 0.6313,
+   "adv_pairwise": 0.6401,
+   "baseline_mae": 4.015,
+   "adv_mae": 3.941,
+   "sleeper_pairwise": 0.6542,
+   "stack_pairwise": 0.6543,
+   "doc": "docs/research/ADVANCED_STATS_BACKTEST_2025.md",
+   "note": "the first weights (feature set +depth, train 2023-2024, test 2025); kept for history, superseded by `evidence`"
+  },
+  "serving_evidence": {
+   "serves": "stack_v1 on the MEAN scale (the composed stack pushed back through its per-position median line) for QB/RB/WR/TE with a pre-kickoff Sleeper number fetched within STACK_SHADOW_MAX_AGE_HOURS; advanced_v1 otherwise and for K/DEF; ABSTAIN for a skill player a complete fresh feed omits",
+   "bars": {
+    "stack_vs_adv": {
+     "pairwise_folds": 7,
+     "mae_folds": 7,
+     "both_every_fold": true,
+     "pairwise_delta_min": 0.00751,
+     "pairwise_delta_mean": 0.0123,
+     "mae_delta_mean": -0.2357
+    },
+    "stack_mean_vs_adv": {
+     "pairwise_folds": 7,
+     "mae_folds": 7,
+     "both_every_fold": true,
+     "pairwise_delta_min": 0.00751,
+     "pairwise_delta_mean": 0.0123,
+     "mae_delta_mean": -0.1217
+    },
+    "stack_mean_vs_sleeper": {
+     "pairwise_folds": 6,
+     "mae_folds": 2,
+     "both_every_fold": false,
+     "pairwise_delta_min": -0.00176,
+     "pairwise_delta_mean": 0.0007,
+     "mae_delta_mean": 0.0057
+    },
+    "stack_vs_baseline": {
+     "pairwise_folds": 7,
+     "mae_folds": 7,
+     "both_every_fold": true,
+     "pairwise_delta_min": 0.01831,
+     "pairwise_delta_mean": 0.0216,
+     "mae_delta_mean": -0.3367
+    },
+    "stack_vs_sleeper": {
+     "pairwise_folds": 6,
+     "mae_folds": 7,
+     "both_every_fold": false,
+     "pairwise_delta_min": -0.00176,
+     "pairwise_delta_mean": 0.0007,
+     "mae_delta_mean": -0.1083
+    },
+    "adv_vs_baseline": {
+     "pairwise_folds": 7,
+     "mae_folds": 7,
+     "both_every_fold": true,
+     "pairwise_delta_min": 0.00528,
+     "pairwise_delta_mean": 0.0093,
+     "mae_delta_mean": -0.101
+    },
+    "blend_b_vs_adv": {
+     "pairwise_folds": 7,
+     "mae_folds": 7,
+     "both_every_fold": true,
+     "pairwise_delta_min": 0.00256,
+     "pairwise_delta_mean": 0.0063,
+     "mae_delta_mean": -0.1213
+    },
+    "stack_vs_blend_b": {
+     "pairwise_folds": 7,
+     "mae_folds": 7,
+     "both_every_fold": true,
+     "pairwise_delta_min": 0.00452,
+     "pairwise_delta_mean": 0.006,
+     "mae_delta_mean": -0.1144
+    }
+   },
+   "folds": {
+    "2019": {
+     "baseline": {
+      "pairwise": 0.61751,
+      "mae": 4.3638
+     },
+     "sleeper": {
+      "pairwise": 0.639515,
+      "mae": 4.3414
+     },
+     "adv": {
+      "pairwise": 0.626708,
+      "mae": 4.2579
+     },
+     "stack": {
+      "pairwise": 0.640107,
+      "mae": 4.1792
+     },
+     "stack_mean": {
+      "pairwise": 0.640107,
+      "mae": 4.2565
+     },
+     "blend_b": {
+      "pairwise": 0.632296,
+      "mae": 4.1911
+     },
+     "pairs": 49034
+    },
+    "2020": {
+     "baseline": {
+      "pairwise": 0.610262,
+      "mae": 4.4382
+     },
+     "sleeper": {
+      "pairwise": 0.639349,
+      "mae": 4.1219
+     },
+     "adv": {
+      "pairwise": 0.619963,
+      "mae": 4.3213
+     },
+     "stack": {
+      "pairwise": 0.637584,
+      "mae": 4.0184
+     },
+     "stack_mean": {
+      "pairwise": 0.637584,
+      "mae": 4.1242
+     },
+     "blend_b": {
+      "pairwise": 0.630433,
+      "mae": 4.1567
+     },
+     "pairs": 66283
+    },
+    "2021": {
+     "baseline": {
+      "pairwise": 0.63497,
+      "mae": 4.311
+     },
+     "sleeper": {
+      "pairwise": 0.653327,
+      "mae": 4.2076
+     },
+     "adv": {
+      "pairwise": 0.645183,
+      "mae": 4.2077
+     },
+     "stack": {
+      "pairwise": 0.65489,
+      "mae": 3.9956
+     },
+     "stack_mean": {
+      "pairwise": 0.65489,
+      "mae": 4.169
+     },
+     "blend_b": {
+      "pairwise": 0.648801,
+      "mae": 4.1259
+     },
+     "pairs": 67167
+    },
+    "2022": {
+     "baseline": {
+      "pairwise": 0.626595,
+      "mae": 4.1011
+     },
+     "sleeper": {
+      "pairwise": 0.64707,
+      "mae": 3.8326
+     },
+     "adv": {
+      "pairwise": 0.635508,
+      "mae": 4.0405
+     },
+     "stack": {
+      "pairwise": 0.647636,
+      "mae": 3.7202
+     },
+     "stack_mean": {
+      "pairwise": 0.647636,
+      "mae": 3.8709
+     },
+     "blend_b": {
+      "pairwise": 0.641822,
+      "mae": 3.8864
+     },
+     "pairs": 60026
+    },
+    "2023": {
+     "baseline": {
+      "pairwise": 0.628675,
+      "mae": 4.037
+     },
+     "sleeper": {
+      "pairwise": 0.645756,
+      "mae": 3.7314
+     },
+     "adv": {
+      "pairwise": 0.63997,
+      "mae": 3.9386
+     },
+     "stack": {
+      "pairwise": 0.647484,
+      "mae": 3.693
+     },
+     "stack_mean": {
+      "pairwise": 0.647484,
+      "mae": 3.7605
+     },
+     "blend_b": {
+      "pairwise": 0.642527,
+      "mae": 3.7967
+     },
+     "pairs": 57898
+    },
+    "2024": {
+     "baseline": {
+      "pairwise": 0.627216,
+      "mae": 4.1277
+     },
+     "sleeper": {
+      "pairwise": 0.643469,
+      "mae": 3.7906
+     },
+     "adv": {
+      "pairwise": 0.632496,
+      "mae": 4.0393
+     },
+     "stack": {
+      "pairwise": 0.645528,
+      "mae": 3.787
+     },
+     "stack_mean": {
+      "pairwise": 0.645528,
+      "mae": 3.8412
+     },
+     "blend_b": {
+      "pairwise": 0.63995,
+      "mae": 3.8847
+     },
+     "pairs": 60236
+    },
+    "2025": {
+     "baseline": {
+      "pairwise": 0.631345,
+      "mae": 4.0155
+     },
+     "sleeper": {
+      "pairwise": 0.654202,
+      "mae": 3.7699
+     },
+     "adv": {
+      "pairwise": 0.641705,
+      "mae": 3.8823
+     },
+     "stack": {
+      "pairwise": 0.654416,
+      "mae": 3.6444
+     },
+     "stack_mean": {
+      "pairwise": 0.654416,
+      "mae": 3.8133
+     },
+     "blend_b": {
+      "pairwise": 0.649894,
+      "mae": 3.7969
+     },
+     "pairs": 60813
+    }
+   },
+   "by_position_stack_minus_adv": {
+    "QB": [
+     0.0215,
+     0.0082,
+     0.0158,
+     0.0043,
+     0.0009,
+     0.0086,
+     0.0079
+    ],
+    "RB": [
+     0.0115,
+     0.0231,
+     0.0206,
+     0.0174,
+     0.0061,
+     0.0187,
+     0.0137
+    ],
+    "WR": [
+     0.0138,
+     0.0148,
+     0.0043,
+     0.0111,
+     0.0083,
+     0.0097,
+     0.0149
+    ],
+    "TE": [
+     0.0012,
+     0.0357,
+     0.0138,
+     0.0132,
+     0.019,
+     0.0331,
+     0.0012
+    ]
+   },
+   "live_2026_weeks_4_5": {
+    "pairs": 777,
+    "page_adv": 0.5817,
+    "baseline_v1": 0.6126,
+    "sleeper": 0.5946,
+    "stack_mix": 0.5946,
+    "note": "two live weeks on the owner's decision set; player-cluster bootstrap P(page <= baseline) 0.84-0.88, not a decision by itself"
+   },
+   "doc": "docs/research/STACK_SERVING.md",
+   "script": "scripts/research/stack_vs_page.py",
+   "written": "2026-10-15",
+   "mae_by_position_adv_to_stack_mean": {
+    "QB": [
+     [
+      6.362,
+      6.4896
+     ],
+     [
+      6.3194,
+      5.9579
+     ],
+     [
+      6.1418,
+      6.005
+     ],
+     [
+      5.5202,
+      5.3612
+     ],
+     [
+      5.8483,
+      5.423
+     ],
+     [
+      6.1601,
+      5.6732
+     ],
+     [
+      6.2439,
+      5.6122
+     ]
+    ],
+    "RB": [
+     [
+      4.3495,
+      4.3177
+     ],
+     [
+      4.365,
+      4.1778
+     ],
+     [
+      4.5214,
+      4.3493
+     ],
+     [
+      4.1898,
+      4.0016
+     ],
+     [
+      4.0712,
+      3.838
+     ],
+     [
+      4.1315,
+      3.8818
+     ],
+     [
+      4.1216,
+      4.1078
+     ]
+    ],
+    "WR": [
+     [
+      4.1512,
+      4.1056
+     ],
+     [
+      4.2749,
+      4.1183
+     ],
+     [
+      4.0412,
+      4.083
+     ],
+     [
+      4.0059,
+      3.8358
+     ],
+     [
+      3.8022,
+      3.7024
+     ],
+     [
+      3.9184,
+      3.7967
+     ],
+     [
+      3.5502,
+      3.561
+     ]
+    ],
+    "TE": [
+     [
+      3.2674,
+      3.328
+     ],
+     [
+      3.2937,
+      3.0886
+     ],
+     [
+      3.1398,
+      3.1531
+     ],
+     [
+      3.1738,
+      3.0239
+     ],
+     [
+      3.0248,
+      2.8849
+     ],
+     [
+      3.0461,
+      2.9126
+     ],
+     [
+      3.0401,
+      3.0336
+     ]
+    ]
+   },
+   "feed_absence": {
+    "live_2026_weeks_4_5": {
+     "missing_projected_5_plus": 24,
+     "did_not_play": 23,
+     "listed_projected_5_plus": 120,
+     "listed_did_not_play": 5
+    },
+    "history_2019_2025": {
+     "played_baseline_5_plus": 18284,
+     "missing_from_feed": 23,
+     "note": "Sleeper's records for past weeks may carry later revisions; none missing since 2021"
+    },
+    "min_per_position": 20,
+    "script": "scripts/research/feed_absence.py"
+   }
   }
  },
  "adv": {
