@@ -657,7 +657,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if league and league.get("pwin_n"):
         print(f"P(win) on {league['pwin_n']} league matchup(s): favourites given "
               f"{league['pwin_fav_stated']:.0%} on average won {league['pwin_fav_won']}; "
-              f"Brier {league['pwin_brier']:.3f} (uncalibrated {league['pwin_raw_brier']:.3f}), "
+              f"Brier {league['pwin_brier']:.3f} (raw formula {league['pwin_raw_brier']:.3f}), "
               f"log loss {league['pwin_logloss']:.3f} ({league['pwin_raw_logloss']:.3f})")
     elif league is None:
         print("P(win): this board recorded no league matchups (boards before 2026-10-15)")

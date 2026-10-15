@@ -4,6 +4,31 @@ Current state and next step only. The running log through the Game Day,
 Radar, Action Desk and publication releases moved to
 `docs/memory/handoff_history.md` on 2026-10-01 (provenance, not current).
 
+## P(win) tested: no correction, labelled TESTED (2026-10-15)
+
+- **Step 1** (`scripts/research/pwin_calibration.py`): one spread factor
+  k fit on synthetic 12-team leagues 2019-2022 and tested on 2023-2025,
+  with the page's own skill mean (advanced_v1 refit leave-one-season-out).
+  k = 1.15 LOST to the raw formula on the held-out seasons on both log
+  loss and Brier (0.66646 vs 0.66601). The best k for the test seasons is
+  1.00. The first run's "k ≈ 1.1 helps" came from the baseline mean, which
+  the page never sums.
+- **Step 2** (`pwin_league_history.py`): this league's 157 graded matchups,
+  2023-2025, with the served mean: k_mle 1.02, and a k fit on the other
+  seasons is worse held out. Favourites were given 62% and won 66% (±4).
+- **Shipped**: `src/gridiron/models/pwin_calibration.json` (k 1.0,
+  `raw_tested`) via `pwin_calibration_save.py`. `winprob.Calibration`
+  reads it, and the page, record and Game Day label P(win) TESTED with the
+  evidence. A factor applies only if `bar_cleared` (label CALIBRATED).
+  Nothing tested on file means UNCALIBRATED. `tests/conftest.py` pins
+  tests to the raw label.
+- **Step 3**: every board records all league matchups (`league_matchups`).
+  `grade_week.py` scores them (ledger `pwin_*` columns), and the report
+  card shows the season to date. Week 6 is the first graded week.
+- Next: watch the live P(win) grade. Re-run steps 1-2 if it drifts over
+  several weeks (`docs/research/PWIN_CALIBRATION.md`, "What would change
+  this").
+
 ## The page serves the stack (2026-10-15)
 
 - **Live grades, weeks 4-5**: the page (advanced_v1) below its own baseline

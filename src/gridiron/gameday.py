@@ -1124,8 +1124,8 @@ def build_gameday(*, season: int, week: int, league_id: str, owner_id: str,
         if m:
             pw = m.get("pwin")
             cal = m.get("calibration") if isinstance(m.get("calibration"), Mapping) else {}
-            tag = (f"calibrated, SD x{float(cal.get('k') or 1):.2f}" if cal.get("validated")
-                   else "UNCALIBRATED")
+            tag = str(cal.get("short") or (f"calibrated, SD x{float(cal.get('k') or 1):.2f}"
+                                            if cal.get("validated") else "UNCALIBRATED"))
             projection = (f"pregame projection: you {_num(m.get('my_mean')) or 0:.1f} vs roster "
                           f"#{m.get('opponent_roster_id')} {_num(m.get('opp_mean')) or 0:.1f}; "
                           f"P(win) {'abstained' if pw is None else f'{float(pw):.0%}'} "

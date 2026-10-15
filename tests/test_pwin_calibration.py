@@ -58,19 +58,59 @@ def test_only_a_file_that_cleared_the_bar_is_used(tmp_path):
     assert not W.load_calibration(broken).validated
 
 
+def _raw_tested_file(tmp_path, **over):
+    lg = {"n": 157, "seasons": [2023, 2025], "fav_stated": 0.62, "fav_won": 0.66}
+    syn = {"n_fit": 1000, "fit_seasons": [2019, 2022], "n_test": 800, "test_seasons": [2023, 2025],
+           "test_logloss": 0.667, "test_logloss_raw": 0.666, "test_brier": 0.237,
+           "test_brier_raw": 0.2367}
+    blob = {"k": 1.0, "k_tested": 1.03, "bar_cleared": False, "raw_tested": True,
+            "synthetic": syn, "league_history": lg}
+    return _cal_file(tmp_path, **(blob | over))
+
+
+def test_a_test_that_found_no_factor_labels_the_raw_formula_tested(tmp_path):
+    c = W.load_calibration(_raw_tested_file(tmp_path))
+    assert c.validated and c.k == 1.0 and not c.widens
+    assert c.badge == "TESTED" and c.short == "tested, no correction"
+    assert c.label.startswith("TESTED") and "no correction" in c.label
+    assert "157 real matchups" in c.label and "given 62%" in c.label and "won 66%" in c.label
+    assert "sampling noise ±4 points" in c.label          # sqrt(.66 * .34 / 157)
+    assert "0.6660 as is vs 0.6670 with the factor" in c.label
+    # the raw closed form, exactly
+    assert c.win_prob(110, 20, 100, 21) == W.matchup_win_prob(110, 20, 100, 21)
+    assert c.record()["badge"] == "TESTED" and c.record()["short"] == "tested, no correction"
+    # "no correction" with a factor other than 1 is a broken file, not a test result
+    odd = W.load_calibration(_raw_tested_file(tmp_path, k=1.1))
+    assert not odd.validated and "k = 1.1" in odd.label
+    # a cleared factor still wins over raw_tested
+    both = W.load_calibration(_cal_file(tmp_path, raw_tested=True))
+    assert both.widens and both.badge == "CALIBRATED"
+    assert W.RAW.badge == "UNCALIBRATED" and not W.RAW.widens
+
+
 def test_the_shipped_calibration_is_evidence_backed_when_present():
     shipped = ROOT / "src/gridiron/models/pwin_calibration.json"
     if not shipped.exists():
         pytest.skip("no calibration shipped")
     c = W.load_calibration(shipped)
     blob = json.loads(shipped.read_text(encoding="utf-8"))
-    assert c.validated == bool(blob.get("bar_cleared"))
-    syn = blob["synthetic"]
+    assert c.validated == bool(blob.get("bar_cleared") or blob.get("raw_tested"))
+    syn, lg = blob["synthetic"], blob.get("league_history") or {}
     if c.validated:
+        assert set(syn["fit_seasons"]).isdisjoint(syn["test_seasons"])
+    if c.widens:
         # rule #5: better than the raw formula out of sample, on both scores
         assert syn["test_brier"] < syn["test_brier_raw"]
         assert syn["test_logloss"] < syn["test_logloss_raw"]
-        assert set(syn["fit_seasons"]).isdisjoint(syn["test_seasons"])
+    elif c.validated:
+        # tested, no factor: the factor did not beat raw on both held-out
+        # scores, and the raw spread held on its own (the saver's rule)
+        assert c.k == 1.0 and not blob["bar_cleared"]
+        assert not (syn["test_brier"] < syn["test_brier_raw"]
+                    and syn["test_logloss"] < syn["test_logloss_raw"])
+        assert 0.9 <= syn["test_margin_z_sd"] <= 1.1 and 0.9 <= lg["margin_z_sd"] <= 1.1
+        pooled = lg["loso_pooled"]
+        assert pooled["logloss_raw"] <= pooled["logloss_k"] and pooled["brier_raw"] <= pooled["brier_k"]
     assert (ROOT / blob["doc"]).is_file()
     for script in blob.get("scripts", []):
         assert (ROOT / script).is_file()
@@ -98,6 +138,9 @@ def test_a_calibrated_matchup_keeps_the_raw_number_and_says_which_it_is(tmp_path
     assert m.label.startswith("CALIBRATED") and "widened x1.20" in m.pwin_reason
     raw = D._matchup(9, mine, theirs)
     assert raw.pwin == raw.pwin_raw and raw.label.startswith("UNCALIBRATED")
+    tested = D._matchup(9, mine, theirs, W.load_calibration(_raw_tested_file(tmp_path)))
+    assert tested.pwin == tested.pwin_raw == raw.pwin and tested.label.startswith("TESTED")
+    assert "no spread correction needed" in tested.pwin_reason and "widened" not in tested.pwin_reason
 
 
 def test_every_league_matchup_is_recorded_with_keys_the_grader_can_score(tmp_path):

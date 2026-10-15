@@ -11,8 +11,9 @@ any number, and ABSTAINS — per row, per section — wherever the inputs
 cannot support a number.
 
 The projections are the rule #5 BASELINE and are labelled so on the page.
-P(win) is the closed form from gridiron.winprob with its tested spread factor
-(CALIBRATED), or UNCALIBRATED when no tested factor is on file.
+P(win) is the closed form from gridiron.winprob under its tested calibration:
+CALIBRATED (a tested factor applied), TESTED (tested, no factor needed), or
+UNCALIBRATED when nothing tested is on file.
 """
 from __future__ import annotations
 

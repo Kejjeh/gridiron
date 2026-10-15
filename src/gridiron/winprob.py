@@ -41,7 +41,8 @@ from pathlib import Path
 
 #: The tested spread factor (scripts/research/pwin_calibration.py,
 #: docs/research/PWIN_CALIBRATION.md). Absent or not validated, the page
-#: shows the raw closed form and says it is UNCALIBRATED.
+#: shows the raw closed form and says it is UNCALIBRATED; tested and found
+#: not to need a factor, it shows the raw closed form labelled TESTED.
 CALIBRATION_PATH = Path(__file__).with_name("models") / "pwin_calibration.json"
 #: A factor outside this range is not a calibration, it is a broken file.
 K_RANGE = (0.8, 2.0)
@@ -117,7 +118,8 @@ class Calibration:
     the game, scores are skewed), so `k` > 1 pulls every probability toward
     50%. It is fit on earlier seasons and kept only if it beats k = 1 on
     later ones (rule #5); `validated` False means the page shows the raw
-    closed form and labels it UNCALIBRATED.
+    closed form and labels it UNCALIBRATED. Validated with k = 1 means the
+    test's answer was "no correction": the raw closed form, labelled TESTED.
     """
 
     k: float = 1.0
@@ -132,6 +134,15 @@ class Calibration:
         return leverage_per_point(mu_a, self.k * sigma_a, mu_b, self.k * sigma_b)
 
     @property
+    def widens(self) -> bool:
+        """A tested factor other than 1 is applied to the spread."""
+        return self.validated and abs(self.k - 1.0) > 1e-9
+
+    @property
+    def badge(self) -> str:
+        return "CALIBRATED" if self.widens else ("TESTED" if self.validated else "UNCALIBRATED")
+
+    @property
     def label(self) -> str:
         if not self.validated:
             return ("UNCALIBRATED — closed-form Φ(margin/SD) on independent, "
@@ -139,6 +150,8 @@ class Calibration:
         ev = self.evidence
         syn = ev.get("synthetic") or {}
         lg = ev.get("league_history") or {}
+        if not self.widens:
+            return _tested_label(syn, lg)
         parts = [f"CALIBRATED — Φ(margin / ({self.k:.2f} × SD)): the independent-player "
                  f"spread widened {round((self.k - 1) * 100):d}%"]
         if syn:
@@ -155,10 +168,13 @@ class Calibration:
 
     @property
     def short(self) -> str:
-        return f"calibrated, SD x{self.k:.2f}" if self.validated else "UNCALIBRATED"
+        if self.widens:
+            return f"calibrated, SD x{self.k:.2f}"
+        return "tested, no correction" if self.validated else "UNCALIBRATED"
 
     def record(self) -> dict:
-        return {"k": self.k, "validated": self.validated, "label": self.label,
+        return {"k": self.k, "validated": self.validated, "badge": self.badge,
+                "short": self.short, "label": self.label,
                 "evidence_doc": (self.evidence or {}).get("doc")}
 
 
@@ -180,12 +196,48 @@ def _f3(x) -> str:
         return "?"
 
 
+def _f4(x) -> str:
+    try:
+        return f"{float(x):.4f}"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _pct(x) -> str:
+    try:
+        return f"{float(x):.0%}"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _tested_label(syn: Mapping, lg: Mapping) -> str:
+    parts = ["TESTED — Φ(margin/SD) as computed, no correction applied"]
+    if syn:
+        parts.append(f"a spread factor fit on {syn.get('n_fit', '?')} synthetic matchups "
+                     f"{_span(syn.get('fit_seasons'))} did not beat it on "
+                     f"{syn.get('n_test', '?')} held-out from {_span(syn.get('test_seasons'))} "
+                     f"(log loss {_f4(syn.get('test_logloss_raw'))} as is vs "
+                     f"{_f4(syn.get('test_logloss'))} with the factor)")
+    if lg.get("n"):
+        try:
+            se = math.sqrt(float(lg["fav_won"]) * (1 - float(lg["fav_won"])) / int(lg["n"]))
+            noise = f" (sampling noise ±{se * 100:.0f} points)"
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            noise = ""
+        parts.append(f"on this league's {lg['n']} real matchups {_span(lg.get('seasons'))} "
+                     f"the favourite was given {_pct(lg.get('fav_stated'))} on average and "
+                     f"won {_pct(lg.get('fav_won'))}{noise}")
+    return "; ".join(parts)
+
+
 def load_calibration(path: Path | None = None) -> Calibration:
     """The tested calibration, or `RAW` with the reason it is not used.
 
-    Validated only when the file says the out-of-sample bar was cleared
+    Validated when the file says the out-of-sample bar was cleared
     (`bar_cleared`: better log loss AND Brier than k = 1 on held-out
-    seasons) and `k` is a sane number. Anything else falls back to the raw
+    seasons) and `k` is a sane number, or when it records that the test
+    found no factor worth applying (`raw_tested`, k exactly 1: the raw
+    closed form, labelled TESTED). Anything else falls back to the raw
     closed form, labelled UNCALIBRATED, rather than half-trusting a file."""
     path = CALIBRATION_PATH if path is None else path
     try:
@@ -202,7 +254,11 @@ def load_calibration(path: Path | None = None) -> Calibration:
         return Calibration(reason=f"the calibration factor {k} is outside {K_RANGE}")
     if blob.get("kind") != "sd_scale":
         return Calibration(reason=f"unknown calibration kind {blob.get('kind')!r}")
-    if blob.get("bar_cleared") is not True:
-        return Calibration(k=k, evidence=blob,
-                           reason="the tested factor did not beat the raw formula out of sample")
-    return Calibration(k=k, validated=True, evidence=blob, reason="")
+    if blob.get("bar_cleared") is True:
+        return Calibration(k=k, validated=True, evidence=blob, reason="")
+    if blob.get("raw_tested") is True:
+        if k != 1.0:
+            return Calibration(reason=f"the file says no correction yet carries k = {k}")
+        return Calibration(k=1.0, validated=True, evidence=blob, reason="")
+    return Calibration(k=k, evidence=blob,
+                       reason="the tested factor did not beat the raw formula out of sample")

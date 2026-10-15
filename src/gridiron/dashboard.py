@@ -25,10 +25,11 @@ evidence and the evidence stays one tap away:
      and the roster players deliberately protected from the drop list.
   6. **Roster projections** — mean ± SD, the components, the designation and
      its source, the lock state, the reason for every abstention.
-  7. **Matchup** — the margin as context. P(win) is the closed form with a
-     tested spread factor (`gridiron.winprob.load_calibration`), labelled
-     CALIBRATED with its evidence, or UNCALIBRATED when no tested factor is
-     on file; either way it sits behind a disclosure and ranks nothing.
+  7. **Matchup** — the margin as context. P(win) is the closed form under
+     the tested calibration (`gridiron.winprob.load_calibration`): CALIBRATED
+     with its factor and evidence, TESTED when the test found no factor worth
+     applying, UNCALIBRATED when nothing tested is on file; either way it
+     sits behind a disclosure and ranks nothing.
   8. **How the baseline has fared** out-of-sample, and its n.
   9. Where the decision-time archive was written.
 
@@ -902,7 +903,9 @@ def _matchup(opp_id: int, mine: tuple[Player | None, ...],
                    "counted every projected starter; unprojected and left out: "
                    + ", ".join(left_out))
                   + ("; independence assumed between all starters, then the spread "
-                     f"widened x{cal.k:.2f} (tested)" if cal.validated
+                     f"widened x{cal.k:.2f} (tested)" if cal.widens else
+                     "; independence assumed between all starters (tested: no spread "
+                     "correction needed)" if cal.validated
                      else "; independence assumed between all starters"))
     return MatchupView(opp_id, mine, theirs, my_mean, my_sd, opp_mean, opp_sd, pwin,
                        reason, lev, tuple(my_missing), tuple(opp_missing),
@@ -3054,13 +3057,12 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    f"<div>roster #{m.opponent_roster_id}<b>{_num(m.opp_mean)} ± {_num(m.opp_sd)}</b></div>"
                    f"<div>margin<b>{_num(m.margin, 1, True)}</b></div></div>")
         cal = m.calibration
-        out.append(f"<details><summary>{'calibrated' if cal.validated else 'uncalibrated'} "
+        out.append(f"<details><summary>{cal.badge.lower()} "
                    "win probability (not used to rank any action above)</summary>")
         pw = ("<span class=\"bad\">abstained</span>" if m.pwin is None
               else f"<b>{m.pwin:.0%}</b>")
-        badge = ("<span class=\"badge go\">CALIBRATED</span>" if cal.validated
-                 else "<span class=\"badge warn\">UNCALIBRATED</span>")
-        raw = ("" if not cal.validated or m.pwin_raw is None
+        badge = f"<span class=\"badge {'go' if cal.validated else 'warn'}\">{cal.badge}</span>"
+        raw = ("" if not cal.widens or m.pwin_raw is None
                else f"<div>before calibration<b>{m.pwin_raw:.0%}</b></div>")
         out.append("<div class=\"kpi\">"
                    f"<div>P(win) {badge}{pw}</div>{raw}"
@@ -3114,7 +3116,8 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                        + "</details>")
     pc = d.pwin_calibration
     out.append("<p class=\"small sub\">P(win) calibration: "
-               + (f"<b class=\"ok\">tested</b> — {_e(pc.label)}.</p>" if pc.validated else
+               + (f"<b class=\"ok\">{pc.badge}</b> — {_e(pc.label.split(' — ', 1)[-1])}.</p>"
+                  if pc.validated else
                   "<b class=\"warn\">NOT validated</b> — every P(win) on this page is an "
                   f"uncalibrated closed-form number ({_e(pc.reason)}).</p>"))
     for n in ev.notes:
