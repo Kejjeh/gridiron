@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import json
 import shutil
 import sys
@@ -71,7 +72,15 @@ FIELDS = ("season", "week", "archive", "archive_built", "graded", "ungradeable",
           "k_n", "k_pairs", "k_page_pairwise", "k_baseline_v1_pairwise",
           "k_sleeper_pairwise", "k_stack_pairwise",
           "def_n", "def_pairs", "def_page_pairwise", "def_sleeper_pairwise",
-          "def_stack_pairwise", "graded_at")
+          "def_stack_pairwise",
+          # P(win) on every league matchup the board recorded (counts and
+          # means only): the live check of the calibration
+          "pwin_n", "pwin_brier", "pwin_logloss", "pwin_raw_brier", "pwin_raw_logloss",
+          "pwin_fav_stated", "pwin_fav_won",
+          "graded_at")
+#: The P(win) ledger columns, in FIELDS order.
+PWIN_FIELDS = ("pwin_n", "pwin_brier", "pwin_logloss", "pwin_raw_brier", "pwin_raw_logloss",
+               "pwin_fav_stated", "pwin_fav_won")
 
 #: The systems the weekly shoot-out scores on identical players:
 #:   page         the projection the page used (stack_v1 where Sleeper's
@@ -201,6 +210,57 @@ def actual_key(p: Mapping[str, object]) -> str:
     return str(p.get("gsis_id") or "")
 
 
+def league_pwin(archive: Mapping[str, object],
+                actuals: Mapping[str, float]) -> dict | None:
+    """Every league matchup the board recorded with a P(win), scored by what
+    its recorded starters actually put up (`actuals`, league points; a
+    starter with no stat line scored 0, which is what a lineup gets from a
+    player who did not play).
+
+    The starters are the ones set when the board was built, so this grades
+    the FORMULA on those lineups, not the league's final result after later
+    lineup changes. A matchup is skipped when a starter has no key (an
+    unresolved id) or the two totals tie. None when the board recorded no
+    league matchups (boards before 2026-10-15)."""
+    rows = archive.get("league_matchups")
+    if not isinstance(rows, list) or not rows:
+        return None
+    eps = 1e-6
+    n = skipped = fav_won = 0
+    brier = logloss = raw_brier = raw_logloss = fav_stated = 0.0
+    for m in rows:
+        if not isinstance(m, Mapping):
+            skipped += 1
+            continue
+        p, raw = m.get("pwin"), m.get("pwin_raw")
+        sides = m.get("starters")
+        if p is None or raw is None or not isinstance(sides, list) or len(sides) != 2 \
+                or any(not (s or {}).get("key") for side in sides for s in side):
+            skipped += 1
+            continue
+        totals = [sum(float(actuals.get(str(s["key"]), 0.0)) for s in side) for side in sides]
+        if totals[0] == totals[1]:
+            skipped += 1
+            continue
+        y = 1.0 if totals[0] > totals[1] else 0.0
+        p, raw = float(p), float(raw)
+        n += 1
+        brier += (p - y) ** 2
+        raw_brier += (raw - y) ** 2
+        logloss -= math.log(min(max(p if y else 1 - p, eps), 1 - eps))
+        raw_logloss -= math.log(min(max(raw if y else 1 - raw, eps), 1 - eps))
+        fav = max(p, 1 - p)
+        fav_stated += fav
+        fav_won += int((p >= 0.5) == bool(y))
+    if not n:
+        return {"pwin_n": 0, "skipped": skipped}
+    return {"pwin_n": n, "pwin_brier": round(brier / n, 4), "pwin_logloss": round(logloss / n, 4),
+            "pwin_raw_brier": round(raw_brier / n, 4),
+            "pwin_raw_logloss": round(raw_logloss / n, 4),
+            "pwin_fav_stated": round(fav_stated / n, 4), "pwin_fav_won": fav_won,
+            "skipped": skipped}
+
+
 def shootout(archive: Mapping[str, object], actuals: Mapping[str, float], *,
              min_proj: float = SHOOTOUT_MIN,
              positions: Sequence[str] = SKILL) -> dict | None:
@@ -284,7 +344,8 @@ def special_shootouts(archive: Mapping[str, object],
 
 def aggregate(grade: Grade, season: int, archive: Path, built: datetime,
               shoot: Mapping[str, object] | None = None,
-              special: Mapping[str, Mapping[str, object]] | None = None) -> dict:
+              special: Mapping[str, Mapping[str, object]] | None = None,
+              league: Mapping[str, object] | None = None) -> dict:
     agree, n = grade.agreement()
     d_agree, d_n = direction(grade)
     extra = {}
@@ -307,6 +368,7 @@ def aggregate(grade: Grade, season: int, archive: Path, built: datetime,
             **{f"{s}_{m}": "" if (shoot or {}).get(f"{s}_{m}") is None
                else shoot[f"{s}_{m}"] for s in SYSTEMS for m in ("pairwise", "mae")},
             **extra,
+            **{f: "" if (league or {}).get(f) is None else league[f] for f in PWIN_FIELDS},
             "graded_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
 
@@ -485,14 +547,17 @@ def run_finished(args: argparse.Namespace) -> int:
         grade = grade_archive(archive, actuals, observed={})
         shoot = shootout(archive, actuals)
         special = special_shootouts(archive, actuals)
+        league = league_pwin(archive, actuals)
         d_agree, d_n = direction(grade)
         agree, n = grade.agreement()
         print(f"[grade] week {week}: graded the board built {built.isoformat()}: "
               f"{sum(1 for c in grade.comparisons if c.status == 'graded')} comparison(s), "
               f"direction {d_agree}/{d_n}, endorsed {agree}/{n}"
-              + (f", shoot-out {shoot['pairs']} pair(s)" if shoot and shoot.get("pairs") else ""))
+              + (f", shoot-out {shoot['pairs']} pair(s)" if shoot and shoot.get("pairs") else "")
+              + (f", P(win) on {league['pwin_n']} league matchup(s)" if league and league.get("pwin_n")
+                 else ""))
         if not args.no_save:
-            rows = upsert(ledger_path, aggregate(grade, season, pin, built, shoot, special))
+            rows = upsert(ledger_path, aggregate(grade, season, pin, built, shoot, special, league))
     if rows:
         t = grading.report_card(rows, season).totals()
         print(f"[grade] season to date over {t['weeks']} graded week(s): projection direction "
@@ -588,6 +653,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print("shoot-out: this archive carries no pre-kickoff shadow projections\n")
     special = special_shootouts(archive, actuals)
+    league = league_pwin(archive, actuals)
+    if league and league.get("pwin_n"):
+        print(f"P(win) on {league['pwin_n']} league matchup(s): favourites given "
+              f"{league['pwin_fav_stated']:.0%} on average won {league['pwin_fav_won']}; "
+              f"Brier {league['pwin_brier']:.3f} (uncalibrated {league['pwin_raw_brier']:.3f}), "
+              f"log loss {league['pwin_logloss']:.3f} ({league['pwin_raw_logloss']:.3f})")
+    elif league is None:
+        print("P(win): this board recorded no league matchups (boards before 2026-10-15)")
     for g, res in special.items():
         if res.get("pairs"):
             print(f"{g.upper()} shoot-out on {res['n']} / {res['pairs']} pairs: "
@@ -597,7 +670,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"- {n}")
     if not args.no_save:
         rows = upsert(args.grades_dir / f"season{season}.csv",
-                      aggregate(grade, season, path, built, shoot, special))
+                      aggregate(grade, season, path, built, shoot, special, league))
         print(f"\n{season_line(rows)}")
         print(f"[grade] saved to {args.grades_dir / f'season{season}.csv'}", file=sys.stderr)
     return 0

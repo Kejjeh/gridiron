@@ -295,6 +295,11 @@ class ReportCard:
     weeks: tuple[WeekGrade, ...] = ()
     #: system -> (pairs-weighted season rate, pairs)
     shootout: Mapping[str, tuple[float, int]] = field(default_factory=dict)
+    #: P(win) on every graded league matchup, season to date: n, Brier and
+    #: log loss (calibrated and raw), the favourite's average stated chance
+    #: and how many favourites won. Empty until a board that recorded league
+    #: matchups has been graded.
+    pwin: Mapping[str, float] = field(default_factory=dict)
 
     @property
     def any(self) -> bool:
@@ -336,4 +341,26 @@ def report_card(rows: Sequence[Mapping[str, object]], season: int) -> ReportCard
             mae=_f(r.get("projection_mae")), mae_n=_i(r.get("projection_n")),
             pairs=pairs, rates=rates))
     shoot = {s: (hits[s] / pairs_by[s], pairs_by[s]) for s in SYSTEM_LABELS if pairs_by.get(s)}
-    return ReportCard(int(season), tuple(weeks), shoot)
+    return ReportCard(int(season), tuple(weeks), shoot, pwin_totals(rows))
+
+
+def pwin_totals(rows: Sequence[Mapping[str, object]]) -> dict[str, float]:
+    """Season-to-date P(win) check from the ledger's per-week means, each
+    weighted by that week's matchup count. {} when no week has one."""
+    n = 0
+    acc = {"brier": 0.0, "logloss": 0.0, "raw_brier": 0.0, "raw_logloss": 0.0, "fav_stated": 0.0}
+    fav_won = 0
+    for r in rows:
+        k = _i(r.get("pwin_n"))
+        if not k:
+            continue
+        vals = {m: _f(r.get(f"pwin_{m}")) for m in acc}
+        if any(v is None for v in vals.values()):
+            continue
+        n += k
+        for m, v in vals.items():
+            acc[m] += v * k
+        fav_won += _i(r.get("pwin_fav_won"))
+    if not n:
+        return {}
+    return {"n": n, **{m: round(v / n, 4) for m, v in acc.items()}, "fav_won": fav_won}
