@@ -65,7 +65,7 @@ FIELDS = ("season", "week", "archive", "archive_built", "graded", "ungradeable",
           "shootout_n", "shootout_pairs",
           "page_pairwise", "baseline_v1_pairwise", "sleeper_pairwise", "blend_pairwise",
           "stack_pairwise", "page_mae", "baseline_v1_mae", "sleeper_mae", "blend_mae",
-          "stack_mae",
+          "stack_mae", "adv_v1_pairwise", "adv_v1_mae",
           # kickers and team defenses, graded apart (their points never
           # share a scale with a receiver's): pairs within the position
           "k_n", "k_pairs", "k_page_pairwise", "k_baseline_v1_pairwise",
@@ -74,13 +74,16 @@ FIELDS = ("season", "week", "archive", "archive_built", "graded", "ungradeable",
           "def_stack_pairwise", "graded_at")
 
 #: The systems the weekly shoot-out scores on identical players:
-#:   page         the projection the page used (advanced_v1 when it ran)
+#:   page         the projection the page used (stack_v1 where Sleeper's
+#:                pre-kickoff number was in, advanced_v1 otherwise)
 #:   baseline_v1  the model before advanced stats (record `contenders`)
+#:   adv_v1       advanced_v1 alone, no outside number (record `contenders`;
+#:                boards before 2026-10-15 carry it only as `page`)
 #:   sleeper      Sleeper's pre-kickoff projection (record `shadow`)
 #:   blend        (page + sleeper) / 2
 #:   stack        advanced + Sleeper (record `contenders`)
 #: A system an archive does not carry is simply absent from that week.
-SYSTEMS = ("page", "baseline_v1", "sleeper", "blend", "stack")
+SYSTEMS = ("page", "baseline_v1", "adv_v1", "sleeper", "blend", "stack")
 #: Pairs are formed only among players the shadow projected at least this
 #: high — the same "fantasy-relevant" cut as the 2025 backtest.
 SHOOTOUT_MIN = 5.0
@@ -221,10 +224,10 @@ def shootout(archive: Mapping[str, object], actuals: Mapping[str, float], *,
     cont = archive.get("contenders") or {}
     # a contender joins when it covers this position group at all (the old
     # baseline never projected a team defense, so it sits DEF out)
-    extra = {k: cont.get(k) or {} for k in ("baseline_v1", "stack")
+    extra = {k: cont.get(k) or {} for k in ("baseline_v1", "adv_v1", "stack")
              if isinstance(cont, Mapping) and group & set(cont.get(k) or {})}
-    systems = ["page"] + [k for k in ("baseline_v1",) if k in extra] + ["sleeper", "blend"] \
-        + [k for k in ("stack",) if k in extra]
+    systems = ["page"] + [k for k in ("baseline_v1", "adv_v1") if k in extra] \
+        + ["sleeper", "blend"] + [k for k in ("stack",) if k in extra]
     rows, seen = [], set()
     for sid, p in people:
         sid = str(sid or "")

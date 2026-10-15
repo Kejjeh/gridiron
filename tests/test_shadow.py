@@ -67,7 +67,8 @@ def test_the_file_round_trips_and_only_for_its_own_week(tmp_path):
     SH.write_shadow(tmp_path, SH.fetch_sleeper(2026, 4, fetch=_fake_fetch({"WR": WR_ROWS}),
                                                now=NOW))
     blob = SH.read_shadow(tmp_path, season=2026, week=4)
-    assert blob["players"] == {"100": {"points": 14.5}}
+    # the position survives: the page's feed-absence rule counts players per position
+    assert blob["players"] == {"100": {"points": 14.5, "position": "WR"}}
     assert SH.read_shadow(tmp_path, season=2026, week=5) is None
     assert SH.is_fresh(tmp_path, season=2026, week=4, now=NOW + timedelta(hours=1))
     assert not SH.is_fresh(tmp_path, season=2026, week=4, now=NOW + timedelta(hours=3))

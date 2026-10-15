@@ -4,6 +4,35 @@ Current state and next step only. The running log through the Game Day,
 Radar, Action Desk and publication releases moved to
 `docs/memory/handoff_history.md` on 2026-10-01 (provenance, not current).
 
+## The page serves the stack (2026-10-15)
+
+- **Live grades, weeks 4-5**: the page (advanced_v1) below its own baseline
+  on the owner's decision set (58.2% vs 61.3% on 777 pairs; Sleeper 59.5%,
+  stack 59.5%). Diagnosed by three independent analyses with adversarial
+  review (`docs/research/STACK_SERVING.md`): TE/QB in the 5-10 band; the
+  offline harness reproduces it exactly, no pipeline defect; seven seasons
+  of history contradict it and refute gating or shrinking the layer.
+- **Shipped**: `stack_v1` is the page's number for skill players whose
+  pre-kickoff Sleeper projection is in and under 36 h old (`STACK_NAME`,
+  `STACK_SHADOW_MAX_AGE_HOURS`, `dashboard.shadow_number`,
+  `AdvancedContext.stacked_mean`), on the MEAN scale so it sums and compares
+  with every other number; advanced_v1 otherwise and for K/DEF. Gate:
+  `scripts/research/stack_vs_page.py`, ahead of the page it replaces on both
+  metrics in every held-out season 2019-2025.
+- **Shipped**: a skill player a complete, fresh Sleeper feed omits is not
+  projected (`dashboard.feed_absence`, `FEED_MIN_PER_POSITION`): 23 of 24
+  such players did not play in weeks 4-5. `read_shadow` now keeps each
+  player's position so the completeness guard can count.
+  The record carries `system` per player and `contenders.adv_v1`; the status
+  line counts how many got the stack. The weights' `evidence` block now
+  describes the shipped weights (season-fold CV 2019-2025); the 2025 holdout
+  block is kept under `evidence_holdout_2025_plus_depth`.
+- **Grader**: six systems (page, baseline_v1, adv_v1, Sleeper, blend, stack);
+  the ledger gains `adv_v1_pairwise` / `adv_v1_mae` (empty for older weeks).
+- Next: watch week 6's grade. "page vs Sleeper" is now the live test of the
+  2020 fold; "adv_v1 vs baseline_v1" keeps testing the advanced layer where
+  the owner decides. One week is noise (bootstrap sd ~3 pts at 400 pairs).
+
 ## Hardening pass (2026-10-01)
 
 An audit of the repo (holes, not features) found and closed, on this branch:

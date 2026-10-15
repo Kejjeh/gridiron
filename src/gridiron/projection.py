@@ -322,6 +322,11 @@ class Projection:
         parts = [c.describe() for c in self.components]
         tail = f" | caveats: {'; '.join(self.reasons)}" if self.reasons else ""
         base = self.inputs.get("baseline_mean")
+        adv, outside = self.inputs.get("adv_mean"), self.inputs.get("sleeper_mean")
+        if base is not None and adv is not None and outside is not None:
+            return (" + ".join(parts) + f" = {base:.2f} baseline -> {adv:.2f} with "
+                    f"advanced stats -> {self.mean:.2f} stacked with Sleeper's "
+                    f"{outside:.2f} ± {self.sd:.2f}{tail}")
         if base is not None:
             return (" + ".join(parts) + f" = {base:.2f} baseline -> {self.mean:.2f} "
                     f"with advanced stats ± {self.sd:.2f}{tail}")

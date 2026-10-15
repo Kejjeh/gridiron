@@ -27,7 +27,7 @@ BASELINE = "usage_prior x positional_efficiency x line_multiplier"
 
 #: Signals layered on the baseline.
 FEATS: tuple[str, ...] = ("advanced_v1", "advanced_v1_k", "advanced_v1_def", "ros_v1",
-                          "role_change_v1")
+                          "role_change_v1", "stack_v1")
 
 #: feature name -> {"evidence": path, "weeks": (lo, hi), "mae_delta": float}
 VALIDATED: dict[str, dict] = {
@@ -94,6 +94,26 @@ VALIDATED: dict[str, dict] = {
         "script": "scripts/research/role_change_backtest.py",
         "season": (2023, 2025), "weeks": (4, 18),
         "mae_delta": -0.014, "pairwise_delta": 0.0010,
+    },
+    # What the page SERVES for a skill player whose pre-kickoff Sleeper
+    # number is in: the mix of advanced_v1 and that number, on the MEAN
+    # scale (gridiron.models.advanced STACK_NAME, `stack_form`, pushed back
+    # through its median line so it sums and compares with every other
+    # number on the page). The full baseline here is advanced_v1 itself,
+    # every existing feature included. Season-fold CV 2019-2025, weeks 4-18
+    # (421,457 pairs): start/sit 64.68% vs 63.45%, MAE 3.977 vs 4.098,
+    # better on BOTH in every held-out season, ordering better at every
+    # position in every season and in the 5-10 Sleeper band the owner's
+    # decisions live in. Two live weeks of 2026 had
+    # the page below its own baseline on the owner's decision set; the
+    # offline harness reproduced them and found no pipeline defect, and
+    # gating or shrinking the advanced layer by position or tier was
+    # refuted out of sample (docs/research/STACK_SERVING.md).
+    "stack_v1": {
+        "evidence": "docs/research/STACK_SERVING.md",
+        "script": "scripts/research/stack_vs_page.py",
+        "season": (2019, 2025), "weeks": (4, 18),
+        "mae_delta": -0.122, "pairwise_delta": 0.0123,
     },
 }
 
