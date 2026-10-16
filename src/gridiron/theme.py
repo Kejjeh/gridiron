@@ -369,7 +369,8 @@ function tick(nowMs){
   var counts=document.querySelectorAll('[data-live-count]');
   for(var j=0;j<counts.length;j++){ var want=counts[j].getAttribute('data-live-count');
     var n=document.querySelectorAll('li.rrow[data-verdict="'+want+'"]').length;
-    if(counts[j].textContent!==String(n)) counts[j].textContent=String(n); }
+    if(counts[j].textContent!==String(n)) counts[j].textContent=String(n);
+    if(counts[j].classList) counts[j].classList.toggle('lime',n>0); }
   S.expired=expired; S.lapsed=lapsed; S.own=ownN; S.last=now;
   if(box&&head&&text){ if(expired||lapsed||ownN){ box.hidden=false;
       head.textContent=expired?'Evidence expired '+stamp(UNTIL)+'.':ownN?'Evidence expired for '+ownN+' item(s) on this page.':'Kickoff passed for '+lapsed+' item(s) on this page.';

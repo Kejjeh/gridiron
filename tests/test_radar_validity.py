@@ -436,3 +436,58 @@ def test_an_element_that_expires_on_its_own_raises_the_banner_without_a_page_exp
     assert got["t1"]["earlier"] == "expired" and got["t1"]["banner"].startswith(
         "Evidence expired for 1 item(s) on this page.")
     assert "own expired" in got["t3"]["banner"] and "2 item(s)" in got["t3"]["banner"]
+
+
+# ------------------------------------------------ live free-agent counts
+
+def test_the_first_screen_free_agent_count_is_a_live_counter(tmp_path):
+    """The side panel's 'N improve this week's lineup' was fixed at build
+    time: after kickoff the radar's own counter fell to 0 while it stayed."""
+    html = _render(tmp_path, "complete")
+    panel = re.search(r"<b>Free agents:</b>(.*?)</p>", html, re.S)
+    assert panel and 'data-live-count="LINEUP">2</b> improve this week' in panel.group(1)
+    assert html.count('data-live-count="LINEUP"') == 2      # the panel and the radar KPI
+
+
+_COUNT_RUNNER = r"""
+const fs = require('fs');
+const [,, jsPath] = process.argv;
+function el(attrs, cls){ const a = Object.assign({}, attrs), c = new Set(cls || []), v = {textContent: ''};
+  return {getAttribute(k){ return k in a ? a[k] : null; }, setAttribute(k, x){ a[k] = String(x); },
+          removeAttribute(k){ delete a[k]; }, hasAttribute(k){ return k in a; },
+          querySelector(q){ return q === '.vstate' ? v : null; }, attrs: a, textContent: '',
+          classList: {toggle(n, on){ if (on) c.add(n); else c.delete(n); }, has(n){ return c.has(n); }}}; }
+const rows = [0, 1].map(i => el({'data-deadline': '2026-09-27T17:00:00Z', 'data-verdict': 'LINEUP',
+  'data-verdict-built': 'LINEUP', 'data-lapse-verdict': 'LOCKED', 'data-lapse-text': 'locked'}));
+const panel = el({'data-live-count': 'LINEUP'}, ['lime']); panel.textContent = '2';
+const kpi = el({'data-live-count': 'LINEUP'}, ['lime']); kpi.textContent = '2';
+global.document = {querySelector(){ return null; }, getElementById(){ return null; }, addEventListener(){}, hidden: false,
+  querySelectorAll(q){
+    if (q.indexOf('data-live-count') >= 0) return [panel, kpi];
+    const m = q.match(/^li\.rrow\[data-verdict="([^"]+)"\]$/);
+    if (m) return rows.filter(r => r.attrs['data-verdict'] === m[1]);
+    return rows; }};
+global.window = {}; global.setInterval = function(){};
+eval(fs.readFileSync(jsPath, 'utf8'));
+const out = {};
+for (const [k, t] of [['before', '2026-09-27T16:00:00Z'], ['after', '2026-09-27T17:05:00Z']]) {
+  window.gridironValidity.tick(Date.parse(t));
+  out[k] = {panel: panel.textContent, kpi: kpi.textContent, lime: panel.classList.has('lime')};
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="no Node runtime on this machine")
+def test_the_live_counts_fall_and_lose_their_highlight_when_the_moves_lock(tmp_path):
+    import subprocess
+    js = tmp_path / "validity.js"
+    js.write_text(theme.VALIDITY_JS, "utf-8")
+    runner = tmp_path / "count.js"
+    runner.write_text(_COUNT_RUNNER, "utf-8")
+    proc = subprocess.run([NODE, str(runner), str(js)], capture_output=True, text=True,
+                          encoding="utf-8", timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["before"] == {"panel": "2", "kpi": "2", "lime": True}
+    assert got["after"] == {"panel": "0", "kpi": "0", "lime": False}

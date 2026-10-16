@@ -2912,7 +2912,10 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    f"<a href=\"#matchup\">Matchup ↓</a><span class=\"vstate\"></span></p>")
     lineup_n = sum(1 for c in b.candidates if c.verdict == LINEUP)
     out.append(f"<p><b>Free agents:</b> {b.pool_size} in the pool, {b.evaluated} compared, "
-               f"<b class=\"{'lime' if lineup_n else ''}\">{lineup_n}</b> improve this week's "
+               # kept live by VALIDITY_JS like the radar's own counter, so it
+               # falls as the moves lock instead of standing at the build count
+               f"<b class=\"{'lime' if lineup_n else ''}\" data-live-count=\"LINEUP\">"
+               f"{lineup_n}</b> improve this week's "
                f"lineup. <a href=\"#free-agents\">Radar ↓</a></p>")
     if nd is not None:
         out.append("<p class=\"small sub\">" + " · ".join(_e(x) for x in nd.evidence) + "</p>")
