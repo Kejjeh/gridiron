@@ -4,6 +4,35 @@ Current state and next step only. The running log through the Game Day,
 Radar, Action Desk and publication releases moved to
 `docs/memory/handoff_history.md` on 2026-10-01 (provenance, not current).
 
+## Board: dated practice rows, absence is not a bye, P(win) expires (2026-10-16)
+
+- **Availability text**: every practice value names its week
+  ("wk5 practice: Limited") or says "practice (Sleeper, undated)". An
+  injury body part from an older row carries its week under a live
+  Sleeper tag, and Sleeper's own body part is used when it has one.
+  Report coverage is per team (`weekly.reported_teams`,
+  `team_report_covered`): a team that has not filed (Monday-night teams
+  early in the week) reads "no current wk6 report for his team", never
+  "not on the report".
+- **Absence is never a bye** in the projection, matching
+  `lineup.lock_state`. One rule, `weekly.game_for`: a declared bye
+  (`lineup.BYE_GAME_TYPES`) is withheld at 0, and a team with no game row
+  ABSTAINS. A stale schedule that carries the week still decides who has
+  a game. An Out/IR designation still withholds at 0. A team defense is
+  left out of P(win) and named, as any unprojected defense is.
+  **Accepted cost**: nflverse declares no byes, so real-bye players are
+  unprojected. Any matchup that starts one (other than a defense) has no
+  P(win) until a source declares byes. The weekly report says why its
+  opponent column shows '?'.
+- **P(win) expiry**: the margin and P(win) (the matchup block and the
+  first-screen line) carry the matchup gate's own `data-valid-until`, so
+  they expire on the reader's clock. `VALIDITY_JS` honours per-element
+  times and raises the banner for them. They read LAST KNOWN, naming the
+  stale input, when the gate is closed at build.
+- Follow-ups (not in this change): `ros.py` still counts a missing row
+  as a bye week; the first-screen free-agent count is static after
+  kickoff.
+
 ## P(win) tested: no correction, labelled TESTED (2026-10-15)
 
 - **Step 1** (`scripts/research/pwin_calibration.py`): one spread factor

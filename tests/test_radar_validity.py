@@ -330,6 +330,29 @@ def test_the_win_probability_expires_with_the_evidence_it_rests_on(tmp_path):
     body = html[block.end():html.index("</details></div>", block.end())]
     assert '<span class="vstate"></span>' in body and "win probability" in body
     assert "LAST KNOWN" not in body
+    # the first-screen copy of the margin carries the same expiry
+    panel = re.search(r'<p class="pwin"([^>]*)><b>Matchup:</b>(.*?)</p>', html, re.S)
+    assert panel and 'data-valid-until="2026-09-27T04:00:00+00:00"' in panel.group(1)
+    assert '<span class="vstate"></span>' in panel.group(2)
+    # every rendering of the matchup means sits under a gated or held element
+    assert html.count("<b>Matchup:</b>") == 1
+
+
+def test_the_matchup_keeps_its_own_expiry_when_the_page_has_none(tmp_path):
+    """Damaged kickoff rows close the lineup/waiver gates (no page expiry),
+    while the matchup's own evidence is fresh: the block keeps its time."""
+    html = _render(tmp_path, "partial_schedule")
+    assert '<meta name="gridiron-valid-until"' not in html
+    block = re.search(r'<div class="pwin"([^>]*)>', html)
+    assert block and 'data-valid-until="' in block.group(1) and 'data-gated=""' in block.group(1)
+
+
+def test_the_held_matchup_names_what_actually_closed_its_gate(tmp_path):
+    html = _render(tmp_path, "missing")
+    held = re.search(r'<div class="pwin" data-held="([^"]*)"', html)
+    if held is None:
+        pytest.skip("no matchup view in this scenario")
+    assert "box scores" in held.group(1)
 
 
 def test_a_win_probability_built_on_stale_inputs_is_marked_last_known(tmp_path):
@@ -360,13 +383,18 @@ global.document = {querySelector(q){ return q.indexOf('gridiron-valid-until') >=
   querySelectorAll(q){ return q.indexOf('data-live-count') >= 0 ? [] : nodes.slice(0, 3); },
   getElementById(){ return null; }, addEventListener(){}, hidden: false};
 global.window = {}; global.setInterval = function(){};
+const noMeta = process.argv[3] === 'nometa';
+const box = {hidden: true}, head = {textContent: ''}, text = {textContent: ''};
+if (noMeta) { document.querySelector = function(){ return null; };
+  document.getElementById = function(id){ return id === 'validity' ? box : id === 'validity-head' ? head : id === 'validity-text' ? text : null; }; }
 eval(fs.readFileSync(jsPath, 'utf8'));
 const out = {};
 for (const [k, t] of [['t0', '2026-09-27T00:00:00Z'], ['t1', '2026-09-27T02:00:00Z'],
                       ['t2', '2026-09-27T05:00:00Z'], ['t3', '2026-09-27T11:00:00Z']]) {
   window.gridironValidity.tick(Date.parse(t));
   out[k] = {page: page.attrs['data-live'] || '', later: later.attrs['data-live'] || '',
-            earlier: earlier.attrs['data-live'] || '', text: later.vstate.textContent};
+            earlier: earlier.attrs['data-live'] || '', text: later.vstate.textContent,
+            banner: noMeta ? (box.hidden ? '' : head.textContent + ' | ' + text.textContent) : null};
 }
 process.stdout.write(JSON.stringify(out));
 """
@@ -383,8 +411,28 @@ def test_an_element_with_its_own_evidence_expires_on_its_own_instant(tmp_path):
                           encoding="utf-8", timeout=60)
     assert proc.returncode == 0, proc.stderr
     got = json.loads(proc.stdout)
-    assert got["t0"] == {"page": "", "later": "", "earlier": "", "text": ""}
+    assert got["t0"] == {"page": "", "later": "", "earlier": "", "text": "", "banner": None}
     assert got["t1"]["earlier"] == "expired" and not got["t1"]["page"] and not got["t1"]["later"]
     # past the page's instant but not the element's own: the element stays current
     assert got["t2"]["page"] == "expired" and got["t2"]["later"] == ""
     assert got["t3"]["later"] == "expired" and got["t3"]["text"] == "own expired"
+
+
+@pytest.mark.skipif(NODE is None, reason="no Node runtime on this machine")
+def test_an_element_that_expires_on_its_own_raises_the_banner_without_a_page_expiry(tmp_path):
+    import subprocess
+    js = tmp_path / "validity.js"
+    js.write_text(theme.VALIDITY_JS, "utf-8")
+    runner = tmp_path / "run.js"
+    runner.write_text(_VALIDITY_RUNNER, "utf-8")
+    proc = subprocess.run([NODE, str(runner), str(js), "nometa"], capture_output=True,
+                          text=True, encoding="utf-8", timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["t0"]["banner"] == ""
+    # no page meta: the gated element with no time of its own never expires...
+    assert got["t3"]["page"] == ""
+    # ...the ones with their own time do, and the banner says so
+    assert got["t1"]["earlier"] == "expired" and got["t1"]["banner"].startswith(
+        "Evidence expired for 1 item(s) on this page.")
+    assert "own expired" in got["t3"]["banner"] and "2 item(s)" in got["t3"]["banner"]

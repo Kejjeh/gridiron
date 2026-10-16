@@ -71,12 +71,16 @@ class AvailabilityNote:
     """
 
     designation: str          # Sleeper live injury_status (Questionable/Out/IR)
-    practice: str             # nflverse practice participation, verbatim
+    practice: str             # practice participation, verbatim (see practice_from_sleeper)
     report_status: str        # nflverse game-status report, verbatim
     body_part: str
     source_week: int | None
     report_week: int
-    covers_report_week: bool  # did a report for THIS week actually load?
+    #: Did a CURRENT pull carry THIS player's team's report for THIS week?
+    #: Per team, not league-wide: Monday-night teams file days after the
+    #: rest, and "the week-6 report loaded" says nothing about a team that
+    #: has not filed yet (`reported_teams`).
+    covers_report_week: bool
     sources: tuple[str, ...] = field(default=())
     #: Was the Sleeper player dump that supplied `designation` itself current?
     #: Defaults to False: a caller that cannot say is not entitled to the
@@ -91,6 +95,10 @@ class AvailabilityNote:
     #: way the page prints which, so last week's "Limited" never reads as
     #: this week's.
     practice_from_sleeper: bool = False
+    #: The week of the nflverse row `body_part` came from, when it came from
+    #: one (None: Sleeper's live field). Printed when it is not the report
+    #: week, so an old injury never reads as this week's under a live tag.
+    body_part_week: int | None = None
 
     @property
     def known(self) -> bool:
@@ -113,26 +121,36 @@ class AvailabilityNote:
             return f"; practice (Sleeper, undated): {self.practice}"
         return f"; wk{self.source_week} practice: {self.practice}"
 
+    def _since(self) -> str:
+        """For evidence older than the report week: what this week says.
+        With his team's report in a current pull, he is not on it (so far);
+        otherwise there is no current report for him at all — not loaded,
+        or loaded but stale; either way nothing current is known."""
+        if self.covers_report_week:
+            return f" — not on his team's wk{self.report_week} report so far"
+        return f" — no current wk{self.report_week} report for his team"
+
     def describe(self) -> str:
         tail = f" ({self.body_part})" if self.body_part else ""
+        dated = tail
+        if (self.body_part and self.body_part_week is not None
+                and self.body_part_week != self.report_week):
+            dated = f" ({self.body_part}, wk{self.body_part_week})"
         prac = self._practice()
         if self.designation:
             if self.designation_fresh:
-                return f"{self.designation}{tail}{prac}"
+                return f"{self.designation}{dated}{prac}"
             why = f" — {self.designation_reason}" if self.designation_reason else ""
-            return (f"{self.designation}{tail}{prac} — STALE designation from "
+            return (f"{self.designation}{dated}{prac} — STALE designation from "
                     f"an out-of-date player pull{why}; NOT a current status")
         if self.report_status:
             if self.source_week == self.report_week:
                 return f"{self.report_status}{tail} — wk{self.report_week} report{prac}"
-            # The newest row is an earlier week's. With this week's report
-            # loaded, he is not on it (so far); without it, nothing is known.
-            return (f"wk{self.source_week} report: {self.report_status}{tail}{prac}"
-                    + (f" — not on the wk{self.report_week} report so far"
-                       if self.covers_report_week else
-                       f" — NO wk{self.report_week} report loaded yet"))
+            # The newest row is an earlier week's.
+            return f"wk{self.source_week} report: {self.report_status}{tail}{prac}{self._since()}"
         if self.practice:
-            return f"no game-status designation{tail}{prac}"
+            old = self.source_week != self.report_week or self.practice_from_sleeper
+            return f"no game-status designation{dated}{prac}{self._since() if old else ''}"
         if self.covers_report_week:
             return f"no designation on the wk{self.report_week} report"
         return (f"{UNKNOWN} — no wk{self.report_week} injury report loaded; "
@@ -186,8 +204,13 @@ def game_for(team: str, games: Mapping[str, GameContext], *, schedule_cover: boo
     A team in the week's rows has its game. A team absent from them is on
     BYE only when the schedule DECLARES the bye (`KickoffIndex.declared_bye`
     — the lock layer's reader for that statement); otherwise it is
-    `NO_GAME_ROW` (UNKNOWN), never an inferred bye. With no schedule for the
-    week at all it is `NO_SCHEDULE`."""
+    `NO_GAME_ROW` (UNKNOWN), never an inferred bye. With no schedule ROWS for
+    the week at all it is `NO_SCHEDULE`.
+
+    `schedule_cover` means "the frame has rows for this week", not "the pull
+    is fresh": a stale frame that carries the week still shows which teams
+    it has games for. Freshness gates ACTIONS (`gridiron.gating`); it does
+    not turn a missing row into a game."""
     if team in games:
         return games[team]
     if not schedule_cover:
@@ -197,7 +220,10 @@ def game_for(team: str, games: Mapping[str, GameContext], *, schedule_cover: boo
 
 #: The abstention a projection takes for `NO_GAME_ROW`.
 def no_game_row_reason(team: str, week: int) -> str:
-    return (f"{team or 'his team'} has no week-{int(week)} game row and the schedule "
+    if not team:
+        return ("no NFL team on this player's record — not projected (UNKNOWN, "
+                "not a bye)")
+    return (f"{team} has no week-{int(week)} game row and the schedule "
             f"declares no bye: UNKNOWN, not a bye (a week off and a row that never "
             f"arrived look the same) — check the game in Sleeper")
 
@@ -283,11 +309,21 @@ def availability(gsis_id: str, sleeper_player: Mapping[str, object] | None,
         sources.append(f"nflverse wk{row.get('week')}")
     nfl_practice = row.get("practice_status", "")
     sleeper_practice = "" if nfl_practice else _txt(sp.get("practice_participation"))
+    # Under Sleeper's live tag, Sleeper's own body part describes it; an
+    # nflverse row's (possibly weeks old) is used only when Sleeper has none,
+    # and then carries its week.
+    sleeper_body = _txt(sp.get("injury_body_part"))
+    if _txt(sp.get("injury_status")) and sleeper_body:
+        body, body_week = sleeper_body, None
+    elif row.get("body_part"):
+        body, body_week = row.get("body_part", ""), row.get("week")
+    else:
+        body, body_week = sleeper_body, None
     return AvailabilityNote(
         designation=_txt(sp.get("injury_status")),
         practice=nfl_practice or sleeper_practice,
         report_status=row.get("report_status", ""),
-        body_part=row.get("body_part", "") or _txt(sp.get("injury_body_part")),
+        body_part=body,
         source_week=row.get("week"),
         report_week=int(report_week),
         covers_report_week=bool(covers_report_week),
@@ -295,7 +331,26 @@ def availability(gsis_id: str, sleeper_player: Mapping[str, object] | None,
         designation_fresh=bool(designation_fresh),
         designation_reason=designation_reason,
         practice_from_sleeper=bool(sleeper_practice),
+        body_part_week=body_week,
     )
+
+
+def reported_teams(injuries: pd.DataFrame | None, week: int) -> frozenset[str] | None:
+    """The nflverse teams with at least one row in `week`'s injury report —
+    the teams that have FILED. None when the frame carries no team column
+    (callers then fall back to the league-wide coverage flag)."""
+    if injuries is None or len(injuries) == 0 or "team" not in injuries.columns \
+            or "week" not in injuries.columns:
+        return None
+    teams = injuries.loc[injuries["week"] == int(week), "team"].dropna()
+    return frozenset(nflverse_team(str(t)) for t in teams if str(t).strip())
+
+
+def team_report_covered(league_cover: bool, reported: frozenset[str] | None,
+                        team: str) -> bool:
+    """Per-team coverage: a current report for the week exists AND this
+    team is on it (or, with no team column, the league-wide flag)."""
+    return bool(league_cover) and (reported is None or nflverse_team(team) in reported)
 
 
 @dataclass(frozen=True)
@@ -351,8 +406,10 @@ class WeeklyReport:
         cols = [c for c in DISPLAY_COLUMNS if c in self.rows.columns]
         head += [markdown_table(self.rows, cols)]
         head += ["", "## Column meanings", "",
-                 "- `snap%`, `tgt`, `tgt_sh`, `opp` — OPPORTUNITY (fast-moving, "
-                 "real in-season signal).",
+                 "- `snap%`, `tgt`, `tgt_sh`, `car`, `opp_n` — OPPORTUNITY "
+                 "(fast-moving, real in-season signal).",
+                 f"- `opp` — this week's opponent; `{UNKNOWN_OPPONENT}` = UNKNOWN (no "
+                 "schedule, or no game row and no declared bye), never a bye.",
                  "- `y/tgt`, `catch%` — EFFICIENCY (slow-moving prior; a "
                  "two-week delta is noise, rule #6).",
                  "- `pts`/`ppg` — league scoring via `gridiron.scoring`, the one "
@@ -417,8 +474,13 @@ def build_report(
                                   "injuries")
     schedule_cover = _covers_week(schedule, context.report_week, sources,
                                   "schedules")
-    kick = kickoff_index(schedule, context.report_week) if schedule_cover else None
+    # Rows for the week, fresh or not, decide which teams have a game; a team
+    # absent from them is a declared bye or UNKNOWN (`game_for`).
+    kick = kickoff_index(schedule, context.report_week) if schedule is not None else None
+    rows_cover = kick is not None
     declared_bye = kick.declared_bye if kick is not None else frozenset()
+    reported = reported_teams(injuries, context.report_week)
+    no_row_teams: set[str] = set()
     std_by_gsis = (std.set_index("gsis_id") if len(std) and "gsis_id" in std
                    else pd.DataFrame())
 
@@ -430,10 +492,13 @@ def build_report(
         lineup = ("IR" if sid in reserve else
                   "START" if sid in starters else "BENCH")
         nfl_team = _txt(sp.get("team")) or (sid if dst else "")
-        game = game_for(nflverse_team(nfl_team), games, schedule_cover=schedule_cover,
+        game = game_for(nflverse_team(nfl_team), games, schedule_cover=rows_cover,
                         declared_bye=declared_bye)
+        if game is NO_GAME_ROW and not dst:
+            no_row_teams.add(nflverse_team(nfl_team) or "(no team)")
         note = availability(gid, sp, inj, report_week=context.report_week,
-                            covers_report_week=injuries_cover,
+                            covers_report_week=team_report_covered(
+                                injuries_cover, reported, nfl_team),
                             designation_fresh=designation_fresh,
                             designation_reason=designation_reason)
         row: dict[str, object] = {
@@ -504,6 +569,12 @@ def build_report(
         notes.append(
             f"Sleeper reports {filled} starters against {n_slots} lineup slots "
             f"— an empty slot scores zero")
+    if no_row_teams:
+        notes.append(
+            f"week {context.report_week}'s schedule has no game row for "
+            f"{', '.join(sorted(no_row_teams))} and declares no bye — their opponent "
+            f"shows '{UNKNOWN_OPPONENT}' (UNKNOWN, not a bye: a week off and a row "
+            f"that never arrived look the same)")
     if not schedule_cover:
         notes.append(
             f"no current schedule covering week {context.report_week} — "

@@ -19,7 +19,8 @@ from gridiron.scoring import ScoringCoverage, scoring_coverage
 from gridiron.usage import player_weeks, season_to_date
 from gridiron.weekly import (BYE, NO_GAME_ROW, NO_SCHEDULE, PROJECTION_STATUS,
                              AvailabilityNote, availability, build_report, game_for,
-                             injury_index, markdown_table, schedule_index)
+                             injury_index, markdown_table, reported_teams, schedule_index,
+                             team_report_covered)
 
 UTC = timezone.utc
 NOW = datetime(2026, 9, 17, 13, 0, tzinfo=UTC)
@@ -151,12 +152,12 @@ class TestAvailability:
                             report_week=2, covers_report_week=True)
         described = note.describe()
         assert "wk1 report: Out" in described
-        assert "not on the wk2 report so far" in described
+        assert "not on his team's wk2 report so far" in described
         assert not note.current, "a week-old designation is not current"
         unloaded = availability("g1", {}, {"g1": {"week": 1, "report_status": "Out",
                                                   "practice_status": "", "body_part": "Knee"}},
                                 report_week=2, covers_report_week=False)
-        assert "NO wk2 report loaded yet" in unloaded.describe()
+        assert "no current wk2 report for his team" in unloaded.describe()
 
     def test_an_earlier_weeks_practice_is_labelled_with_its_week(self):
         """Last week's 'Limited' must never read as this week's (a starter
@@ -167,13 +168,18 @@ class TestAvailability:
         note = availability("g1", {}, row, report_week=6, covers_report_week=True)
         d = note.describe()
         assert d == ("wk5 report: Questionable (Knee); wk5 practice: Limited Participation "
-                     "in Practice — not on the wk6 report so far")
+                     "in Practice — not on his team's wk6 report so far")
         assert "; practice:" not in d
-        # a live Sleeper tag over an older nflverse row: the practice keeps its week
+        # a live Sleeper tag over an older nflverse row: the practice keeps its
+        # week, and so does the body part when Sleeper gives none of its own
         live = availability("g1", {"injury_status": "Questionable"}, row, report_week=6,
                             covers_report_week=True, designation_fresh=True)
-        assert live.describe() == ("Questionable (Knee); wk5 practice: Limited "
+        assert live.describe() == ("Questionable (Knee, wk5); wk5 practice: Limited "
                                    "Participation in Practice")
+        # Sleeper's own body part describes Sleeper's own tag
+        own = availability("g1", {"injury_status": "Questionable", "injury_body_part": "Hip"},
+                           row, report_week=6, covers_report_week=True, designation_fresh=True)
+        assert own.describe().startswith("Questionable (Hip); wk5 practice:")
         this_week = availability("g1", {"injury_status": "Questionable"},
                                  {"g1": {**row["g1"], "week": 6}}, report_week=6,
                                  covers_report_week=True, designation_fresh=True)
@@ -182,8 +188,41 @@ class TestAvailability:
     def test_sleepers_practice_field_is_undated(self):
         note = availability("g1", {"practice_participation": "Full"}, {}, report_week=6,
                             covers_report_week=True)
-        assert note.describe() == "no game-status designation; practice (Sleeper, undated): Full"
+        assert note.describe() == ("no game-status designation; practice (Sleeper, undated): "
+                                   "Full — not on his team's wk6 report so far")
         assert "wk6 practice" not in note.describe()
+
+    def test_an_older_practice_only_row_says_what_this_week_shows(self):
+        row = {"g1": {"week": 5, "report_status": "", "practice_status": "Did Not Participate",
+                      "body_part": "Hip"}}
+        off = availability("g1", {}, row, report_week=6, covers_report_week=False)
+        assert off.describe() == ("no game-status designation (Hip, wk5); wk5 practice: "
+                                  "Did Not Participate — no current wk6 report for his team")
+        assert not off.current
+        on = availability("g1", {}, row, report_week=6, covers_report_week=True)
+        assert on.describe().endswith("— not on his team's wk6 report so far")
+
+    def test_report_coverage_is_per_team(self):
+        """A Monday-night team files its first report days after the rest:
+        one team's week-6 rows say nothing about a team that has not filed."""
+        inj = pd.DataFrame([
+            {"week": 6, "team": "KC", "gsis_id": "g1", "report_status": "",
+             "practice_status": "Full", "report_primary_injury": "", "practice_primary_injury": ""},
+            {"week": 5, "team": "WAS", "gsis_id": "g2", "report_status": "Out",
+             "practice_status": "Did Not Participate", "report_primary_injury": "Knee",
+             "practice_primary_injury": ""}])
+        reported = reported_teams(inj, 6)
+        assert reported == frozenset({"KC"})
+        assert team_report_covered(True, reported, "KC")
+        assert not team_report_covered(True, reported, "WAS")
+        assert not team_report_covered(False, reported, "KC")
+        assert team_report_covered(True, None, "WAS"), "no team column: league-wide flag"
+        idx = injury_index(inj, 6)
+        was = availability("g2", {}, idx, report_week=6,
+                           covers_report_week=team_report_covered(True, reported, "WAS"))
+        assert was.describe().endswith("— no current wk6 report for his team")
+        assert "not on" not in was.describe()
+        assert reported_teams(inj.drop(columns=["team"]), 6) is None
 
     def test_this_weeks_designation_is_marked_current(self):
         note = availability("g1", {}, {"g1": {"week": 2, "report_status": "Out",
@@ -328,6 +367,16 @@ def test_a_team_missing_from_a_loaded_week_is_unknown_not_bye(
     assert len(absent) and (absent.opp == "?").all()
     assert not (absent.opp == "BYE").any()
     assert absent["implied"].isna().all()
+    # and the report says why, instead of 'All inputs current.'
+    assert any("has no game row" in n and "UNKNOWN, not a bye" in n for n in report.notes)
+    assert "never a bye" in report.to_markdown()
+
+
+def test_a_player_with_no_nfl_team_is_not_sent_to_check_a_game():
+    from gridiron.weekly import no_game_row_reason
+    assert no_game_row_reason("", 6).startswith("no NFL team on this player's record")
+    assert "check the game" not in no_game_row_reason("", 6)
+    assert no_game_row_reason("CHI", 6).startswith("CHI has no week-6 game row")
 
 
 def test_a_declared_bye_player_is_marked_bye_with_no_implied_total(

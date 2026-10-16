@@ -14,7 +14,10 @@ committed fixtures (invented league, invented owner). Pins:
      P(win) abstains — nothing is filled in;
   6. the archive is what the page showed, and grading it leaks nothing;
   7. --anonymous keeps the league name off the page; the stdout summary
-     never names a player.
+     never names a player;
+  8. ABSENCE IS NOT A BYE: a team with no game row and no declared bye is
+     UNKNOWN — its players abstain (no projected 0), stale schedule or
+     fresh; Out still withholds at 0; a declared bye is withheld at 0.
 """
 from __future__ import annotations
 
@@ -599,9 +602,11 @@ def test_a_test_that_found_no_factor_shows_the_raw_number_labelled_tested(tmp_pa
 
 # ------------------------------------------------- absence is never a bye
 
-def _render_with_schedule(tmp_path: Path, tag: str, edit) -> dict:
+def _render_with_schedule(tmp_path: Path, tag: str, edit, *, schedule_age=None,
+                          players=None) -> dict:
     """The complete scenario with its week-3 schedule edited, re-recorded in
-    the manifest at the same as-of (so freshness is unchanged)."""
+    the manifest at the same as-of (so freshness is unchanged) unless
+    `schedule_age` re-dates it; `players` edits the Sleeper player map."""
     import pandas as pd
     from gridiron import ingest as ing
     root = tmp_path / tag
@@ -613,8 +618,13 @@ def _render_with_schedule(tmp_path: Path, tag: str, edit) -> dict:
     e = m.get("schedules")
     m.record("schedules", path=directory / "schedules.parquet", rows=len(sched), source=e.source,
              weeks=sorted({int(w) for w in sched["week"].dropna()}),
-             as_of=datetime.fromisoformat(e.as_of))
+             as_of=(NOW - schedule_age) if schedule_age else datetime.fromisoformat(e.as_of))
     m.save()
+    if players:
+        path = directory / "sleeper_players.json"
+        blob = json.loads(path.read_text("utf-8"))
+        players(blob)
+        path.write_text(json.dumps(blob), "utf-8")
     out = tmp_path / "out" / tag
     assert CLI.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
                      "--out-dir", str(out), "--archive-root", str(tmp_path / "arch" / tag),
@@ -655,3 +665,43 @@ def test_a_bye_the_schedule_declares_is_still_projected_zero(tmp_path):
     assert p["projected"] == 0 and p["withheld"]
     assert any("BYE week (declared by the schedule)" in r for r in p["reasons"])
     assert p["lock_known"] is True and "BYE" in p["lock_note"]
+
+
+def test_a_stale_schedule_does_not_turn_a_missing_row_into_a_game(tmp_path):
+    """Freshness gates actions; it does not decide which teams have a game.
+    A stale frame that carries the week still has no row for CHI."""
+    from datetime import timedelta
+    rec = _render_with_schedule(tmp_path, "stale_gap", lambda s: _without_team(s, "CHI"),
+                                schedule_age=timedelta(days=10))
+    assert any(src.startswith("schedules") and "STALE" in src for src in rec["sources"])
+    p = next(x for x in rec["roster"] if x["team"] == "CHI" and x["lineup"] == "START")
+    assert p["projected"] is None and "no week-3 game row" in " ".join(p["reasons"])
+    assert rec["matchup"]["pwin"] is None
+
+
+def test_out_on_a_team_with_no_game_row_is_still_withheld_at_zero(tmp_path):
+    """A designation that already rules him out wins over the schedule gap."""
+    def out(blob):
+        blob["6790"]["injury_status"] = "Out"
+    rec = _render_with_schedule(tmp_path, "out_gap", lambda s: _without_team(s, "CHI"),
+                                players=out)
+    p = next(x for x in rec["roster"] if x["sleeper_id"] == "6790")
+    assert p["projected"] == 0 and p["withheld"]
+    assert any("designated Out" in r for r in p["reasons"])
+
+
+def test_a_free_agent_on_a_team_with_no_game_row_is_not_projected(tmp_path):
+    rec = _render_with_schedule(tmp_path, "pool_gap", lambda s: _without_team(s, "CHI"))
+    fa = next(x for x in rec["radar"]["pool"] if x["team"] == "CHI")
+    assert fa["projected"] is None, "the waiver pool follows the same rule as the roster"
+    note = next(n for n in rec["notes"] if "no week-3 game row" in n)
+    assert "not projected (no guessed 0)" in note and "except a team defense" in note
+
+
+def test_a_team_defense_with_no_game_row_is_left_out_and_named(tmp_path):
+    rec = _render_with_schedule(tmp_path, "def_gap", lambda s: _without_team(s, "SEA"))
+    d = next(x for x in rec["roster"] if x["position"] == "DEF" and x["lineup"] == "START")
+    assert d["team"] == "SEA" and d["projected"] is None
+    assert any("no week-3 game row" in r for r in d["reasons"])
+    m = rec["matchup"]
+    assert m["pwin"] is not None and "SEA DST" in m["pwin_reason"]
