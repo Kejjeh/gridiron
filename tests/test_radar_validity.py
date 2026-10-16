@@ -21,6 +21,7 @@ pass found, each pinned by a reproduction written before its fix.
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import json
 import re
 import sys
@@ -310,3 +311,80 @@ def test_the_build_check_reads_its_own_page_and_compares_instants():
     assert "res.stamp>OWN" not in js and "Date.parse(res.stamp)" in js
     assert "'online'" in js
     assert "still usable" not in js
+
+
+# ---------------------------------------------- the matchup's own expiry
+
+def test_the_win_probability_expires_with_the_evidence_it_rests_on(tmp_path):
+    """The P(win) block used to carry no expiry: the moves beside it read
+    EXPIRED on the reader's clock while '55%' stayed up as if current."""
+    html = _render(tmp_path, "complete")
+    block = re.search(r'<div class="pwin"([^>]*)>', html)
+    assert block, "the matchup numbers sit in one gated block"
+    attrs = block.group(1)
+    assert 'data-gated=""' in attrs
+    # the matchup gate's own sources (league snapshot, designations) expire at
+    # midnight ET in this fixture, the same instant as the page's moves
+    assert 'data-valid-until="2026-09-27T04:00:00+00:00"' in attrs
+    assert "data-expire-text=\"EXPIRED — the " in attrs and "P(win)" in attrs
+    body = html[block.end():html.index("</details></div>", block.end())]
+    assert '<span class="vstate"></span>' in body and "win probability" in body
+    assert "LAST KNOWN" not in body
+
+
+def test_a_win_probability_built_on_stale_inputs_is_marked_last_known(tmp_path):
+    html = _render(tmp_path, "stale")
+    block = re.search(r'<div class="pwin"([^>]*)>', html)
+    assert block and "data-held=" in block.group(1) and "data-gated" not in block.group(1)
+    body = html[block.end():html.index("</details></div>", block.end())]
+    assert "<b>LAST KNOWN</b>" in body and "(last known) win probability" in body
+
+
+NODE = shutil.which("node") or ("/opt/node22/bin/node" if Path("/opt/node22/bin/node").exists()
+                                else None)
+
+_VALIDITY_RUNNER = r"""
+const fs = require('fs');
+const [,, jsPath] = process.argv;
+function el(attrs){ const a = Object.assign({}, attrs), v = {textContent:''};
+  return {getAttribute(k){ return k in a ? a[k] : null; }, setAttribute(k, x){ a[k] = String(x); },
+          removeAttribute(k){ delete a[k]; }, hasAttribute(k){ return k in a; },
+          querySelector(q){ return q === '.vstate' ? v : null; }, attrs: a, vstate: v}; }
+const meta = el({content: '2026-09-27T04:00:00Z', 'data-why': 'why'});
+const page = el({'data-gated': '', 'data-expire-text': 'page expired'});
+const later = el({'data-gated': '', 'data-valid-until': '2026-09-27T10:00:00Z', 'data-expire-text': 'own expired'});
+const earlier = el({'data-gated': '', 'data-valid-until': '2026-09-27T01:00:00Z', 'data-expire-text': 'own expired'});
+const ungated = el({'data-valid-until': '2026-09-27T01:00:00Z'});
+const nodes = [page, later, earlier, ungated];
+global.document = {querySelector(q){ return q.indexOf('gridiron-valid-until') >= 0 ? meta : null; },
+  querySelectorAll(q){ return q.indexOf('data-live-count') >= 0 ? [] : nodes.slice(0, 3); },
+  getElementById(){ return null; }, addEventListener(){}, hidden: false};
+global.window = {}; global.setInterval = function(){};
+eval(fs.readFileSync(jsPath, 'utf8'));
+const out = {};
+for (const [k, t] of [['t0', '2026-09-27T00:00:00Z'], ['t1', '2026-09-27T02:00:00Z'],
+                      ['t2', '2026-09-27T05:00:00Z'], ['t3', '2026-09-27T11:00:00Z']]) {
+  window.gridironValidity.tick(Date.parse(t));
+  out[k] = {page: page.attrs['data-live'] || '', later: later.attrs['data-live'] || '',
+            earlier: earlier.attrs['data-live'] || '', text: later.vstate.textContent};
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="no Node runtime on this machine")
+def test_an_element_with_its_own_evidence_expires_on_its_own_instant(tmp_path):
+    import subprocess
+    js = tmp_path / "validity.js"
+    js.write_text(theme.VALIDITY_JS, "utf-8")
+    runner = tmp_path / "run.js"
+    runner.write_text(_VALIDITY_RUNNER, "utf-8")
+    proc = subprocess.run([NODE, str(runner), str(js)], capture_output=True, text=True,
+                          encoding="utf-8", timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["t0"] == {"page": "", "later": "", "earlier": "", "text": ""}
+    assert got["t1"]["earlier"] == "expired" and not got["t1"]["page"] and not got["t1"]["later"]
+    # past the page's instant but not the element's own: the element stays current
+    assert got["t2"]["page"] == "expired" and got["t2"]["later"] == ""
+    assert got["t3"]["later"] == "expired" and got["t3"]["text"] == "own expired"

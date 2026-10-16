@@ -595,3 +595,63 @@ def test_a_test_that_found_no_factor_shows_the_raw_number_labelled_tested(tmp_pa
     assert "before calibration" not in html and "NOT validated" not in html
     assert "tested, no correction" in html
     assert rec["evaluation"]["pwin_calibrated"] is True
+
+
+# ------------------------------------------------- absence is never a bye
+
+def _render_with_schedule(tmp_path: Path, tag: str, edit) -> dict:
+    """The complete scenario with its week-3 schedule edited, re-recorded in
+    the manifest at the same as-of (so freshness is unchanged)."""
+    import pandas as pd
+    from gridiron import ingest as ing
+    root = tmp_path / tag
+    SCN.build_scenario(root, "complete", now=NOW)
+    directory = ing.season_cache(2026, root)
+    sched = edit(pd.read_parquet(directory / "schedules.parquet"))
+    sched.to_parquet(directory / "schedules.parquet", index=False)
+    m = ing.Manifest.load(directory, 2026)
+    e = m.get("schedules")
+    m.record("schedules", path=directory / "schedules.parquet", rows=len(sched), source=e.source,
+             weeks=sorted({int(w) for w in sched["week"].dropna()}),
+             as_of=datetime.fromisoformat(e.as_of))
+    m.save()
+    out = tmp_path / "out" / tag
+    assert CLI.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
+                     "--out-dir", str(out), "--archive-root", str(tmp_path / "arch" / tag),
+                     "--now", NOW.isoformat()]) == 0
+    return json.loads((out / "dashboard_latest.json").read_text("utf-8"))
+
+
+def _without_team(sched, team: str):
+    week3 = sched["week"] == 3
+    return sched.loc[~(week3 & ((sched["home_team"] == team) | (sched["away_team"] == team)))]
+
+
+def test_a_team_with_no_game_row_is_unknown_in_the_projection_not_a_bye(tmp_path):
+    """CLAUDE.md: absence is NEVER a bye unless the schedule declares one.
+    The projection used to read a missing row as 'BYE week: projected 0' while
+    the lock layer, for the same player, said UNKNOWN."""
+    rec = _render_with_schedule(tmp_path, "gap", lambda s: _without_team(s, "CHI"))
+    p = next(x for x in rec["roster"] if x["team"] == "CHI" and x["lineup"] == "START")
+    assert p["projected"] is None and not p["withheld"], "unknown, not a projected 0"
+    why = " ".join(p["reasons"])
+    assert "no week-3 game row" in why and "not a bye" in why and "BYE week" not in why
+    assert p["lock_known"] is False                    # the lock layer agrees
+    # an unprojected non-DEF starter: P(win) abstains rather than counting a guessed 0
+    assert rec["matchup"]["pwin"] is None
+
+
+def test_a_bye_the_schedule_declares_is_still_projected_zero(tmp_path):
+    import pandas as pd
+
+    def declare(s):
+        s = _without_team(s, "CHI")
+        row = {c: None for c in s.columns}
+        row.update(week=3, home_team="CHI", away_team="", game_type="BYE", season=2026)
+        return pd.concat([s, pd.DataFrame([row])], ignore_index=True)
+
+    rec = _render_with_schedule(tmp_path, "declared", declare)
+    p = next(x for x in rec["roster"] if x["team"] == "CHI" and x["lineup"] == "START")
+    assert p["projected"] == 0 and p["withheld"]
+    assert any("BYE week (declared by the schedule)" in r for r in p["reasons"])
+    assert p["lock_known"] is True and "BYE" in p["lock_note"]

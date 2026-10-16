@@ -35,6 +35,7 @@ import pandas as pd
 from gridiron.freshness import SourceFreshness, Status, WeekContext, degradations
 from gridiron.ids import Crosswalk, is_dst_id, nflverse_team, normalize_id
 from gridiron.league_config import LEAGUE_NAME, ROSTER_SLOTS, SEASON_YEAR
+from gridiron.lineup import BYE_GAME_TYPES, kickoff_index
 from gridiron.scoring import ScoringCoverage
 from gridiron.vegas import implied_totals_from_nflverse
 
@@ -83,6 +84,13 @@ class AvailabilityNote:
     designation_fresh: bool = False
     #: Why not, when it is not — e.g. "pulled 720h ago, over the 24h limit".
     designation_reason: str = ""
+    #: Where `practice` came from. nflverse practice rows are week-keyed (the
+    #: row's week is `source_week`, which may be an EARLIER week than the
+    #: report: the index keeps the latest row at or before it); Sleeper's
+    #: `practice_participation` is a live field with no week at all. Either
+    #: way the page prints which, so last week's "Limited" never reads as
+    #: this week's.
+    practice_from_sleeper: bool = False
 
     @property
     def known(self) -> bool:
@@ -98,9 +106,16 @@ class AvailabilityNote:
             return self.designation_fresh
         return self.source_week == self.report_week
 
+    def _practice(self) -> str:
+        if not self.practice:
+            return ""
+        if self.practice_from_sleeper or self.source_week is None:
+            return f"; practice (Sleeper, undated): {self.practice}"
+        return f"; wk{self.source_week} practice: {self.practice}"
+
     def describe(self) -> str:
         tail = f" ({self.body_part})" if self.body_part else ""
-        prac = f"; practice: {self.practice}" if self.practice else ""
+        prac = self._practice()
         if self.designation:
             if self.designation_fresh:
                 return f"{self.designation}{tail}{prac}"
@@ -110,12 +125,14 @@ class AvailabilityNote:
         if self.report_status:
             if self.source_week == self.report_week:
                 return f"{self.report_status}{tail} — wk{self.report_week} report{prac}"
-            return (f"wk{self.source_week} report: {self.report_status}{tail}"
-                    f" — NO wk{self.report_week} designation yet{prac}")
+            # The newest row is an earlier week's. With this week's report
+            # loaded, he is not on it (so far); without it, nothing is known.
+            return (f"wk{self.source_week} report: {self.report_status}{tail}{prac}"
+                    + (f" — not on the wk{self.report_week} report so far"
+                       if self.covers_report_week else
+                       f" — NO wk{self.report_week} report loaded yet"))
         if self.practice:
-            wk = self.source_week if self.source_week is not None else self.report_week
-            return (f"no game-status designation{tail}; wk{wk} practice: "
-                    f"{self.practice}")
+            return f"no game-status designation{tail}{prac}"
         if self.covers_report_week:
             return f"no designation on the wk{self.report_week} report"
         return (f"{UNKNOWN} — no wk{self.report_week} injury report loaded; "
@@ -154,10 +171,42 @@ BYE = GameContext(opponent=BYE_LABEL, home=False, kickoff="", total_line=None,
                   spread_line=None, implied_total=None)
 NO_SCHEDULE = GameContext(opponent=UNKNOWN_OPPONENT, home=True, kickoff="",
                           total_line=None, spread_line=None, implied_total=None)
+#: A team with no row in a week the schedule DOES cover, and no bye the
+#: schedule declares. A week off and a row that never arrived are the same
+#: bytes, so this is UNKNOWN — the projection abstains, exactly as
+#: `gridiron.lineup.lock_state` leaves the lock UNKNOWN for the same team.
+NO_GAME_ROW = GameContext(opponent=UNKNOWN_OPPONENT, home=True, kickoff="",
+                          total_line=None, spread_line=None, implied_total=None)
+
+
+def game_for(team: str, games: Mapping[str, GameContext], *, schedule_cover: bool,
+             declared_bye: frozenset[str] = frozenset()) -> GameContext:
+    """The week's game for one NFL team, with ONE rule for absence.
+
+    A team in the week's rows has its game. A team absent from them is on
+    BYE only when the schedule DECLARES the bye (`KickoffIndex.declared_bye`
+    — the lock layer's reader for that statement); otherwise it is
+    `NO_GAME_ROW` (UNKNOWN), never an inferred bye. With no schedule for the
+    week at all it is `NO_SCHEDULE`."""
+    if team in games:
+        return games[team]
+    if not schedule_cover:
+        return NO_SCHEDULE
+    return BYE if team in declared_bye else NO_GAME_ROW
+
+
+#: The abstention a projection takes for `NO_GAME_ROW`.
+def no_game_row_reason(team: str, week: int) -> str:
+    return (f"{team or 'his team'} has no week-{int(week)} game row and the schedule "
+            f"declares no bye: UNKNOWN, not a bye (a week off and a row that never "
+            f"arrived look the same) — check the game in Sleeper")
 
 
 def schedule_index(schedule: pd.DataFrame, week: int) -> dict[str, GameContext]:
-    """team -> GameContext for one week. Teams absent from the map are on bye.
+    """team -> GameContext for one week's GAMES. A team absent from the map
+    has no game row; whether that is a bye is `game_for`'s question, and the
+    answer is yes only when the schedule declares it (rows of a bye game
+    type are statements, not games, and are skipped here).
 
     A row with no posted line yields a GameContext with `implied_total=None`;
     it is never back-filled from a league average.
@@ -167,6 +216,8 @@ def schedule_index(schedule: pd.DataFrame, week: int) -> dict[str, GameContext]:
         return out
     wk = schedule.loc[schedule["week"] == int(week)]
     for row in wk.itertuples():
+        if str(getattr(row, "game_type", "") or "").strip().upper() in BYE_GAME_TYPES:
+            continue        # a declared bye is a statement, not a game (`game_for`)
         total = getattr(row, "total_line", None)
         spread = getattr(row, "spread_line", None)
         total = None if total is None or pd.isna(total) else float(total)
@@ -230,9 +281,11 @@ def availability(gsis_id: str, sleeper_player: Mapping[str, object] | None,
         sources.append("sleeper" if designation_fresh else "sleeper (STALE)")
     if row:
         sources.append(f"nflverse wk{row.get('week')}")
+    nfl_practice = row.get("practice_status", "")
+    sleeper_practice = "" if nfl_practice else _txt(sp.get("practice_participation"))
     return AvailabilityNote(
         designation=_txt(sp.get("injury_status")),
-        practice=row.get("practice_status", "") or _txt(sp.get("practice_participation")),
+        practice=nfl_practice or sleeper_practice,
         report_status=row.get("report_status", ""),
         body_part=row.get("body_part", "") or _txt(sp.get("injury_body_part")),
         source_week=row.get("week"),
@@ -241,6 +294,7 @@ def availability(gsis_id: str, sleeper_player: Mapping[str, object] | None,
         sources=tuple(sources),
         designation_fresh=bool(designation_fresh),
         designation_reason=designation_reason,
+        practice_from_sleeper=bool(sleeper_practice),
     )
 
 
@@ -363,7 +417,8 @@ def build_report(
                                   "injuries")
     schedule_cover = _covers_week(schedule, context.report_week, sources,
                                   "schedules")
-    unplayed = BYE if schedule_cover else NO_SCHEDULE
+    kick = kickoff_index(schedule, context.report_week) if schedule_cover else None
+    declared_bye = kick.declared_bye if kick is not None else frozenset()
     std_by_gsis = (std.set_index("gsis_id") if len(std) and "gsis_id" in std
                    else pd.DataFrame())
 
@@ -375,7 +430,8 @@ def build_report(
         lineup = ("IR" if sid in reserve else
                   "START" if sid in starters else "BENCH")
         nfl_team = _txt(sp.get("team")) or (sid if dst else "")
-        game = games.get(nflverse_team(nfl_team), unplayed)
+        game = game_for(nflverse_team(nfl_team), games, schedule_cover=schedule_cover,
+                        declared_bye=declared_bye)
         note = availability(gid, sp, inj, report_week=context.report_week,
                             covers_report_week=injuries_cover,
                             designation_fresh=designation_fresh,

@@ -499,7 +499,9 @@ def diff_archives(previous: Mapping[str, object],
             items.append(Change("availability", name,
                                 "now WITHHELD (projected 0, will not play)"
                                 if b.get("withheld") else
-                                "no longer withheld — back in the projection"))
+                                "no longer withheld — back in the projection"
+                                if pb is not None else
+                                "no longer withheld — now abstained (no number)"))
         if bool(a.get("locked")) != bool(b.get("locked")):
             items.append(Change("lock", name,
                                 "LOCKED (his game has kicked off)"

@@ -15,8 +15,9 @@ two small inline scripts:
   * `VALIDITY_JS` re-judges, on the reader's clock, the two things a build
     fixes at build time and the clock then overtakes: the instant the
     evidence behind the page's moves expires (`gridiron-valid-until`, from
-    the gate's own cadences) and each move's kickoff deadline
-    (`data-deadline`). Past either, the element is marked and its move is
+    the gate's own cadences; an element resting on different evidence
+    carries its own `data-valid-until`, e.g. the matchup's win probability)
+    and each move's kickoff deadline (`data-deadline`). Past either, the element is marked and its move is
     withdrawn in words the build wrote; nothing is recomputed and nothing
     is fetched.
   * `SNAPSHOT_JS` asks the HOSTING server, every five minutes while the tab
@@ -169,6 +170,7 @@ li[data-live] .badge,[data-live] .badge.v-LINEUP,[data-held] .badge.v-LINEUP{bac
 .dcard[data-live] a.btn.primary{background:var(--chip);color:var(--fg);border-color:var(--line2)}
 #validity{border-left-color:var(--warn)}.banner[data-live]{border-left-color:var(--warn)}.banner[data-live] b.ok{color:var(--muted);text-decoration:line-through}
 .headline[data-live] h1{color:var(--muted);text-decoration:line-through;text-decoration-thickness:2px}
+.pwin[data-live] .kpi b,.pwin[data-held] .kpi b{color:var(--muted);text-decoration:line-through}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .chips button{min-height:40px;padding:6px 14px;font-size:var(--t-s)}
 .chips button[aria-pressed=true]{background:var(--fg);color:var(--lime-ink);border-color:transparent}
@@ -355,7 +357,8 @@ function tick(nowMs){
   var now=(typeof nowMs==='number')?nowMs:Date.now()+S.skewMs, expired=!isNaN(UNTIL)&&now>=UNTIL, lapsed=0, changed=false;
   var nodes=document.querySelectorAll('[data-deadline],[data-gated],[data-held]');
   for(var i=0;i<nodes.length;i++){ var el=nodes[i], dl=Date.parse(el.getAttribute('data-deadline')||'');
-    var isLapsed=!isNaN(dl)&&now>=dl, state=isLapsed?'lapsed':(expired&&el.hasAttribute('data-gated'))?'expired':'';
+    var own=Date.parse(el.getAttribute('data-valid-until')||''), gone=isNaN(own)?expired:now>=own;
+    var isLapsed=!isNaN(dl)&&now>=dl, state=isLapsed?'lapsed':(gone&&el.hasAttribute('data-gated'))?'expired':'';
     if((el.getAttribute('data-live')||'')!==state){ changed=true; if(state) el.setAttribute('data-live',state); else el.removeAttribute('data-live'); }
     var built=el.getAttribute('data-verdict-built');
     if(built!==null){ var v=isLapsed?(el.getAttribute('data-lapse-verdict')||built):built; if(el.getAttribute('data-verdict')!==v){ el.setAttribute('data-verdict',v); changed=true; } }

@@ -83,7 +83,8 @@ from gridiron.waivers import (
     build_board, drop_rule, eligibility, pool_players, roster_capacity,
 )
 from gridiron.weekly import (
-    BYE, NO_SCHEDULE, availability, injury_index, schedule_index,
+    BYE, NO_GAME_ROW, NO_SCHEDULE, availability, game_for, injury_index,
+    no_game_row_reason, schedule_index,
 )
 from gridiron.winprob import (RAW as RAW_CALIBRATION, Calibration, load_calibration,
                               matchup_win_prob)
@@ -482,6 +483,9 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
     games = schedule_index(schedule, week) if schedule is not None else {}
     kickoffs = kickoff_index(schedule, week)
     schedule_cover = _covers(schedule, week, sources, "schedules")
+    # The projection's rule for a team with no game row is the lock layer's:
+    # BYE only where the schedule declares one (`lineup.BYE_GAME_TYPES`).
+    declared_bye = kickoffs.declared_bye if kickoffs is not None else frozenset()
     injuries_cover = _covers(injuries, week, sources, "injuries")
     inj = injury_index(injuries, week) if injuries is not None else {}
     players_source = next((s for s in sources if s.name == "sleeper_players"), None)
@@ -539,7 +543,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         name = (str(rec.get("full_name") or "") or (f"{team} DST" if dst else "")
                 or crosswalk.display_name(gid) or f"sleeper:{sid}")
         flags: list[str] = []
-        game = games.get(team, BYE if schedule_cover else NO_SCHEDULE)
+        game = game_for(team, games, schedule_cover=schedule_cover, declared_bye=declared_bye)
         implied = game.implied_total
         if not scoring.scorable(pos) and pos in ("QB", "K"):
             proj = abstain(f"scoring inputs incomplete for {pos}: {scoring.reason()}")
@@ -557,9 +561,11 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                             designation_fresh=designation_fresh,
                             designation_reason=designation_reason)
         avail = "n/a (team defense)" if dst else note.describe()
+        if proj.usable and game is NO_GAME_ROW:
+            proj = abstain(no_game_row_reason(team, week), *proj.reasons)
         if proj.usable:
             if game is BYE:
-                proj = proj.withheld("BYE week: projected 0")
+                proj = proj.withheld("BYE week (declared by the schedule): projected 0")
             desig = str(note.designation or "").upper()
             if desig in WITHHOLD_DESIGNATIONS:
                 proj = proj.withheld(
@@ -646,7 +652,9 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
 
     def projector(sid: str, gid: str, pos: str, team: str) -> Projection:
         team = nflverse_team(team)
-        game = games.get(team, BYE if schedule_cover else NO_SCHEDULE)
+        game = game_for(team, games, schedule_cover=schedule_cover, declared_bye=declared_bye)
+        if game is NO_GAME_ROW:
+            return abstain(no_game_row_reason(team, week))
         if is_dst_id(sid):
             return defense(team) or abstain("no projection for this team defense")
         if not gid:
@@ -657,7 +665,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                            implied_total=game.implied_total, evidence=evidence),
                    sid, gid, pos, lock_state(team, kickoffs, now).kickoff)
         if p.usable and game is BYE:
-            p = p.withheld("BYE week: projected 0")
+            p = p.withheld("BYE week (declared by the schedule): projected 0")
         rec = sleeper_players.get(sid) or {}
         desig = str(rec.get("injury_status") or "").upper()
         if p.usable and desig in WITHHOLD_DESIGNATIONS:
@@ -707,8 +715,9 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             f"{unexplained} team(s) this schedule knows about have no week-"
             f"{kickoffs.week} game row and no declared bye. A week off and a "
             f"row that never arrived look the same from here, so those "
-            f"absences are UNKNOWN rather than byes and any player on those "
-            f"teams is frozen.")
+            f"absences are UNKNOWN rather than byes: any player on those "
+            f"teams is frozen and not projected (no guessed 0), and a matchup "
+            f"that starts one has no P(win).")
 
     extra: dict[str, list[tuple[str, str]]] = {}
     if kickoffs is not None and not kickoffs.rows_intact:
@@ -2229,6 +2238,28 @@ _EXPIRED = ("EXPIRED — the evidence behind this move has passed its freshness 
 _HELD = "WITHHELD — built on stale inputs; last known picture, not advice."
 
 
+_PWIN_HELD = ("LAST KNOWN — the league snapshot or designations behind this matchup were "
+              "stale when the page was built; not a current number.")
+
+
+def _pwin_attrs(d: "Dashboard", gate) -> str:
+    """The matchup block's expiry: its OWN evidence (the matchup gate's
+    sources), which can outlive or predate the page's move expiry. Held at
+    build time when that evidence is already stale."""
+    if not gate.allowed:
+        return f" data-held=\"{_e(_PWIN_HELD)}\""
+    until, name = valid_until(d.sources, ["matchup"], d.generated)
+    if until is None:
+        return ""
+    when = until.astimezone(timezone.utc)
+    text = (f"EXPIRED — the {_SOURCE_WORDS.get(name, name)} behind this matchup passed its "
+            f"freshness limit at {when:%a %d %b %H:%M} UTC, after this page was built; the "
+            f"margin and P(win) are the last known numbers, not current. Check Sleeper or "
+            f"reload a newer build.")
+    return (f" data-gated=\"\" data-valid-until=\"{_e(when.isoformat(timespec='seconds'))}\""
+            f" data-expire-text=\"{_e(text)}\"")
+
+
 def _live_attrs(deadline: datetime | None, *, gated: bool, move: bool,
                 held: bool = False) -> str:
     out = ""
@@ -3052,13 +3083,25 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     if m is None:
         out.append(f"<p class=\"warn\"><b>No matchup view:</b> {_e(d.matchup_reason)}</p>")
     else:
+        # The margin and P(win) rest on the matchup gate's sources (both
+        # lineups, both sides' designations). They expire on the reader's
+        # clock with THAT evidence, and are marked last-known at build time
+        # when it is already stale — never left up as current.
+        mgate = d.gate.gate("matchup")
+        out.append(f"<div class=\"pwin\"{_pwin_attrs(d, mgate)}>")
         out.append("<div class=\"kpi\">"
                    f"<div>my lineup<b>{_num(m.my_mean)} ± {_num(m.my_sd)}</b></div>"
                    f"<div>roster #{m.opponent_roster_id}<b>{_num(m.opp_mean)} ± {_num(m.opp_sd)}</b></div>"
                    f"<div>margin<b>{_num(m.margin, 1, True)}</b></div></div>")
+        out.append("<span class=\"vstate\"></span>")
+        if not mgate.allowed:
+            out.append(f"<p class=\"small warn\"><b>LAST KNOWN</b> — {_e(mgate.why())}. These "
+                       "numbers are what the page last saw, not the current matchup. Verify first: "
+                       + _e("; ".join(mgate.verify())) + ".</p>")
         cal = m.calibration
         out.append(f"<details><summary>{cal.badge.lower()} "
-                   "win probability (not used to rank any action above)</summary>")
+                   + ("" if mgate.allowed else "(last known) ")
+                   + "win probability (not used to rank any action above)</summary>")
         pw = ("<span class=\"bad\">abstained</span>" if m.pwin is None
               else f"<b>{m.pwin:.0%}</b>")
         badge = f"<span class=\"badge {'go' if cal.validated else 'warn'}\">{cal.badge}</span>"
@@ -3087,7 +3130,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                     for a in d.plan.alternatives[:10]]
             out.append(_table(["bench player", "into", "Δ pts",
                                f"ΔP(win) ({cal.short})"], rows, numeric=(2, 3)))
-        out.append("</details>")
+        out.append("</details></div>")
         if m.my_unprojected or m.opp_unprojected:
             out.append("<p class=\"small warn\">Unprojected starters — mine: "
                        f"{_e(', '.join(m.my_unprojected) or 'none')}; theirs: "
