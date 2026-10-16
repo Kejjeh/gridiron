@@ -290,6 +290,7 @@ class Dashboard:
                 "time_unknown": sorted(self.locks.time_unknown),
                 "conflicting": sorted(self.locks.conflicting),
                 "declared_bye": sorted(self.locks.declared_bye),
+                "proven_bye": sorted(self.locks.proven_bye),
                 "partial_rows": self.locks.partial_rows,
                 "slate_short": self.locks.slate_short,
                 "dropped_rows": self.locks.dropped_rows,
@@ -485,11 +486,12 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
     games = schedule_index(schedule, week) if schedule is not None else {}
     kickoffs = kickoff_index(schedule, week)
     # The projection's rule for a team with no game row is the lock layer's:
-    # BYE only where the schedule declares one (`lineup.BYE_GAME_TYPES`).
+    # BYE only where the schedule declares one or proves it by count
+    # (`KickoffIndex.byes`, `lineup.proven_byes`).
     # "Covered" here is "the frame has rows for the week" (kickoff_index is
     # None exactly when it has none), fresh or not: freshness gates actions,
     # it does not turn a missing row into a game.
-    declared_bye = kickoffs.declared_bye if kickoffs is not None else frozenset()
+    byes = kickoffs.byes if kickoffs is not None else frozenset()
     rows_cover = kickoffs is not None
     reported = reported_teams(injuries, week)
     injuries_cover = _covers(injuries, week, sources, "injuries")
@@ -549,7 +551,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         name = (str(rec.get("full_name") or "") or (f"{team} DST" if dst else "")
                 or crosswalk.display_name(gid) or f"sleeper:{sid}")
         flags: list[str] = []
-        game = game_for(team, games, schedule_cover=rows_cover, declared_bye=declared_bye)
+        game = game_for(team, games, schedule_cover=rows_cover, byes=byes)
         implied = game.implied_total
         if not scoring.scorable(pos) and pos in ("QB", "K"):
             proj = abstain(f"scoring inputs incomplete for {pos}: {scoring.reason()}")
@@ -568,7 +570,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                             designation_fresh=designation_fresh,
                             designation_reason=designation_reason)
         avail = "n/a (team defense)" if dst else note.describe()
-        # No game row and no declared bye: UNKNOWN, not projected. A
+        # No game row and no declared or proven bye: UNKNOWN, not projected. A
         # designation that already rules him out still wins (withheld at 0
         # below, with its own reason), and a team defense carries the reason
         # even when it had no projection to lose.
@@ -577,7 +579,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             proj = abstain(no_game_row_reason(team, week), *proj.reasons)
         if proj.usable:
             if game is BYE:
-                proj = proj.withheld("BYE week (declared by the schedule): projected 0")
+                proj = proj.withheld("BYE week (the schedule declares or proves it): projected 0")
             desig = str(note.designation or "").upper()
             if desig in WITHHOLD_DESIGNATIONS:
                 proj = proj.withheld(
@@ -665,7 +667,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
 
     def projector(sid: str, gid: str, pos: str, team: str) -> Projection:
         team = nflverse_team(team)
-        game = game_for(team, games, schedule_cover=rows_cover, declared_bye=declared_bye)
+        game = game_for(team, games, schedule_cover=rows_cover, byes=byes)
         rec = sleeper_players.get(sid) or {}
         desig = str(rec.get("injury_status") or "").upper()
         if game is NO_GAME_ROW and desig not in WITHHOLD_DESIGNATIONS:
@@ -680,7 +682,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                            implied_total=game.implied_total, evidence=evidence),
                    sid, gid, pos, lock_state(team, kickoffs, now).kickoff)
         if p.usable and game is BYE:
-            p = p.withheld("BYE week (declared by the schedule): projected 0")
+            p = p.withheld("BYE week (the schedule declares or proves it): projected 0")
         if p.usable and desig in WITHHOLD_DESIGNATIONS:
             p = p.withheld(f"designated {rec.get('injury_status')}: projected 0"
                            + ("" if designation_fresh else " (STALE player pull)"))
@@ -719,14 +721,15 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             f"kickoff could not be established are frozen and named; no time was "
             f"invented for them and no missing team was read as a bye. "
             + "; ".join(kickoffs.problems[:4]))
-    elif kickoffs.slate_short > len(kickoffs.declared_bye):
+    elif kickoffs.slate_short > len(kickoffs.byes):
         # Not damage, and not a reason to withhold every action: the rows that
         # arrived are all sound. It only means absence cannot be read as a bye,
         # which `lock_state` already handles one player at a time.
-        unexplained = kickoffs.slate_short - len(kickoffs.declared_bye)
+        unexplained = kickoffs.slate_short - len(kickoffs.byes)
         notes.append(
             f"{unexplained} team(s) this schedule knows about have no week-"
-            f"{kickoffs.week} game row and no declared bye. A week off and a "
+            f"{kickoffs.week} game row and no bye the schedule declares or proves "
+            f"(a team's whole season present without this week). A week off and a "
             f"row that never arrived look the same from here, so those "
             f"absences are UNKNOWN rather than byes: any player on those "
             f"teams is frozen and not projected (no guessed 0), and a matchup "
@@ -3101,8 +3104,9 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
     out.append("<p class=\"small sub\">SD = mean × positional CV from QUANT_FOUNDATIONS §2.1 "
                "(a literature recommendation, not a fit). Questionable/Doubtful are flagged, "
                "never zeroed (rule #11). Withheld = will not play (a bye the schedule "
-               "declares / Out / IR), and the model's own number is kept next to it. A team "
-               "with no game row and no declared bye is not a bye: its players are not "
+               "declares or proves / Out / IR), and the model's own number is kept next to "
+               "it. A team with no game row and no declared or proven bye is not a bye: its "
+               "players are not "
                "projected (UNKNOWN, never a guessed 0).</p></div>")
 
     # ------------------------------------------------------------ 7. matchup

@@ -37,7 +37,10 @@ def _schedule(last=17, bye=("CCC", 6)):
             if bye and w == bye[1] and bye[0] in (home, away):
                 continue
             played = w < 4
-            rows.append({"week": w, "game_type": "REG", "home_team": home, "away_team": away,
+            # season 2020's shape (16 games in 17 weeks): CCC's and AAA's
+            # whole seasons are present, so week 6 is a PROVEN bye for both
+            rows.append({"season": 2020, "week": w, "game_type": "REG",
+                         "home_team": home, "away_team": away,
                          "home_score": (30.0 if home == "AAA" else 20.0) if played else None,
                          "away_score": 14.0 if played else None,
                          "roof": "dome" if home == "AAA" else "outdoors"})
@@ -84,9 +87,33 @@ def test_a_week_the_schedule_does_not_cover_is_never_a_bye():
     S = R.Schedule(_schedule(last=8), 4)
     assert S.uncovered == tuple(range(9, 18))
     line = S.project("WR", "CCC", 10.0, adjust=False)
-    assert line.byes == (6,)                                     # only the declared one
-    assert line.games == 13 and line.ros == pytest.approx(130.0)
-    assert dict((v, o) for v, o, _ in line.weeks)[12] == "?"
+    # a frame cut off at week 8 proves no season, so CCC's week-6 gap is not
+    # a bye either: every remaining week counts as played, and is named
+    assert line.byes == () and S.unproven["CCC"] == (6,)
+    assert line.games == 14 and line.ros == pytest.approx(140.0)
+    weeks = dict((v, o) for v, o, _ in line.weeks)
+    assert weeks[12] == "?" and weeks[6] == "?"
+
+
+def test_a_bye_is_counted_only_when_the_schedule_proves_it():
+    """Owner decision 2026-10-16: a count over the team's whole season, not
+    bracketing. Deleting one real game breaks the proof for both teams."""
+    from gridiron.lineup import proven_byes
+    full = _schedule()
+    assert proven_byes(full) == {"AAA": frozenset({6}), "CCC": frozenset({6})}
+    S = R.Schedule(full, 4)
+    assert S.project("WR", "CCC", 10.0, adjust=False).byes == (6,) and not S.unproven
+    # delete one real week-9 game: AAA falls one game short and proves
+    # nothing; CCC is untouched. (BBB/DDD play every week of this toy league,
+    # more games than a real season holds, so they never prove anything.)
+    week9 = full.index[(full["week"] == 9) & (full["home_team"] == "AAA")]
+    cut = full.drop(week9)
+    assert "AAA" not in proven_byes(cut) and proven_byes(cut)["CCC"] == frozenset({6})
+    S2 = R.Schedule(cut, 4)
+    assert S2.project("WR", "AAA", 10.0, adjust=False).byes == ()    # unproven -> played
+    assert S2.unproven["AAA"] == (6, 9)
+    assert proven_byes(full.drop(columns=["season"])) == {}          # no season, no proof
+    assert proven_byes(pd.concat([full, full.iloc[:1]])) .get("AAA") is None   # duplicate
     assert R.team_strength(_schedule().drop(columns=["home_score"]), 4).offense == {}
 
 

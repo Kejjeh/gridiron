@@ -20,18 +20,19 @@ Radar, Action Desk and publication releases moved to
   ABSTAINS. A stale schedule that carries the week still decides who has
   a game. An Out/IR designation still withholds at 0. A team defense is
   left out of P(win) and named, as any unprojected defense is.
-  **Accepted cost**: nflverse declares no byes, so real-bye players are
-  unprojected. Any matchup that starts one (other than a defense) has no
-  P(win) until a source declares byes. The weekly report says why its
-  opponent column shows '?'.
+  **Then (owner decision, same day)**: a bye the schedule PROVES counts
+  too (`lineup.proven_byes`: the team's whole regular season is in the
+  frame without that week). Real byes are withheld at 0 again, locks read
+  OPEN 'proven', and rest-of-season counts only proven byes (any other gap
+  is counted as played and named in its status). Only an unproven gap (a
+  cut-off or damaged pull) is UNKNOWN. CLAUDE.md's rule says so.
 - **P(win) expiry**: the margin and P(win) (the matchup block and the
   first-screen line) carry the matchup gate's own `data-valid-until`, so
   they expire on the reader's clock. `VALIDITY_JS` honours per-element
   times and raises the banner for them. They read LAST KNOWN, naming the
   stale input, when the gate is closed at build.
-- Follow-ups (not in this change): `ros.py` still counts a missing row
-  as a bye week; the first-screen free-agent count is static after
-  kickoff.
+- Also: the first-screen free-agent count is a live counter (it falls as
+  the moves lock after kickoff).
 
 ## P(win) tested: no correction, labelled TESTED (2026-10-15)
 

@@ -337,7 +337,7 @@ class TestScheduleContext:
         index = schedule_index(schedules, WEEK)
         assert game_for("NOTATEAM", index, schedule_cover=True) is NO_GAME_ROW
         assert game_for("NOTATEAM", index, schedule_cover=True,
-                        declared_bye=frozenset({"NOTATEAM"})) is BYE
+                        byes=frozenset({"NOTATEAM"})) is BYE
         assert game_for("NOTATEAM", index, schedule_cover=False) is NO_SCHEDULE
         team = next(iter(index))
         assert game_for(team, index, schedule_cover=True) is index[team]

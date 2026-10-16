@@ -1490,6 +1490,7 @@ def _embedded(*, season, week, league_id, my_rid, slots, mine_row, opp_row, my, 
         "kickoffs": kick,
         "time_unknown": sorted(kickoffs.time_unknown) if kickoffs else [],
         "declared_bye": sorted(kickoffs.declared_bye) if kickoffs else [],
+        "proven_bye": sorted(kickoffs.proven_bye) if kickoffs else [],
         "schedule_loaded": kickoffs is not None,
         "rows_intact": bool(kickoffs.rows_intact) if kickoffs else False,
         "season_teams": sorted(kickoffs.season_teams) if kickoffs else [],
@@ -1974,8 +1975,9 @@ function lockState(team,nowMs){
   if(!t) return {lock:'UNKNOWN',note:'lock state UNKNOWN: no NFL team on this player’s record',kickoff:null};
   if(D.time_unknown.indexOf(t)>=0) return {lock:'UNKNOWN',note:'lock state UNKNOWN: '+t+' has a week-'+D.week+' game but no usable kickoff time',kickoff:null};
   if(D.declared_bye.indexOf(t)>=0) return {lock:'OPEN',note:'no week-'+D.week+' game: BYE declared by the schedule',kickoff:null};
+  if((D.proven_bye||[]).indexOf(t)>=0) return {lock:'OPEN',note:'no week-'+D.week+' game: BYE (proven: '+t+"'s whole regular season"+' is in the schedule and week '+D.week+' is not one of its games)',kickoff:null};
   var k=D.kickoffs[t];
-  if(!k) return {lock:'UNKNOWN',note:'lock state UNKNOWN: the schedule carries no week-'+D.week+' game for '+t+' and declares no bye; a missing row and a week off look identical',kickoff:null};
+  if(!k) return {lock:'UNKNOWN',note:'lock state UNKNOWN: the schedule carries no week-'+D.week+' game for '+t+' and neither declares nor proves a bye; a missing row and a week off look identical',kickoff:null};
   var ms=Date.parse(k); if(isNaN(ms)) return {lock:'UNKNOWN',note:'lock state UNKNOWN: unreadable kickoff',kickoff:null};
   if(nowMs>=ms) return {lock:'LOCKED',note:'LOCKED — kicked off '+fmt(k),kickoff:ms};
   return {lock:'OPEN',note:'kicks off '+fmt(k),kickoff:ms};

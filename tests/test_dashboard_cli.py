@@ -663,7 +663,7 @@ def test_a_bye_the_schedule_declares_is_still_projected_zero(tmp_path):
     rec = _render_with_schedule(tmp_path, "declared", declare)
     p = next(x for x in rec["roster"] if x["team"] == "CHI" and x["lineup"] == "START")
     assert p["projected"] == 0 and p["withheld"]
-    assert any("BYE week (declared by the schedule)" in r for r in p["reasons"])
+    assert any("BYE week (the schedule declares or proves it)" in r for r in p["reasons"])
     assert p["lock_known"] is True and "BYE" in p["lock_note"]
 
 

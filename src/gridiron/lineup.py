@@ -153,6 +153,57 @@ LOCKED, OPEN, UNKNOWN = "LOCKED", "OPEN", "UNKNOWN"
 BYE_GAME_TYPES: frozenset[str] = frozenset({"BYE"})
 
 
+def season_shape(season: int) -> tuple[int, int]:
+    """(regular-season games per team, regular-season weeks): 16 in 17 weeks
+    through 2020, 17 in 18 weeks from 2021."""
+    return (17, 18) if int(season) >= 2021 else (16, 17)
+
+
+def proven_byes(schedule: pd.DataFrame | None) -> dict[str, frozenset[int]]:
+    """team -> the bye week(s) its schedule PROVES, by count (owner decision
+    2026-10-16, docs/DECISIONS.md).
+
+    A team's absence from week w is a proven bye only when the frame holds
+    that team's ENTIRE regular season: exactly G regular-season games
+    (`season_shape`) in G different weeks, all within weeks 1..W. A team
+    cannot play a (G+1)th regular-season game, so every other week of 1..W
+    is a week off. This is a count, not bracketing, and it fails closed:
+    delete one real row and both of its teams fall to G-1 games and prove
+    nothing; truncate the frame and every team falls short; duplicate a row
+    and the count overshoots. A team that misses the count (a cancelled game,
+    a partial pull) proves nothing and its absences stay UNKNOWN. What a
+    count cannot see is a game moved to another week after the pull — the
+    schedule's freshness gate covers that, as it covers every kickoff.
+
+    Requires one season in the frame, a `game_type` column (REG rows are the
+    games) and fully named rows; anything less proves nothing for anyone."""
+    if schedule is None or len(schedule) == 0 or "week" not in schedule.columns \
+            or "game_type" not in schedule.columns or "season" not in schedule.columns:
+        return {}
+    seasons = {int(x) for x in pd.to_numeric(schedule["season"], errors="coerce").dropna()}
+    if len(seasons) != 1:
+        return {}
+    games_per, weeks = season_shape(next(iter(seasons)))
+    reg = schedule.loc[schedule["game_type"].map(_game_type) == "REG"]
+    by: dict[str, list[int]] = {}
+    for row in reg.itertuples():
+        home, away = _team(getattr(row, "home_team", "")), _team(getattr(row, "away_team", ""))
+        try:
+            w = int(getattr(row, "week"))
+        except (TypeError, ValueError):
+            return {}                    # an unplaced game could be anyone's week
+        if not home or not away or home == away:
+            return {}                    # a damaged row hides whose game it is
+        by.setdefault(home, []).append(w)
+        by.setdefault(away, []).append(w)
+    out: dict[str, frozenset[int]] = {}
+    for team, ws in by.items():
+        if len(ws) == games_per and len(set(ws)) == games_per \
+                and all(1 <= w <= weeks for w in ws):
+            out[team] = frozenset(range(1, weeks + 1)) - set(ws)
+    return out
+
+
 @dataclass(frozen=True)
 class Lock:
     """One player's lock state, with the sentence that explains it."""
@@ -227,6 +278,11 @@ class KickoffIndex:
     #: number a reader needs to judge the week for themselves.
     frame_weeks: tuple[int, ...] = field(default=())
     frame_max_slate: int = 0
+    #: Teams whose bye this week the schedule PROVES by count
+    #: (`proven_byes`): their whole regular season is in the frame and this
+    #: week is not one of its games. Kept apart from `declared_bye`, so the
+    #: page can say which kind of statement it is relying on.
+    proven_bye: frozenset[str] = field(default=frozenset())
 
     @property
     def rows_intact(self) -> bool:
@@ -256,6 +312,12 @@ class KickoffIndex:
         return len(set(self.kickoffs) | set(self.time_unknown))
 
     @property
+    def byes(self) -> frozenset[str]:
+        """Every team on a bye this week that the schedule establishes:
+        declared outright, or proven by its full season (`proven_byes`)."""
+        return self.declared_bye | self.proven_bye
+
+    @property
     def slate_short(self) -> int:
         """How many fewer teams this week fields than the frame's busiest
         week. Non-zero is normal on a bye week and expected at the end of a
@@ -280,8 +342,8 @@ class KickoffIndex:
             bits.append("frame ends at this week")
         if self.slate_short:
             bits.append(f"{self.slate_short} team(s) with no game row, "
-                        f"{len(self.declared_bye)} of them declared on bye by "
-                        f"the schedule and the rest unexplained")
+                        f"{len(self.byes)} of them on a bye the schedule "
+                        f"declares or proves and the rest unexplained")
         return f"week {self.week} schedule: " + ", ".join(bits)
 
 
@@ -341,9 +403,10 @@ def kickoff_index(schedule: pd.DataFrame | None, week: int) -> KickoffIndex | No
         row from week 3 of a full season frame and BUF is still bracketed by
         weeks 2 and 4, so the deletion is invisible and BUF is handed back as
         a proven bye. Absence is the shape of both a bye and a missing row;
-        nothing in the surviving rows tells them apart. A bye is now taken
-        only from `declared_bye` — an explicit statement by the schedule —
-        and absence with no such statement is UNKNOWN.
+        nothing in the surviving rows tells them apart. A bye is taken from
+        `declared_bye` — an explicit statement by the schedule — or from
+        `proven_bye`, a COUNT over the team's whole season that a deleted
+        row breaks (`proven_byes`); absence with neither is UNKNOWN.
       * It never silently resolves a contradiction. Two rows giving one team
         two different kickoffs mean the schedule does not know when that team
         plays, so neither time is used and the team is UNKNOWN.
@@ -453,17 +516,19 @@ def kickoff_index(schedule: pd.DataFrame | None, week: int) -> KickoffIndex | No
                         f"also carries a week-{int(week)} game, so the declaration "
                         f"is not used")
     declared_bye -= playing
-    # Note what NO computation happens here. Every team in `season_teams` that
-    # is neither playing nor declared off is simply absent, and stays absent:
-    # `lock_state` returns UNKNOWN for it. There is deliberately no rule that
-    # promotes an absence to a bye, because every such rule is a guess about
-    # rows that are not in front of us.
+    # The one rule that promotes an absence to a bye is a COUNT over the
+    # whole season (`proven_byes`): a team whose every regular-season game is
+    # in the frame, in other weeks, cannot be playing this one. Bracketing
+    # and "the week parsed" are still never evidence (see above). Every other
+    # absent team stays absent: `lock_state` returns UNKNOWN for it.
+    proven = {t for t, ws in proven_byes(schedule).items() if int(week) in ws}
+    proven_bye = proven - playing - declared_bye
     season_teams |= declared_bye
 
     return KickoffIndex(int(week), out, frozenset(time_unknown),
                         frozenset(season_teams), dropped, tuple(problems),
                         frozenset(declared_bye), partial, frozenset(conflicting),
-                        frame_weeks, frame_max_slate)
+                        frame_weeks, frame_max_slate, proven_bye=frozenset(proven_bye))
 
 
 def lock_state(team: str, kickoffs: KickoffIndex | Mapping[str, datetime] | None,
@@ -488,6 +553,10 @@ def lock_state(team: str, kickoffs: KickoffIndex | Mapping[str, datetime] | None
         return Lock(OPEN, f"no week-{kickoffs.week} game: BYE (the schedule declares "
                           f"one for {t}; this is the schedule's own statement, not "
                           f"a conclusion drawn from {t} being absent)")
+    if t in kickoffs.proven_bye:
+        return Lock(OPEN, f"no week-{kickoffs.week} game: BYE (proven: {t}'s whole "
+                          f"regular season is in the schedule and week "
+                          f"{kickoffs.week} is not one of its games)")
     when = kickoffs.kickoffs.get(t)
     if when is None:
         if t not in kickoffs.season_teams:

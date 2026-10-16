@@ -198,12 +198,13 @@ NO_GAME_ROW = GameContext(opponent=UNKNOWN_OPPONENT, home=True, kickoff="",
 
 
 def game_for(team: str, games: Mapping[str, GameContext], *, schedule_cover: bool,
-             declared_bye: frozenset[str] = frozenset()) -> GameContext:
+             byes: frozenset[str] = frozenset()) -> GameContext:
     """The week's game for one NFL team, with ONE rule for absence.
 
     A team in the week's rows has its game. A team absent from them is on
-    BYE only when the schedule DECLARES the bye (`KickoffIndex.declared_bye`
-    — the lock layer's reader for that statement); otherwise it is
+    BYE only when the schedule declares the bye or PROVES it by count
+    (`KickoffIndex.byes`: declared rows, or the team's whole regular season
+    present without this week — `lineup.proven_byes`); otherwise it is
     `NO_GAME_ROW` (UNKNOWN), never an inferred bye. With no schedule ROWS for
     the week at all it is `NO_SCHEDULE`.
 
@@ -215,7 +216,7 @@ def game_for(team: str, games: Mapping[str, GameContext], *, schedule_cover: boo
         return games[team]
     if not schedule_cover:
         return NO_SCHEDULE
-    return BYE if team in declared_bye else NO_GAME_ROW
+    return BYE if team in byes else NO_GAME_ROW
 
 
 #: The abstention a projection takes for `NO_GAME_ROW`.
@@ -478,7 +479,7 @@ def build_report(
     # absent from them is a declared bye or UNKNOWN (`game_for`).
     kick = kickoff_index(schedule, context.report_week) if schedule is not None else None
     rows_cover = kick is not None
-    declared_bye = kick.declared_bye if kick is not None else frozenset()
+    byes = kick.byes if kick is not None else frozenset()
     reported = reported_teams(injuries, context.report_week)
     no_row_teams: set[str] = set()
     std_by_gsis = (std.set_index("gsis_id") if len(std) and "gsis_id" in std
@@ -493,7 +494,7 @@ def build_report(
                   "START" if sid in starters else "BENCH")
         nfl_team = _txt(sp.get("team")) or (sid if dst else "")
         game = game_for(nflverse_team(nfl_team), games, schedule_cover=rows_cover,
-                        declared_bye=declared_bye)
+                        byes=byes)
         if game is NO_GAME_ROW and not dst:
             no_row_teams.add(nflverse_team(nfl_team) or "(no team)")
         note = availability(gid, sp, inj, report_week=context.report_week,
@@ -572,7 +573,8 @@ def build_report(
     if no_row_teams:
         notes.append(
             f"week {context.report_week}'s schedule has no game row for "
-            f"{', '.join(sorted(no_row_teams))} and declares no bye — their opponent "
+            f"{', '.join(sorted(no_row_teams))} and neither declares nor proves a bye — "
+            f"their opponent "
             f"shows '{UNKNOWN_OPPONENT}' (UNKNOWN, not a bye: a week off and a row "
             f"that never arrived look the same)")
     if not schedule_cover:
