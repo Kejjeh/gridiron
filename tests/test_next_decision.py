@@ -302,3 +302,17 @@ def test_the_next_decision_section_fits_a_phone_and_its_disclosures_take_the_key
     m = re.search(r"KEYS (\d+) (\d+)", proc.stdout.decode("utf-8", "replace"))
     assert m, proc.stdout[:200]
     assert int(m.group(1)) > 0 and m.group(1) == m.group(2)
+
+
+def test_a_withheld_player_who_becomes_unknown_is_not_reported_back_in_the_projection():
+    """Withheld (projected 0) -> abstained (no number) is not 'back in the
+    projection': e.g. a team with no game row that used to be read as a bye."""
+    def rec(projected, withheld):
+        return {"generated": "2026-10-16T11:34:00+00:00",
+                "roster": [{"sleeper_id": "1", "name": "Player One", "projected": projected,
+                            "withheld": withheld, "availability": "", "locked": False}]}
+    words = [c.detail for c in diff_archives(rec(0.0, True), rec(None, False)).items]
+    assert "no longer withheld — now abstained (no number)" in words
+    assert not any("back in the projection" in w for w in words)
+    back = [c.detail for c in diff_archives(rec(0.0, True), rec(12.5, False)).items]
+    assert "no longer withheld — back in the projection" in back

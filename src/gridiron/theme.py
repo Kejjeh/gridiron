@@ -15,8 +15,9 @@ two small inline scripts:
   * `VALIDITY_JS` re-judges, on the reader's clock, the two things a build
     fixes at build time and the clock then overtakes: the instant the
     evidence behind the page's moves expires (`gridiron-valid-until`, from
-    the gate's own cadences) and each move's kickoff deadline
-    (`data-deadline`). Past either, the element is marked and its move is
+    the gate's own cadences; an element resting on different evidence
+    carries its own `data-valid-until`, e.g. the matchup's win probability)
+    and each move's kickoff deadline (`data-deadline`). Past either, the element is marked and its move is
     withdrawn in words the build wrote; nothing is recomputed and nothing
     is fetched.
   * `SNAPSHOT_JS` asks the HOSTING server, every five minutes while the tab
@@ -169,6 +170,7 @@ li[data-live] .badge,[data-live] .badge.v-LINEUP,[data-held] .badge.v-LINEUP{bac
 .dcard[data-live] a.btn.primary{background:var(--chip);color:var(--fg);border-color:var(--line2)}
 #validity{border-left-color:var(--warn)}.banner[data-live]{border-left-color:var(--warn)}.banner[data-live] b.ok{color:var(--muted);text-decoration:line-through}
 .headline[data-live] h1{color:var(--muted);text-decoration:line-through;text-decoration-thickness:2px}
+.pwin[data-live] .kpi b,.pwin[data-held] .kpi b,.pwin[data-live] .num,.pwin[data-held] .num{color:var(--muted);text-decoration:line-through}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .chips button{min-height:40px;padding:6px 14px;font-size:var(--t-s)}
 .chips button[aria-pressed=true]{background:var(--fg);color:var(--lime-ink);border-color:transparent}
@@ -352,29 +354,33 @@ var box=document.getElementById('validity'), head=document.getElementById('valid
 var S={skewMs:0,expired:false,lapsed:0,last:null};
 function stamp(ms){ return new Date(ms).toISOString().replace('T',' ').slice(0,16)+' UTC'; }
 function tick(nowMs){
-  var now=(typeof nowMs==='number')?nowMs:Date.now()+S.skewMs, expired=!isNaN(UNTIL)&&now>=UNTIL, lapsed=0, changed=false;
+  var now=(typeof nowMs==='number')?nowMs:Date.now()+S.skewMs, expired=!isNaN(UNTIL)&&now>=UNTIL, lapsed=0, changed=false, ownN=0, ownText='';
   var nodes=document.querySelectorAll('[data-deadline],[data-gated],[data-held]');
   for(var i=0;i<nodes.length;i++){ var el=nodes[i], dl=Date.parse(el.getAttribute('data-deadline')||'');
-    var isLapsed=!isNaN(dl)&&now>=dl, state=isLapsed?'lapsed':(expired&&el.hasAttribute('data-gated'))?'expired':'';
+    var own=Date.parse(el.getAttribute('data-valid-until')||''), gone=isNaN(own)?expired:now>=own;
+    var isLapsed=!isNaN(dl)&&now>=dl, state=isLapsed?'lapsed':(gone&&el.hasAttribute('data-gated'))?'expired':'';
     if((el.getAttribute('data-live')||'')!==state){ changed=true; if(state) el.setAttribute('data-live',state); else el.removeAttribute('data-live'); }
     var built=el.getAttribute('data-verdict-built');
     if(built!==null){ var v=isLapsed?(el.getAttribute('data-lapse-verdict')||built):built; if(el.getAttribute('data-verdict')!==v){ el.setAttribute('data-verdict',v); changed=true; } }
     var note=el.querySelector('.vstate'), words=state==='lapsed'?el.getAttribute('data-lapse-text'):state==='expired'?el.getAttribute('data-expire-text'):el.getAttribute('data-held');
     if(note&&note.textContent!==(words||'')) note.textContent=words||'';
+    if(state==='expired'&&!isNaN(own)&&!expired){ ownN+=1; if(!ownText) ownText=el.getAttribute('data-expire-text')||''; }
     if(isLapsed) lapsed+=1; }
   var counts=document.querySelectorAll('[data-live-count]');
   for(var j=0;j<counts.length;j++){ var want=counts[j].getAttribute('data-live-count');
     var n=document.querySelectorAll('li.rrow[data-verdict="'+want+'"]').length;
-    if(counts[j].textContent!==String(n)) counts[j].textContent=String(n); }
-  S.expired=expired; S.lapsed=lapsed; S.last=now;
-  if(box&&head&&text){ if(expired||lapsed){ box.hidden=false;
-      head.textContent=expired?'Evidence expired '+stamp(UNTIL)+'.':'Kickoff passed for '+lapsed+' item(s) on this page.';
+    if(counts[j].textContent!==String(n)) counts[j].textContent=String(n);
+    if(counts[j].classList) counts[j].classList.toggle('lime',n>0); }
+  S.expired=expired; S.lapsed=lapsed; S.own=ownN; S.last=now;
+  if(box&&head&&text){ if(expired||lapsed||ownN){ box.hidden=false;
+      head.textContent=expired?'Evidence expired '+stamp(UNTIL)+'.':ownN?'Evidence expired for '+ownN+' item(s) on this page.':'Kickoff passed for '+lapsed+' item(s) on this page.';
       text.textContent=(expired?WHY+' Every move below is now the last known picture, not advice. ':'')
+        +(!expired&&ownN?ownText+' ':'')
         +(lapsed?lapsed+' item(s) are past their kickoff deadline and are marked in place. ':'')
         +'This page cannot rebuild itself: reload once a newer build is published, or check Sleeper directly.'; }
     else box.hidden=true; }
   if(changed&&window.gridironRadar&&window.gridironRadar.apply) window.gridironRadar.apply();
-  return {expired:expired,lapsed:lapsed};
+  return {expired:expired,lapsed:lapsed,own:ownN};
 }
 tick(); if(typeof setInterval==='function') setInterval(function(){ tick(); },30000);
 document.addEventListener('visibilitychange',function(){ if(!document.hidden) tick(); });

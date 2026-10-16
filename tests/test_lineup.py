@@ -15,7 +15,7 @@ import pytest
 
 from gridiron.lineup import (
     LOCKED, OPEN, UNKNOWN, Player, current_lineup, eligible, kickoff_index,
-    lock_state, plan_lineup, slot_order,
+    lock_state, plan_lineup, proven_byes, slot_order,
 )
 from gridiron.projection import Projection, abstain
 
@@ -229,3 +229,47 @@ def test_no_schedule_means_lock_state_unknown_not_unlocked():
                                         "home_team": "A", "away_team": "B"}]), 2) is None
     lock = lock_state("A", None, datetime.now(UTC))
     assert lock.state == UNKNOWN and not lock.movable and "UNKNOWN" in lock.note
+
+
+# ------------------------------------------------ a bye the schedule PROVES
+
+def _season(season=2026):
+    """32 teams, 17 games in 18 weeks, one bye each: pair k (teams 2k, 2k+1)
+    rests in week 5 + k % 10; everyone else is paired off in order."""
+    teams = [f"T{i:02d}" for i in range(32)]
+    bye = {t: 5 + (i // 2) % 10 for i, t in enumerate(teams)}
+    rows = []
+    for w in range(1, 19):
+        playing = [t for t in teams if bye[t] != w]
+        for a, b in zip(playing[0::2], playing[1::2]):
+            rows.append({"season": season, "week": w, "game_type": "REG", "home_team": a,
+                         "away_team": b, "gameday": "2026-10-18", "gametime": "13:00"})
+    return pd.DataFrame(rows), bye
+
+
+def test_a_bye_the_whole_season_proves_opens_the_lock():
+    sched, bye = _season()
+    proven = proven_byes(sched)
+    assert len(proven) == 32 and all(proven[t] == frozenset({w}) for t, w in bye.items())
+    idx = kickoff_index(sched, 6)
+    off = {t for t, w in bye.items() if w == 6}
+    assert idx.proven_bye == off and idx.declared_bye == frozenset() and idx.byes == off
+    lock = lock_state(next(iter(off)), idx, datetime(2026, 10, 16, tzinfo=timezone.utc))
+    assert lock.state == OPEN and "proven" in lock.note
+
+
+def test_one_deleted_game_breaks_the_proof_for_both_its_teams():
+    """The lineup.py objection to inferring byes — a deleted row looks like a
+    bye — is exactly what the count catches: both teams fall to 16 games."""
+    sched, bye = _season()
+    row = sched.loc[sched["week"] == 9].iloc[0]
+    cut = sched.drop(sched.loc[sched["week"] == 9].index[0])
+    proven = proven_byes(cut)
+    assert row.home_team not in proven and row.away_team not in proven and len(proven) == 30
+    idx = kickoff_index(cut, 9)
+    assert row.home_team not in idx.byes
+    assert lock_state(row.home_team, idx, datetime(2026, 10, 16, tzinfo=timezone.utc)).state == UNKNOWN
+    # truncated mid-season, two seasons in one frame, or a pre-2021 shape: nothing proves
+    assert proven_byes(sched.loc[sched["week"] <= 9]) == {}
+    assert proven_byes(pd.concat([sched, sched.assign(season=2025)])) == {}
+    assert proven_byes(sched.assign(season=2020)) == {}

@@ -8,10 +8,12 @@ schedule:
 
   * the RATE is the player's projection for the next week — usage-driven
     (rule #6), from box scores before that week only;
-  * each remaining week `v` through `HORIZON_END` is a game or a bye: a team
-    missing from a week the schedule HAS games for is on bye; a week with no
-    games at all is not covered — never a bye — and is counted as played at
-    the plain rate, with the gap stated;
+  * each remaining week `v` through `HORIZON_END` is a game or a bye. A bye
+    is only one the schedule PROVES (`gridiron.lineup.proven_byes`: the
+    team's whole regular season is in the frame and `v` is not one of its
+    games). Any other week with no game row for the team — a week with no
+    games at all, or a team missing from a week that has some — is counted
+    as played at the plain rate, never as a bye, with the gap stated;
   * optionally each game is nudged by its matchup, through the weekly
     model's OWN coefficients on the matchup features (implied total, the
     opponent's points allowed to the position; for kickers dome and spread;
@@ -40,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from gridiron.league_config import PLAYOFF_START_WEEK
+from gridiron.lineup import proven_byes
 
 #: The last fantasy week (the league's playoffs run weeks 15-17).
 HORIZON_END = 17
@@ -80,6 +83,15 @@ def load_weights(path: Path = WEIGHTS_PATH) -> dict | None:
 
 
 # ------------------------------------------------------------- schedule
+
+def _teams(schedule: pd.DataFrame | None) -> set[str]:
+    """Every team the schedule frame names in a regular-season game."""
+    if schedule is None or len(schedule) == 0:
+        return set()
+    s = _regular(schedule)
+    return {str(t) for t in pd.concat([s["home_team"], s["away_team"]]).dropna()
+            if str(t).strip()}
+
 
 def _regular(schedule: pd.DataFrame) -> pd.DataFrame:
     return schedule.loc[schedule["game_type"] == "REG"] if "game_type" in schedule \
@@ -233,6 +245,19 @@ class Schedule:
         #: weeks the schedule has NO games for: not declared, so not a bye —
         #: every team is counted as playing at its plain rate, and said so
         self.uncovered = tuple(v for v, c in self.contexts.items() if not c)
+        #: team -> its bye week(s) the schedule proves by count (owner
+        #: decision 2026-10-16); absence the count does not prove is no bye
+        self.proven: dict[str, frozenset[int]] = proven_byes(schedule)
+        #: team -> remaining covered weeks it has no game row in and no
+        #: proven bye: counted as played, and named in the status line
+        self.unproven: dict[str, tuple[int, ...]] = {}
+        for v, c in self.contexts.items():
+            if not c:
+                continue
+            for t in {str(x) for x in _teams(schedule)} - set(c):
+                if v not in self.proven.get(t, frozenset()):
+                    self.unproven.setdefault(t, ())
+                    self.unproven[t] = self.unproven[t] + (v,)
         #: team -> every week the schedule gives it a game (the whole season,
         #: for counting games already missed)
         self.game_weeks: dict[str, tuple[int, ...]] = {}
@@ -274,7 +299,11 @@ class Schedule:
                               (max(0.0, rate) if clip else rate)))
                 continue
             if ctx is None:
-                byes.append(v)                   # the schedule declares the week
+                if v in self.proven.get(team, frozenset()):
+                    byes.append(v)               # the schedule proves the week off
+                else:                            # absent, unproven: never a bye
+                    weeks.append((v, "?", 0.0 if v in skip else
+                                  (max(0.0, rate) if clip else rate)))
                 continue
             if v in skip:
                 weeks.append((v, str(ctx["opponent"]), 0.0))
@@ -416,6 +445,10 @@ def build_table(*, weeks: pd.DataFrame | None, schedule: pd.DataFrame | None,
     if sched.uncovered:
         status += (f"; the schedule has no games for week(s) "
                    f"{', '.join(map(str, sched.uncovered))} — counted as played, NOT as byes")
+    if sched.unproven:
+        status += ("; no game row and no proven bye (counted as played, NOT as byes): "
+                   + ", ".join(f"{t} wk {'/'.join(map(str, ws))}"
+                               for t, ws in sorted(sched.unproven.items())))
     if choice:
         status += "; ROS method by position: " + ", ".join(f"{p} {m}" for p, m in choice.items())
     flagged = int(table["reserve_since"].notna().sum()) if len(table) else 0
