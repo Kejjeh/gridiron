@@ -16,8 +16,9 @@ by this league's teams in the last 10 days (the snapshot's `transactions`)
 that Sleeper ranks a starter or that reach the owner's weakest eligible
 starter (an empty slot counts as 0; never a player designated Out), each
 with status, ours/Sleeper, and the waiver clock from the league's settings
-(`waiver_clock`: waivers 2 days, then a free agent until his kickoff, then
-locked until the Wednesday run, then free; "his Sleeper card is the
+(`waiver_clock`: waivers 2 days, then a free agent until his kickoff — or
+the week's last kickoff, with no game of his own — then locked until the
+Wednesday run, then free; "his Sleeper card is the
 authority"). The first-screen alert is a transition, 48 h each, read off
 this build's data: each change of that clock; the one carried comparison
 (`PreviousWatch`) is a pool entry with no league drop behind it, against a

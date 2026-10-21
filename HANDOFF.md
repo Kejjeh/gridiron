@@ -20,8 +20,11 @@ the Wednesday waiver run. Fixed in three parts:
   model), ours or why not, Sleeper's number and rank, and the waiver clock
   (`notable.waiver_clock`, from this league's own transactions and the
   real kickoffs, this week's and last): on waivers 2 days after the drop,
-  then a FREE AGENT until his kickoff, then locked until the Wednesday run
-  (~03:20 ET), then free again. The first-screen alert (top of the Action
+  then a FREE AGENT until his kickoff — or the week's LAST kickoff for a
+  player with no game (bye, no team) — then locked until the Wednesday run
+  (~03:20 ET), then free again. Checked against all 12 drop-to-add pairs in
+  the league's 2026 history (claims checked at creation too): 0
+  mismatches, including MIN DEF on a bye, taken by a Tuesday claim. The first-screen alert (top of the Action
   Desk) is a transition, 48 h each, read off this build's data: each change
   of that clock. The one carried comparison (`notable.PreviousWatch`) is a
   pool entry with no league drop behind it (an NFL activation), against a
@@ -50,9 +53,10 @@ the Wednesday waiver run. Fixed in three parts:
   instant-add FREE AGENT until his Sunday-night kickoff (Mon 00:20 UTC) by
   the inferred clock, then locked until the run — with at most four alerts
   at a time.
-- Two adversarial reviews (40 + 29 agents) confirmed and this PR fixed:
-  the waiver model (claimed "on waivers, bid before Wed" for an instant
-  free agent), two-leg transaction reads, alert transitions lost or
+- Three adversarial reviews (40 + 29 + 29 agents) confirmed and this PR
+  fixed: the waiver model (claimed "on waivers, bid before Wed" for an
+  instant free agent; then missed that a player with no game is locked
+  from the week's last kickoff), two-leg transaction reads, alert transitions lost or
   invented across records (the "first listed" comparison was removed
   rather than patched: it had five ways to compare against a degraded
   record), the empty-slot, locked-bench and Out cases, and a shadowed

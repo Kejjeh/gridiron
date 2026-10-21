@@ -211,13 +211,17 @@ def waiver_run_after(dropped: datetime) -> datetime:
 
 @dataclass(frozen=True)
 class WaiverClock:
-    """Where a dropped player stands, by the league's settings (Sleeper
-    keeps the authoritative clock on his player card).
+    """Where a dropped player stands, by the league's settings and its own
+    transaction history (Sleeper keeps the authoritative clock on his player
+    card).
 
-    The cycle, consistent with every transaction in this league's history:
-    on WAIVERS for `WAIVER_CLEAR_DAYS` after the drop, then a FREE AGENT (an
-    instant add) until his game kicks off, then LOCKED on waivers until the
-    weekly run, then a free agent again."""
+    The cycle, consistent with every drop and add in this league's 2026
+    history: on WAIVERS for `WAIVER_CLEAR_DAYS` after the drop; then a FREE
+    AGENT (an instant add) until his game kicks off — or the week's LAST
+    game does (a bye, no NFL team: no free-agent add was ever made between a
+    week's last kickoff and the run, and such players were taken by
+    Tuesday waiver claims); then LOCKED on waivers until the weekly run;
+    then free again."""
 
     phase: str                    # WAIVERS | FREE_AGENT | LOCKED | UNSURE
     since: datetime               # when this phase began
@@ -233,47 +237,58 @@ def _t(t: datetime) -> str:
     return f"{t:%a %d %b %H:%M} UTC"
 
 
-def waiver_clock(drop: Drop, kickoff: datetime | None, last_kickoff: datetime | None,
-                 now: datetime) -> WaiverClock:
-    """The phase `drop`'s player is in at `now`. `kickoff` is his game in the
-    page's week and `last_kickoff` his game the week before (None: no timed
-    game — a bye, or a schedule that cannot say). Neutral wording: a clock,
+def waiver_clock(drop: Drop, now: datetime, *, kickoffs: Iterable[datetime | None] = (),
+                 slate_ends: Iterable[datetime | None] = (),
+                 game_time_unknown: bool = False) -> WaiverClock:
+    """The phase `drop`'s player is in at `now`. `kickoffs` are his own
+    known games (this week's and last); `slate_ends` the last kickoff of
+    this NFL week and of the last (from it, every unrostered player is on
+    waivers until the run); `game_time_unknown` says he has a game this
+    week whose time the schedule cannot give. Neutral wording: a clock,
     never an instruction (rule #11)."""
+    own = sorted(k for k in kickoffs if k is not None)
+    ends = sorted(e for e in slate_ends if e is not None)
     clear = drop.at + timedelta(days=WAIVER_CLEAR_DAYS)
-    run, prev_run = next_waiver_run(now), last_waiver_run(now)
-    tail = " (the league's settings; his Sleeper card is the authority)"
-    games = [k for k in (last_kickoff, kickoff) if k is not None and k <= now]
-    played = max(games) if games else None          # his most recent kickoff
+    prev_run, run = last_waiver_run(now), next_waiver_run(now)
+    tail = " (the league's settings and its history; his Sleeper card is the authority)"
+
+    def lock_in(start: datetime, end: datetime) -> datetime | None:
+        cands = [k for k in own + ends if start <= k < end]
+        return min(cands) if cands else None
+
+    lock = lock_in(prev_run, run)        # when this cycle locks him (None: unknown)
     if now < clear:
-        if kickoff is not None and now < kickoff < clear:
-            after = next_waiver_run(kickoff)
-            return WaiverClock("WAIVERS", drop.at, after,
-                               f"on waivers: his game kicks off {_t(kickoff)}, before his "
-                               f"{WAIVER_CLEAR_DAYS}-day clear ends, so he stays on waivers "
-                               f"until the weekly run, about {_t(after)} — claims only" + tail,
-                               (drop.at,))
-        return WaiverClock("WAIVERS", drop.at, clear,
-                           f"on waivers until about {_t(clear)}, the league's "
-                           f"{WAIVER_CLEAR_DAYS}-day clear: claims only, processed then; "
-                           f"after that a free agent until his game kicks off" + tail,
-                           (drop.at,))
-    if played is not None and played > prev_run:     # a game since the last run: locked
-        freed = (clear, played) if played >= clear else ()
-        return WaiverClock("LOCKED", max(played, clear), run,
-                           f"his game kicked off {_t(played)}: on waivers until the weekly "
-                           f"run, about {_t(run)} — claims only" + tail, (drop.at, *freed))
-    # a free agent: since the clear, or since the run that followed a game
-    freed_at = (max(clear, prev_run) if played is not None and played >= drop.at
-                and prev_run > clear else clear)
-    upcoming = kickoff if kickoff is not None and kickoff > now else None
-    if upcoming is not None:
-        return WaiverClock("FREE_AGENT", freed_at, upcoming,
-                           f"a FREE AGENT (an instant add) since {_t(freed_at)} until his game "
-                           f"kicks off {_t(upcoming)}" + tail, (drop.at, freed_at))
-    return WaiverClock("UNSURE", freed_at, None,
-                       f"a free agent since {_t(freed_at)} until his game kicks off (no timed "
-                       f"game here), then on waivers until the weekly run" + tail,
-                       (drop.at, freed_at))
+        if lock is not None and lock <= clear and clear < run:
+            free_at = run                # locked before his clear ends: waivers to the run
+        else:
+            free_at = clear
+        return WaiverClock("WAIVERS", drop.at, free_at,
+                           f"on waivers since the drop: claims only, until about "
+                           f"{_t(free_at)}" + tail, (drop.at,))
+    # every unrostered player is locked from the week's last kickoff to each
+    # run, so a player dropped before the last run was freed by it
+    free_from = max(clear, prev_run) if drop.at < prev_run else clear
+    if lock is not None and lock <= now and lock >= free_from:
+        return WaiverClock("LOCKED", lock, run,
+                           f"on waivers since {_t(lock)} (his game or the week's last game "
+                           f"kicked off) until the weekly run, about {_t(run)}: claims only"
+                           + tail, (drop.at, free_from, lock))
+    if lock is not None and lock <= now:  # locked before he was free: waivers to the run
+        return WaiverClock("LOCKED", free_from, run,
+                           f"on waivers until the weekly run, about {_t(run)}: claims only"
+                           + tail, (drop.at,))
+    upcoming = lock if lock is not None and lock > now else None
+    if upcoming is None or game_time_unknown:
+        return WaiverClock("UNSURE", free_from, upcoming,
+                           f"a free agent since about {_t(free_from)} until his game kicks off "
+                           f"(no time here)"
+                           + (f", on waivers from {_t(upcoming)} at the latest" if upcoming
+                              else ", then on waivers until the weekly run") + tail,
+                           (drop.at, free_from))
+    return WaiverClock("FREE_AGENT", free_from, upcoming,
+                       f"a FREE AGENT (an instant add) since about {_t(free_from)}, until "
+                       f"{_t(upcoming)} (his game or the week's last game kicks off)" + tail,
+                       (drop.at, free_from))
 
 
 def market_ranks(players: Mapping[str, object] | None) -> dict[str, int]:
@@ -488,7 +503,8 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
                 drops: Mapping[str, Drop], drops_note: str, now: datetime,
                 best: Sequence[Player | None], slots: Sequence[str],
                 roster: Sequence[Player] = (), ranks: Mapping[str, int] | None = None,
-                market_any=None, last_kickoff_of=None,
+                market_any=None, kickoffs_of=None, slate_ends: Iterable[datetime | None] = (),
+                time_unknown_of=None,
                 out_designations: Iterable[str] = (),
                 reserve: set[str] | None = None, reserve_week: int | None = None,
                 my_roster_id: int | None = None,
@@ -498,15 +514,19 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
     post-kickoff feed) — the number shown and the market list's; the "worth
     a look" test may also use `market_any(player)`, the same week's number
     fetched after his kickoff, so a drop does not vanish while he is locked
-    on waivers. `ranks` is `market_ranks` of that feed. `last_kickoff_of`
-    gives his game the week before (the waiver clock). `out_designations`
+    on waivers. `ranks` is `market_ranks` of that feed. `kickoffs_of`
+    gives his known games this week and last, `slate_ends` the last kickoff
+    of each of those weeks and `time_unknown_of` whether his game this week
+    has no time (the waiver clock). `out_designations`
     are the Sleeper tags that mean he will not play (the dashboard's
     WITHHOLD_DESIGNATIONS). `previous` is the last record's view
     (`PreviousWatch.from_record`)."""
     prev = previous or PreviousWatch()
     ranks = ranks or {}
     market_any = market_any or market_of
-    last_kickoff_of = last_kickoff_of or (lambda p: None)
+    kickoffs_of = kickoffs_of or (lambda p: (p.kickoff,))
+    time_unknown_of = time_unknown_of or (lambda p: False)
+    slate_ends = tuple(slate_ends)
     outs = {str(x).upper() for x in out_designations}
     window_s = timedelta(hours=ALERT_HOURS)
     notes = [drops_note] if drops_note else []
@@ -576,19 +596,26 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
                 why.append(d.describe(my_roster_id))
         if not why:
             continue
-        clock = waiver_clock(d, p.kickoff, last_kickoff_of(p), now) if d is not None else None
+        clock = (waiver_clock(d, now, kickoffs=kickoffs_of(p), slate_ends=slate_ends,
+                              game_time_unknown=time_unknown_of(p))
+                 if d is not None else None)
         waiver = clock.text if clock is not None else (
+            "the league's transactions could not be read, so a recent drop is unknown: his "
+            "Sleeper card says FREE AGENT or when his waivers clear" if drops_note else
             f"no drop by a league team in the last {DROP_WINDOW_DAYS} days on record: his "
             f"Sleeper card says FREE AGENT or when his waivers clear")
         vs, _ = _versus(None if sits else (ours if ours is not None else seen), w,
                         "ours" if ours is not None else "Sleeper's")
         own = d is not None and my_roster_id is not None and d.roster_id == my_roster_id
         entered = pool_since.get(sid)
-        # a league drop alerts on its own clock; an entry with no drop behind it
-        # (an activation) alerts when it is seen — and only when this build can
-        # see the drops, or it could be the owner's own
-        events = list(clock.events) if clock is not None else (
-            [entered] if entered is not None and not drops_note else [])
+        # a league drop alerts on its own clock; an entry into the pool alerts
+        # when it is seen (an activation, or a dropped player who only now has
+        # a team) — only when this build can see the drops, or it could be the
+        # owner's own, and never for a team defense (they leave and re-enter
+        # the pool with the advanced model's DEF inputs)
+        events = list(clock.events) if clock is not None else []
+        if entered is not None and not drops_note and p.position not in ("DEF", "DST"):
+            events.append(entered)
         alert = not own and any(timedelta(0) <= now - t <= window_s for t in events)
         notable.append(NotableFreeAgent(p, tuple(why), pl, d, ours, ours_note, seen, status,
                                         waiver, new=entered == now, versus=vs,

@@ -8,10 +8,11 @@ Pins, with invented players:
      milliseconds; a missing or failed transactions block says drops are
      UNKNOWN instead of returning "no drops";
   3. the waiver clock, built from this league's own transactions: on waivers
-     for two days after a drop, then a FREE AGENT until his kickoff, then
-     locked until the Wednesday run (a Wednesday drop was an instant add on
-     Sunday; every claim processed Wednesday ~07:17 UTC). Never an
-     instruction to bid (rule #11);
+     for two days after a drop, then a FREE AGENT until his kickoff (or the
+     week's last kickoff, with no game of his own), then locked until the
+     Wednesday run (a Wednesday drop was an instant add on Sunday; a bye
+     defense was taken by a Tuesday claim; every claim processed Wednesday
+     ~07:17 UTC). Never an instruction to bid (rule #11);
   4. a player with no number of ours who was a starter last season, or a
      recent league drop whom Sleeper ranks as a starter or who reaches the
      weakest eligible starter (an empty slot counts as 0), is notable; a
@@ -136,55 +137,80 @@ def test_the_episode_ends_at_the_first_wednesday_run_after_the_clear():
 
 def test_the_waiver_clock_follows_this_leagues_transactions():
     """A Wednesday 08:13 drop was added as an instant FREE AGENT that Sunday,
-    days before the next run: two days on waivers, then a free agent until
-    his game, then locked until the Wednesday run, then free again."""
+    before his Monday-night game: two days on waivers, then a free agent
+    until his game, then locked until the Wednesday run, then free again."""
     d = N.Drop("x", 7, at(9, 23, 8, 13), "free_agent")
-    sun, nxt = at(9, 27, 17, 0), at(10, 4, 17, 0)
-    c = N.waiver_clock(d, sun, None, at(9, 24, 12, 0))
+    mnf, prev_end = at(9, 29, 0, 15), at(9, 22, 0, 15)
+    clock = lambda now, own=(mnf,), ends=(mnf, prev_end): N.waiver_clock(   # noqa: E731
+        d, now, kickoffs=own, slate_ends=ends)
+    c = clock(at(9, 24, 12, 0))
     assert c.phase == "WAIVERS" and c.until == at(9, 25, 8, 13)
-    c = N.waiver_clock(d, sun, None, at(9, 26, 12, 0))
-    assert c.phase == "FREE_AGENT" and "instant add" in c.text
-    assert c.events == (d.at, at(9, 25, 8, 13)) and c.until == sun
-    c = N.waiver_clock(d, sun, None, at(9, 28, 12, 0))
+    c = clock(at(9, 27, 22, 38))                     # the real instant add
+    assert c.phase == "FREE_AGENT" and "instant add" in c.text and c.until == mnf
+    assert c.events == (d.at, at(9, 25, 8, 13))
+    c = clock(at(9, 29, 12, 0))
     assert c.phase == "LOCKED" and c.until == at(9, 30, 7, 20)
-    assert c.events == (d.at, at(9, 25, 8, 13), sun)
-    # Tuesday: the board's week has rolled to the next game; last week's game locks him
-    c = N.waiver_clock(d, nxt, sun, at(9, 29, 12, 0))
-    assert c.phase == "LOCKED" and c.events[-1] == sun
-    # after the run he is an instant add again, and that is a new transition
-    c = N.waiver_clock(d, nxt, sun, at(9, 30, 10, 0))
+    assert c.events == (d.at, at(9, 25, 8, 13), mnf)
+    # after the run (the page has rolled to the next week) he is free again
+    c = clock(at(9, 30, 10, 0), own=(at(10, 5, 0, 15), mnf), ends=(at(10, 6, 0, 15), mnf))
     assert c.phase == "FREE_AGENT" and c.events[-1] == at(9, 30, 7, 20)
-    # a bye last week: never locked
-    assert N.waiver_clock(d, nxt, None, at(9, 29, 12, 0)).phase == "FREE_AGENT"
-    assert N.waiver_clock(d, None, None, at(9, 26, 12, 0)).phase == "UNSURE"
-    for now in (at(9, 24, 12, 0), at(9, 26, 12, 0), at(9, 28, 12, 0)):
-        assert "bid" not in N.waiver_clock(d, sun, None, now).text.lower()
+    for now in (at(9, 24, 12, 0), at(9, 27, 12, 0), at(9, 29, 12, 0)):
+        assert "bid" not in clock(now).text.lower()
+
+
+def test_a_team_with_no_game_is_locked_from_the_weeks_last_kickoff():
+    """MIN DEF, on a bye, was dropped Thursday and taken by a TUESDAY waiver
+    claim: with no game of his own, the week's last kickoff locks him."""
+    d = N.Drop("MIN", 9, at(10, 15, 23, 25), "free_agent")
+    wk6_end, wk7_end = at(10, 20, 0, 15), at(10, 27, 0, 15)
+    c = N.waiver_clock(d, at(10, 18, 12, 0), kickoffs=(), slate_ends=(wk6_end,))
+    assert c.phase == "FREE_AGENT" and c.until == wk6_end
+    c = N.waiver_clock(d, at(10, 20, 19, 33), kickoffs=(at(10, 25, 17, 0), None),
+                       slate_ends=(wk7_end, wk6_end))
+    assert c.phase == "LOCKED" and c.since == wk6_end and c.until == at(10, 21, 7, 20)
 
 
 def test_the_week_seven_player_was_an_instant_add_before_his_sunday_game():
     d = N.Drop("j", 5, at(10, 16, 3, 0), "free_agent")
-    kick = at(10, 19, 0, 20)                      # DAL at GB, Sunday 20:20 ET
-    assert N.waiver_clock(d, kick, None, at(10, 17, 12, 0)).phase == "WAIVERS"
-    c = N.waiver_clock(d, kick, None, at(10, 18, 12, 0))
+    kick, end = at(10, 19, 0, 20), at(10, 20, 0, 15)    # DAL at GB, Sunday 20:20 ET
+    clock = lambda now: N.waiver_clock(d, now, kickoffs=(kick,), slate_ends=(end,))  # noqa: E731
+    assert clock(at(10, 17, 12, 0)).phase == "WAIVERS"
+    c = clock(at(10, 18, 12, 0))
     assert c.phase == "FREE_AGENT" and c.until == kick
-    c = N.waiver_clock(d, kick, None, at(10, 19, 20, 0))
+    c = clock(at(10, 19, 20, 0))
     assert c.phase == "LOCKED" and c.until == at(10, 21, 7, 20)
     # dropped, freed, locked: three transitions, the last one opening the bidding window
     assert c.events == (d.at, at(10, 18, 3, 0), kick)
 
 
-def test_a_game_inside_the_clear_keeps_him_on_waivers_until_the_run():
+def test_a_game_inside_the_clear_or_before_the_drop_keeps_him_on_waivers_to_the_run():
+    kick, end = at(10, 18, 17, 0), at(10, 20, 0, 15)
     d = N.Drop("j", 5, at(10, 17, 12, 0), "free_agent")        # clear Mon 19 12:00
-    kick = at(10, 18, 17, 0)
-    c = N.waiver_clock(d, kick, None, at(10, 18, 9, 0))
-    assert c.phase == "WAIVERS" and c.until == at(10, 21, 7, 20) and "stays on waivers" in c.text
-    c = N.waiver_clock(d, kick, None, at(10, 20, 12, 0))
+    c = N.waiver_clock(d, at(10, 18, 18, 0), kickoffs=(kick,), slate_ends=(end,))
+    assert c.phase == "WAIVERS" and c.until == at(10, 21, 7, 20)
+    c = N.waiver_clock(d, at(10, 20, 12, 0), kickoffs=(kick,), slate_ends=(end,))
     assert c.phase == "LOCKED" and c.events == (d.at,), "never a free agent in between"
+    after = N.Drop("k", 5, at(10, 18, 20, 0), "free_agent")    # dropped after his game
+    c = N.waiver_clock(after, at(10, 20, 21, 0), kickoffs=(kick,), slate_ends=(end,))
+    assert c.phase == "LOCKED" and c.until == at(10, 21, 7, 20)
+    c = N.waiver_clock(after, at(10, 21, 10, 0), kickoffs=(at(10, 25, 17, 0), kick),
+                       slate_ends=(at(10, 27, 0, 15), end))
+    assert c.phase == "FREE_AGENT" and c.since == at(10, 21, 7, 20)
+    assert c.events[-1] == at(10, 21, 7, 20), "the run that freed him is a transition"
+
+
+def test_an_unknown_kickoff_is_unsure_never_an_instant_add():
+    d = N.Drop("u", 5, at(10, 14, 12, 0), "free_agent")
+    c = N.waiver_clock(d, at(10, 17, 12, 0), kickoffs=(), slate_ends=(at(10, 20, 0, 15),),
+                       game_time_unknown=True)
+    assert c.phase == "UNSURE" and "instant add" not in c.text
+    assert N.waiver_clock(d, at(10, 17, 12, 0)).phase == "UNSURE"   # no schedule at all
 
 
 # ---------------------------------------------------------------- 4/5/6. watch
 def watch(pool, *, market=None, drops=None, previous=None, ranks=None, prior=None, now=NOW,
-          roster=(), sleeper=None, best=None, mine=None, after_kickoff=None, drops_note=""):
+          roster=(), sleeper=None, best=None, mine=None, after_kickoff=None, drops_note="",
+          slate_ends=()):
     market, after_kickoff = market or {}, after_kickoff or {}
     return N.build_watch(
         pool, sleeper_players=sleeper or {}, market_of=lambda p: market.get(p.sleeper_id),
@@ -193,7 +219,7 @@ def watch(pool, *, market=None, drops=None, previous=None, ranks=None, prior=Non
         ranks=ranks, drops=drops or {}, drops_note=drops_note, now=now,
         best=lineup() if best is None else best, slots=SLOTS, roster=roster,
         out_designations={"OUT", "IR"}, reserve={"00-a"}, reserve_week=6, my_roster_id=mine,
-        previous=previous)
+        slate_ends=slate_ends, previous=previous)
 
 
 def test_a_returning_starter_with_no_number_of_ours_is_named():
@@ -353,6 +379,19 @@ def test_an_entry_while_the_drops_are_unknown_is_not_alerted():
     stash = P("a", "RB", gid="00-a")
     w = watch([stash], previous=prev(pool={"zz"}), drops_note="drops UNKNOWN")
     assert w.notable[0].new and not w.alerts, "it could be the owner's own drop"
+    assert "could not be read" in w.notable[0].waiver
+
+
+def test_a_dropped_player_who_only_now_enters_the_pool_is_alerted_but_a_defense_is_not():
+    d = N.Drop("x", 5, NOW - timedelta(days=7), "free_agent")    # clock events all old
+    x = P("x", "RB", gid="00-a")
+    w = watch([x], drops={"x": d}, previous=prev(pool={"zz"}))
+    assert w.alerts and w.notable[0].new
+    dst = P("SEA", "DEF", 9.5, gid="")
+    best = [P("d1", "DEF", 5.0) if s == "DST" else b for s, b in zip(SLOTS, lineup())]
+    w = watch([dst], drops={"SEA": N.Drop("SEA", 5, NOW - timedelta(days=7), "free_agent")},
+              previous=prev(pool={"zz"}), best=best)
+    assert w.notable and not w.alerts, "defenses leave and re-enter the pool"
 
 
 def test_a_league_drop_alerts_on_its_clock_and_the_owners_own_drop_never_does():

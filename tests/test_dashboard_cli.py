@@ -719,7 +719,7 @@ def test_an_unprojected_league_drop_is_named_on_the_first_screen(tmp_path, no_ne
     n = next(x for x in rec["watch"]["notable"] if x["id"] == sid)
     assert n["ours"] is None and "no admissible box scores" in n["ours_note"]
     assert n["market"] == SCN._RETURNER[5] and n["dropped_by"] == 2
-    assert n["waiver_phase"] == "WAIVERS" and "on waivers until about Sun 27 Sep 00:00 UTC" \
+    assert n["waiver_phase"] == "WAIVERS" and "claims only, until about Sun 27 Sep 00:00 UTC" \
         in n["waiver"] and "bid" not in n["waiver"].lower()
     assert any(m["id"] == sid for m in rec["watch"]["market"])
     desk = html[html.index('id="desk"'):html.index('class="dcard')]

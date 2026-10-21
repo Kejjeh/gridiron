@@ -818,15 +818,23 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
 
     last_week = kickoff_index(schedule, week - 1) if schedule is not None and week > 1 else None
     last_kicks = dict(last_week.kickoffs) if last_week is not None else {}
+    this_kicks = dict(kickoffs.kickoffs) if kickoffs is not None else {}
+    slate_ends = tuple(max(k.values()) if k else None for k in (this_kicks, last_kicks))
+
+    def time_unknown(p: Player) -> bool:
+        team = nflverse_team(p.team)
+        return bool(team) and kickoffs is not None and team not in this_kicks \
+            and team not in kickoffs.byes
 
     def watch(previous: PreviousWatch) -> FreeAgentWatch:
         return build_watch(
             pool, sleeper_players=sleeper_players,
-            market_of=lambda p: (shadow_number(shadow, p.sleeper_id, p.kickoff, now)
-                                 if p.position in SKILL_POSITIONS else None),
-            market_any=lambda p: (shadow_any(shadow, p.sleeper_id, now)
-                                  if p.position in SKILL_POSITIONS else None),
-            last_kickoff_of=lambda p: last_kicks.get(nflverse_team(p.team)),
+            # research numbers for every position (the page's own stack stays
+            # skill-only and pre-kickoff: `refine`)
+            market_of=lambda p: shadow_number(shadow, p.sleeper_id, p.kickoff, now),
+            market_any=lambda p: shadow_any(shadow, p.sleeper_id, now),
+            kickoffs_of=lambda p: (p.kickoff, last_kicks.get(nflverse_team(p.team))),
+            slate_ends=slate_ends, time_unknown_of=time_unknown,
             prior=priors, prior_season=context.season - 1,
             ranks=market_ranks((shadow or {}).get("players")), drops=drops,
             drops_note=drops_note, now=now, best=plan.best, slots=slots, roster=roster,
@@ -2669,10 +2677,10 @@ def _watch_html(d: Dashboard) -> str:
                f"= a change of his waiver clock (dropped, free agent, locked until the run, "
                f"freed by it) in the last {ALERT_HOURS} h, or, with no league drop behind "
                "him, entering the pool (only those reach the top of the page; never your own "
-               "drop). The waiver clock is the league's settings — on "
+               "drop). The waiver clock is the league's settings and its history — on "
                "waivers for two days after a drop, then a free agent until his game kicks "
-               "off, then on waivers until the weekly run; Sleeper's player card is the "
-               "authority.</p>")
+               "off (or the week's last game, if he has none), then on waivers until the "
+               "weekly run; Sleeper's player card is the authority.</p>")
 
     out.append("<h3 id=\"market\">Can't project — Sleeper's number</h3>")
     if w.market:
