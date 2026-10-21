@@ -4,6 +4,42 @@ Current state and next step only. The running log through the Game Day,
 Radar, Action Desk and publication releases moved to
 `docs/memory/handoff_history.md` on 2026-10-01 (provenance, not current).
 
+## Free agents the radar cannot rank are named (2026-10-21)
+
+Week 7's miss: a 2025 RB8 with no 2026 game (exempt list) was dropped by
+roster #5 at 03:00 UTC Fri 16 Oct, sat in the pool for 33 builds as part of
+the radar's "missing evidence" count (no box scores, so `project()`
+abstains and the radar only ranks projected players), and was claimed at
+the Wednesday waiver run. Fixed in three parts:
+
+- **Notable free agents** (`gridiron.notable`, radar section `#notable`,
+  record `watch.notable`): last season's starters by league ppg and this
+  league's recent drops that matter this week, each with status, ours or
+  why not, Sleeper's number and rank, and the waiver run the settings imply.
+  The first-screen alert (top of the Action Desk) shows only rows first
+  listed in the last 48 h or inside an open waiver window; `first_seen`
+  carries record to record. The snapshot now carries this week's and last
+  week's league transactions (`SleeperReadOnly.recent_transactions`, never
+  raises). Last season's box scores ride in the model inputs
+  (`prior_weekly.parquet`, ~0.9 MB, refreshed with them every 6 h). Until
+  the first cloud pull after this merge, the page says the starter check
+  cannot run.
+- **Can't project — Sleeper's number** (`#market`, `watch.market`): every
+  abstained pool player Sleeper projects, highest first, with our reason.
+  The weekly review shows both lists.
+- **Returner projection: researched, NOT shipped**
+  (docs/research/RETURNER_BACKTEST.md). Pre-registered `returner_v1`
+  cleared its pooled bar, but it projects last season's 10+ ppg players at
+  about half their output (+2.5 bias n=41, +5.0 n=14). Sleeper beat it on
+  the same rows. `returner_v2` is declared and is tested on 2026 returners
+  at season end.
+- Replay on the 41 real builds of 15-21 Oct: the week-7 player is on the
+  first screen in all 33 builds he was in the pool, and the alerts clear
+  after the waiver run.
+- **Next:** after the first cloud build, check the record's
+  `watch.notes` has no "not loaded" line, and that `watch.notable` is
+  short enough to read.
+
 ## Board: dated practice rows, absence is not a bye, P(win) expires (2026-10-16)
 
 - **Availability text**: every practice value names its week

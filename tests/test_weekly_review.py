@@ -183,3 +183,22 @@ def test_rest_of_season_reads_the_records_ros_block():
     assert "| WR | Wing Alpha 30 · 90.0 | Wing Free 12 · 120.0 | Wing Free +30.0 |" in sec
     assert "Wing Held" not in sec                        # held elsewhere: not an option
     assert "RB20 · 110.0" in text.split("**Watch list")[1]
+
+
+def test_the_review_carries_the_notable_and_market_lists():
+    watch = {"notable": [{"id": "90005", "name": "Back Epsilon", "position": "RB",
+                          "team": "SF", "new": True, "why": ["dropped by roster #4"],
+                          "status": "no tag", "ours": None,
+                          "ours_note": "no admissible box scores", "market": 12.3,
+                          "waiver": "on waivers: first claim run Wed"}],
+             "market": [{"name": "Back Epsilon", "position": "RB", "team": "SF",
+                         "market": 12.3, "gain": 1.1,
+                         "why_unprojected": "no admissible box scores"}],
+             "notes": ["league transactions not in this snapshot: drops UNKNOWN"]}
+    text = WR.build_review(_record(watch=watch))
+    section = text.split("**Notable free agents**")[1].split("role is growing")[0]
+    assert "NEW Back Epsilon (RB, SF)" in section and "dropped by roster #4" in section
+    assert "none (no admissible box scores) / 12.3" in section
+    assert "drops UNKNOWN" in section
+    assert "| Back Epsilon (RB, SF) | 12.3 | 1.10 | no admissible box scores |" in section
+    assert "not in this record" in WR.build_review(_record())

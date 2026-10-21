@@ -265,7 +265,7 @@ def test_protected_players_are_named_on_the_page_not_silently_dropped(tmp_path):
     for row in rec["protected_from_drop"]:
         assert row["reason"]
     # eligibility is never asserted from the cache
-    assert "UNVERIFIED" in html and "transactions feed" in html
+    assert "UNVERIFIED" in html and "Sleeper player card" in html
     assert "Add now" not in html
 
 
@@ -705,3 +705,28 @@ def test_a_team_defense_with_no_game_row_is_left_out_and_named(tmp_path):
     assert any("no week-3 game row" in r for r in d["reasons"])
     m = rec["matchup"]
     assert m["pwin"] is not None and "SEA DST" in m["pwin_reason"]
+
+
+# ---------------------------------------------------------------------------
+# 9. A free agent the radar cannot rank is still named (gridiron.notable)
+# ---------------------------------------------------------------------------
+def test_an_unprojected_league_drop_is_named_on_the_first_screen(tmp_path, no_network):
+    rc, html, rec = render(tmp_path, "notable")
+    assert rc == 0
+    sid = SCN._RETURNER[0]
+    assert all(str(c["id"]) != sid for c in rec["radar"]["candidates"]), \
+        "no number of ours, so the radar cannot rank him"
+    n = next(x for x in rec["watch"]["notable"] if x["id"] == sid)
+    assert n["ours"] is None and "no admissible box scores" in n["ours_note"]
+    assert n["market"] == SCN._RETURNER[5] and n["dropped_by"] == 2
+    assert "claim run at Wed 30 Sep 07:00 UTC" in n["waiver"]
+    assert any(m["id"] == sid for m in rec["watch"]["market"])
+    desk = html[html.index('id="desk"'):html.index('class="dcard')]
+    assert "notable-alert" in desk and SCN._RETURNER[2] in desk
+
+
+def test_without_transactions_the_page_says_drops_are_unknown(tmp_path, no_network):
+    _, html, rec = render(tmp_path, "complete")
+    assert rec["watch"]["notable"] == []
+    assert any("drops UNKNOWN" in x for x in rec["watch"]["notes"])
+    assert "drops UNKNOWN" in html and "notable-alert\"" not in html

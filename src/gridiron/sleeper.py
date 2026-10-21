@@ -115,6 +115,29 @@ class SleeperReadOnly:
     def matchups(self, week: int) -> list[dict]:
         return self._fetch(f"{BASE}/league/{self.league_id}/matchups/{int(week)}") or []
 
+    def transactions(self, week: int) -> list[dict]:
+        """The league's transactions for one Sleeper week ("leg"): adds,
+        drops, waiver claims, trades, with their timestamps. Public, GET."""
+        return self._fetch(f"{BASE}/league/{self.league_id}/transactions/{int(week)}") or []
+
+    def recent_transactions(self, week: int) -> dict:
+        """This week's and last week's transactions, trimmed to what the
+        board reads (who moved whom, and when). Never raises: a failed read
+        is an `error`, so the league snapshot it rides in is never lost to
+        it, and the board says the drops are UNKNOWN rather than none."""
+        weeks = [w for w in (int(week) - 1, int(week)) if w >= 1]
+        keep = ("transaction_id", "type", "status", "roster_ids", "adds", "drops",
+                "created", "status_updated", "leg")
+        rows: list[dict] = []
+        try:
+            for w in weeks:
+                for t in self.transactions(w) or []:
+                    if isinstance(t, dict):
+                        rows.append({k: t.get(k) for k in keep})
+        except Exception as exc:                                   # noqa: BLE001
+            return {"weeks": weeks, "rows": [], "error": f"{type(exc).__name__}: {exc}"[:200]}
+        return {"weeks": weeks, "rows": rows, "error": ""}
+
     def players(self) -> dict:
         """The full NFL player map (5-16 MB). Bulk — cache it, never commit
         it (rule #10). ONE attempt: Sleeper asks for this call at most once a
@@ -147,6 +170,7 @@ class SleeperReadOnly:
             "users": self.users(),
             "rosters": self.rosters(),
             "matchups": self.matchups(wk),
+            "transactions": self.recent_transactions(wk),
         }
 
 

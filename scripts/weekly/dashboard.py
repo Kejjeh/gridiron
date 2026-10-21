@@ -249,8 +249,9 @@ def main(argv: list[str] | None = None) -> int:
         gid = crosswalk.gsis(sid)
         if gid and isinstance(rec, dict) and rec.get("team"):
             teams[gid] = nflverse_team(rec.get("team"))
+    adv_inputs = adv_model.load_inputs(directory, state_season)
     advanced = adv_model.build_context(
-        weeks=weeks, inputs=adv_model.load_inputs(directory, state_season),
+        weeks=weeks, inputs=adv_inputs,
         injuries=injuries, schedule=schedule, week=report_week, teams=teams, now=now)
 
     owner_id = find_owner_id(snapshot, args.owner)
@@ -270,7 +271,11 @@ def main(argv: list[str] | None = None) -> int:
         # Sleeper's projection for the same players, recorded for weekly
         # grading only — not a manifest source, gates nothing (gridiron.shadow).
         shadow=read_shadow(directory, season=state_season, week=report_week),
-        advanced=advanced)
+        advanced=advanced,
+        # The free-agent watch only (gridiron.notable): last season's box
+        # scores and who is on an NFL reserve list. Neither feeds a projection.
+        prior_weekly=(adv_inputs or {}).get("prior_weekly"),
+        reserve=adv_model.reserve_ids((adv_inputs or {}).get("reserve"), report_week))
 
     # The report card: every graded week of the season, from the ledger the
     # grading step keeps (counts only). Read after the build, so the archive

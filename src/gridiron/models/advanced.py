@@ -647,7 +647,7 @@ EXPANSION_LOADERS = ("pfr_rec", "pfr_rush", "pfr_pass", "participation", "pbp")
 #: (expected points, Next Gen Stats, depth charts, schedules, team stats)
 #: failing fails the refresh instead, so the page keeps the baseline and says
 #: why rather than modelling on training means.
-OPTIONAL_LOADERS = ("rosters", *EXPANSION_LOADERS)
+OPTIONAL_LOADERS = ("rosters", "prior_stats", *EXPANSION_LOADERS)
 
 
 def fetch_inputs(season: int, *, loaders=None, expansion: bool = False,
@@ -670,6 +670,10 @@ def fetch_inputs(season: int, *, loaders=None, expansion: bool = False,
             "team_stats": lambda: nfl.load_team_stats([season],
                                                       summary_level="week").to_pandas(),
             "rosters": lambda: nfl.load_rosters_weekly([season]).to_pandas(),
+            # LAST season's box scores: the evidence for a player with no game
+            # yet this season (`gridiron.returners`). Final, small (<1 MB).
+            "prior_stats": lambda: nfl.load_player_stats(
+                [season - 1], summary_level="week").to_pandas(),
             **{f"pfr_{k}": (lambda k=k: nfl.load_pfr_advstats(
                 [season], stat_type=k, summary_level="week").to_pandas()) for k in PFR_COLUMNS},
             "participation": lambda: nfl.load_participation([season]).to_pandas(),
@@ -695,7 +699,18 @@ def fetch_inputs(season: int, *, loaders=None, expansion: bool = False,
             "reserve": reserve_from_rosters(raw.get("rosters")),
             "offense": offense_history(raw.get("team_stats")),
             "pfr": pfr_from_advstats({k: raw.get(f"pfr_{k}") for k in PFR_COLUMNS}),
-            "routes": routes_from_participation(raw.get("participation"), raw.get("pbp"))}
+            "routes": routes_from_participation(raw.get("participation"), raw.get("pbp")),
+            "prior_weekly": prior_weekly_frame(raw.get("prior_stats"))}
+
+
+def prior_weekly_frame(raw: pd.DataFrame | None) -> pd.DataFrame:
+    """Last season's regular-season box scores, as nflverse publishes them
+    (scored downstream by `gridiron.scoring`, rule #2). Empty when the
+    source was down: no prior season is UNKNOWN, never zero."""
+    if raw is None or len(raw) == 0:
+        return pd.DataFrame(columns=["player_id", "week"])
+    out = raw.loc[raw["season_type"] == "REG"].copy() if "season_type" in raw else raw.copy()
+    return out.reset_index(drop=True)
 
 
 def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame],
@@ -717,7 +732,7 @@ def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame
 def load_inputs(directory: Path, season: int) -> dict | None:
     """The saved inputs for `season`, or None when absent or for another
     season. Returns {"xfp", "ngs", "depth", "defense", "reserve", "offense",
-    "pfr", "routes", "meta"}."""
+    "pfr", "routes", "prior_weekly", "meta"}."""
     folder = Path(directory) / INPUT_DIR
     try:
         meta = json.loads((folder / INPUT_META).read_text(encoding="utf-8"))
@@ -731,7 +746,8 @@ def load_inputs(directory: Path, season: int) -> dict | None:
         frames["reserve"] = (pd.read_parquet(rpath) if rpath.exists()
                              else pd.DataFrame(columns=["week", "gsis_id"]))
         for name, cols in (("offense", ["team", "week"]), ("pfr", ["pfr_id", "week"]),
-                           ("routes", ["gsis_id", "week"])):
+                           ("routes", ["gsis_id", "week"]),
+                           ("prior_weekly", ["player_id", "week"])):
             path = folder / f"{name}.parquet"
             frames[name] = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=cols)
     except (OSError, ValueError, KeyError) as exc:

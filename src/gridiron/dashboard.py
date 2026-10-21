@@ -70,6 +70,8 @@ from gridiron.lineup import (
 from gridiron.projection import (
     BASELINE_LABEL, Projection, abstain, build_evidence, project,
 )
+from gridiron.notable import (ALERT_HOURS, NOTABLE_CAP, FreeAgentWatch, build_watch,
+                              league_drops, market_ranks, prior_lines)
 from gridiron.radar import RadarChanges, diff_radar, move_deadline, radar_record
 from gridiron.scoring import ScoringCoverage
 from gridiron.models.advanced import (FEED_MIN_PER_POSITION, NAME as ADVANCED_NAME,
@@ -183,6 +185,10 @@ class Dashboard:
     #: the ledger after the page is built. Page-only: never archived, so a
     #: record never carries a grade of itself.
     report_card: "ReportCard | None" = None
+    #: Free agents the radar cannot rank but the page must not leave unnamed
+    #: (`gridiron.notable`): last season's starters and this league's recent
+    #: drops, and every abstained player Sleeper does project. Not moves.
+    watch: FreeAgentWatch | None = None
 
     @property
     def degraded(self) -> bool:
@@ -276,6 +282,7 @@ class Dashboard:
                                   sources=self.sources, designations=self.designations),
             "radar_changes": (None if self.radar_changes is None
                               else self.radar_changes.record()),
+            "watch": None if self.watch is None else self.watch.record(),
             "usage": dict(self.usage) if self.usage else None,
             "shadow": dict(self.shadow) if self.shadow else None,
             "projection_model": self.model_status or BASELINE_LABEL,
@@ -337,6 +344,24 @@ STACK_LABEL = ("STACK v1 (advanced_v1 + Sleeper's pre-kickoff projection, mean s
                "2019-2025, rule #5")
 #: Marker on a projection abstained because a fresh Sleeper feed omits him.
 FEED_ABSENT = "missing from Sleeper's pre-kickoff projections"
+
+
+def _pool_ids(record: Mapping[str, object]) -> list[str] | None:
+    """The free-agent pool a previous record saw, by id; None when it has no
+    radar pool to compare against (then nothing is marked NEW)."""
+    radar = record.get("radar") if isinstance(record, Mapping) else None
+    pool = radar.get("pool") if isinstance(radar, Mapping) else None
+    if not isinstance(pool, list):
+        return None
+    return [str(r.get("id")) for r in pool if isinstance(r, Mapping) and r.get("id")]
+
+
+def _first_seen(record: Mapping[str, object]) -> dict[str, str]:
+    """When the previous record's notable rows were first listed, by id."""
+    w = record.get("watch") if isinstance(record, Mapping) else None
+    rows = w.get("notable") if isinstance(w, Mapping) else None
+    return {str(r["id"]): str(r["first_seen"]) for r in rows or []
+            if isinstance(r, Mapping) and r.get("id") and r.get("first_seen")}
 
 
 def _feed_usable(shadow: Mapping[str, object] | None, kickoff: datetime | None,
@@ -475,7 +500,13 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                     write_archive_file: bool = True,
                     extra_notes: Sequence[str] = (),
                     shadow: Mapping[str, object] | None = None,
-                    advanced: AdvancedContext | None = None) -> Dashboard:
+                    advanced: AdvancedContext | None = None,
+                    prior_weekly: pd.DataFrame | None = None,
+                    reserve: set[str] | None = None) -> Dashboard:
+    """`prior_weekly` is last season's regular-season box scores and
+    `reserve` the gsis ids on an NFL reserve list this week (None: unknown);
+    both feed only the free-agent watch (`gridiron.notable`), never a
+    projection."""
     week = context.report_week
     rosters = list(snapshot.get("rosters") or [])
     league = snapshot.get("league") or {}
@@ -776,6 +807,24 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                               for sid in (r.get("players") or []) if normalize_id(sid)}))
     designations = {p.sleeper_id: str((sleeper_players.get(p.sleeper_id) or {})
                                       .get("injury_status") or "") for p in pool}
+    drops, drops_note = league_drops(snapshot.get("transactions"))
+    try:
+        priors = prior_lines(prior_weekly, rules)
+    except (KeyError, TypeError, ValueError) as exc:   # an optional input never sinks the page
+        priors = {}
+        notes_watch = f"last season's box scores unreadable ({type(exc).__name__})"
+        drops_note = "; ".join(x for x in (drops_note, notes_watch) if x)
+
+    def watch(previous_pool_ids, previous_first_seen=None) -> FreeAgentWatch:
+        return build_watch(
+            pool, sleeper_players=sleeper_players,
+            market_of=lambda p: (shadow_number(shadow, p.sleeper_id, p.kickoff, now)
+                                 if p.position in SKILL_POSITIONS else None),
+            prior=priors, prior_season=context.season - 1,
+            ranks=market_ranks((shadow or {}).get("players")), drops=drops,
+            drops_note=drops_note, now=now, best=plan.best, slots=slots,
+            reserve=reserve, my_roster_id=my_roster_id,
+            previous_pool_ids=previous_pool_ids, previous_first_seen=previous_first_seen)
     dash = Dashboard(context, tuple(sources), tuple(notes), now, tuple(roster), slots,
                      plan, matchup, matchup_reason, board, evaluation,
                      tuple(unresolved), my_roster_id, gate, actions, None, kickoffs,
@@ -792,7 +841,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                                    else BASELINE_LABEL + (f" ({advanced.status})"
                                                           if advanced is not None else "")),
                      contenders=contenders_block(advanced, shadow, (*roster, *pool)),
-                     pwin_calibration=cal, league_matchups=tuple(league_matchups))
+                     pwin_calibration=cal, league_matchups=tuple(league_matchups),
+                     watch=watch(None))
 
     # What changed since the previous frozen page. Read-only: the diff never
     # feeds a projection, so yesterday's numbers cannot enter today's evidence.
@@ -803,7 +853,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             current = dash.record()
             dash = Dashboard(**{**dash.__dict__,
                                 "changes": diff_archives(before, current),
-                                "radar_changes": diff_radar(before, current)})
+                                "radar_changes": diff_radar(before, current),
+                                "watch": watch(_pool_ids(before), _first_seen(before))})
         except (OSError, ValueError) as exc:
             dash = Dashboard(**{**dash.__dict__, "changes": Changes(
                 str(prev.name), None, (),
@@ -1919,6 +1970,8 @@ color:inherit;font-weight:500;list-style:none}
 .badge.v-LOCKED,.badge.v-UNKNOWN{color:var(--bad);border-color:rgba(255,128,128,.45)}
 .radar li[hidden]{display:none}
 .chg li{margin:3px 0}
+.watch{padding-left:1.1em;margin:6px 0}.watch li{margin:8px 0;overflow-wrap:anywhere}
+.notable-alert{overflow-wrap:anywhere}
 .desk h2{border-top:0;margin-top:22px;padding-top:0}
 .desk-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0 28px}
 .deskh{font-size:var(--t-xs);letter-spacing:.12em;text-transform:uppercase;color:var(--warn);margin:22px 0 4px}
@@ -2538,6 +2591,102 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
             f"<div class=\"rbody\">{_dl(pairs)}</div></details></li>")
 
 
+def _watch_alert(d: Dashboard) -> str:
+    """The first-screen line: who the radar cannot rank but the owner should
+    look at, NEW ones first. Empty when there is nobody."""
+    w = d.watch
+    if w is None or not w.alerts:
+        return ""
+    rows = w.alerts
+    new = [n for n in rows if n.new]
+    head = rows[:3]
+    names = "; ".join(
+        ("NEW " if n.new else "") + f"{n.player.name} ({n.player.position}"
+        + (f", {n.player.team}" if n.player.team else "") + ")"
+        + (" — dropped by YOU" if n.drop and d.my_roster_id is not None
+           and n.drop.roster_id == d.my_roster_id
+           else f" — dropped by roster #{n.drop.roster_id}" if n.drop and n.drop.roster_id is not None
+           else " — dropped in this league" if n.drop else "")
+        for n in head)
+    more = len(rows) - len(head)
+    return ("<div class=\"gatebox notable-alert\"><b class=\"warn\">Look at "
+            + ("these free agents" if len(rows) > 1 else "this free agent")
+            + (f" ({len(new)} NEW)" if new else "") + ":</b> " + _e(names)
+            + (f" and {more} more" if more > 0 else "")
+            + ". The radar cannot rank a player it does not project; this list names "
+              "last season's starters and this league's recent drops anyway. Not a move: "
+              "<a href=\"#notable\">who, why, and the waiver timing ↓</a></div>")
+
+
+def _watch_html(d: Dashboard) -> str:
+    """The radar's two research lists (`gridiron.notable`)."""
+    w = d.watch
+    if w is None:
+        return ""
+    out = ["<h3 id=\"notable\">Notable free agents — look before anyone claims them</h3>"]
+    if w.notable:
+        items = []
+        for n in w.notable[:NOTABLE_CAP]:
+            p = n.player
+            ours = (f"ours {_num(n.ours)}" if n.ours is not None
+                    else f"ours: no number ({n.ours_note})")
+            mkt = (f"Sleeper {_num(n.market)}" if n.market is not None
+                   else "Sleeper: no pre-kickoff number in a fresh feed")
+            items.append(
+                "<li>" + ("<span class=\"badge\">NEW</span> " if n.new else
+                          "<span class=\"badge\">ALERT</span> " if n.alert else "")
+                + f"<b>{_e(p.name)}</b> <span class=\"sub\">({_e(p.position)}"
+                + (f", {_e(p.team)}" if p.team else "") + ")</span><br>"
+                + "<span class=\"small\">Why: " + _e("; ".join(n.why)) + ".</span><br>"
+                + f"<span class=\"small\">Status: {_e(n.status)} · {_e(ours)} · {_e(mkt)}"
+                + (f" · {_e(n.versus)}" if n.versus else "") + ".</span><br>"
+                + f"<span class=\"small warn\">{_e(n.waiver)}.</span></li>")
+        out.append("<ul class=\"watch\">" + "".join(items) + "</ul>")
+        if w.notable_total > NOTABLE_CAP:
+            out.append(f"<p class=\"small sub\">{w.notable_total - NOTABLE_CAP} more in "
+                       f"the record.</p>")
+    else:
+        out.append("<p class=\"small sub\">Nobody in the pool was a starter last season or "
+                   "was dropped by a team in this league recently and is worth a look this "
+                   "week.</p>")
+    for note in w.notes:
+        out.append(f"<p class=\"small warn\">{_e(note)}</p>")
+    out.append("<p class=\"small sub\">Research, not a move. A starter last season is "
+               "ranked by this league's points per game within his position (at least 4 "
+               "games); a drop in this league in the last ten days is listed when Sleeper "
+               "ranks him a starter at his position this week, or ours or Sleeper's number "
+               "reaches your weakest eligible starter. NEW = not in the pool at the previous "
+               f"record; ALERT = first listed in the last {ALERT_HOURS} h or still inside his "
+               "waiver window (only those reach the top of the page). The "
+               "waiver time is what the league's settings imply for that drop; Sleeper's "
+               "player card is the authority.</p>")
+
+    out.append("<h3 id=\"market\">Can't project — Sleeper's number</h3>")
+    if w.market:
+        out.append("<ul class=\"watch small\">" + "".join(
+            f"<li><b>{_e(m.player.name)}</b> <span class=\"sub\">({_e(m.player.position)}"
+            + (f", {_e(m.player.team)}" if m.player.team else "") + ")</span> — "
+            f"Sleeper <b class=\"num\">{_num(m.market)}</b>"
+            + (f" ({_e(m.player.position)}{m.rank} in Sleeper's feed)" if m.rank else "")
+            + (f"; {_e(m.versus)}" if m.versus else "")
+            + f". We abstain: {_e(m.why_unprojected)}. Status: {_e(m.status)}.</li>"
+            for m in w.market) + "</ul>")
+        if w.market_total > len(w.market):
+            out.append(f"<p class=\"small sub\">{w.market_total - len(w.market)} more, "
+                       f"lower, in the record.</p>")
+    else:
+        out.append("<p class=\"small sub\">No unprojected pool player has a pre-kickoff "
+                   "Sleeper number in a fresh feed.</p>")
+    out.append("<p class=\"small sub\">Every pool player WE do not project (no admissible "
+               "box scores, no game row, unresolved id) whom Sleeper does, highest first. "
+               "Sleeper's number, not ours: it says who to look at, never what to do. For a "
+               "player's first game back (2023-2025) it was the best number tested, and still "
+               "about 3 points low for last season's top scorers "
+               "(docs/research/RETURNER_BACKTEST.md). A player designated Out or on a bye is "
+               "not listed: he is known not to play.</p>")
+    return "".join(out)
+
+
 def _radar_html(d: Dashboard) -> str:
     b = d.board
     out = ["<h2 id=\"free-agents\">Free Agent Radar — every available player against your "
@@ -2568,6 +2717,7 @@ def _radar_html(d: Dashboard) -> str:
             for pc in b.positions) + ".</p>")
     if b.abstained:
         out.append(f"<p class=\"bad\"><b>ABSTAINED:</b> {_e(b.abstained)}</p>")
+    out.append(_watch_html(d))
 
     rc = d.radar_changes
     out.append("<h3>Since the last record</h3>")
@@ -2629,9 +2779,9 @@ def _radar_html(d: Dashboard) -> str:
                "filters.</p>")
     out.append("<p class=\"small warn\">Availability is UNVERIFIED for every row and cannot be "
                "anything else from this cache: the snapshot proves only that the player is on "
-               "no roster at its as-of. Whether he is a free agent or sitting on waivers, and "
-               "when a claim would process, live in Sleeper\u2019s transactions feed, which this "
-               "repo does not pull. Check in the app before bidding.</p>")
+               "no roster at its as-of. The league\u2019s recent drops are read (above), but "
+               "whether a player is a free agent or on waivers right now, and when his claim "
+               "processes, is on his Sleeper player card. Check in the app before bidding.</p>")
     out.append("<p class=\"small sub\">Only a LINEUP verdict is a move, and it is CONDITIONAL "
                "on availability. Raw points across positions rank nothing here; a same-position "
                "gap is research; a locked player cannot enter this week's lineup. Filters and "
@@ -2848,6 +2998,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    "this data.</b> Every item below is WITHHELD or waits on a check: the "
                    "inputs behind it are stale or unreadable, so what follows is the last "
                    "known picture rather than current advice.</div>")
+    out.append(_watch_alert(d))
     for i, item in enumerate(desk.top, 1):
         out.append(_desk_card(item, i, first=i == 1))
     if desk.checks:
