@@ -21,7 +21,7 @@ import argparse
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -107,6 +107,26 @@ def kickoffs_for(schedule: pd.DataFrame | None, week: int) -> list[datetime]:
 #: How deep each position's ROS list goes in the record (plus every player
 #: of the owner's and every free agent in those depths).
 ROS_DEPTH = {"QB": 30, "RB": 60, "WR": 72, "TE": 30, "K": 24, "DEF": 32}
+
+
+def watch_reserve(inputs: dict | None, week: int, now: datetime) -> dict:
+    """The NFL reserve list for the free-agent watch, with the roster week it
+    is from — only from model inputs young enough for the model itself to
+    use (`advanced.MAX_INPUT_AGE_DAYS`); otherwise unknown, never stale."""
+    unknown = {"nfl_reserve": None, "nfl_reserve_week": None}
+    meta = (inputs or {}).get("meta") or {}
+    try:
+        fetched = datetime.fromisoformat(str(meta.get("fetched_at")))
+    except (TypeError, ValueError):
+        return unknown
+    if fetched.tzinfo is None or now - fetched > timedelta(days=adv_model.MAX_INPUT_AGE_DAYS):
+        return unknown
+    frame = inputs.get("reserve")
+    ids = adv_model.reserve_ids(frame, week)
+    if ids is None:
+        return unknown
+    return {"nfl_reserve": ids,
+            "nfl_reserve_week": int(frame.loc[frame["week"] <= int(week), "week"].max())}
 
 
 def ros_block(*, weeks, schedule, injuries, directory, season, week, players, crosswalk,
@@ -275,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
         # The free-agent watch only (gridiron.notable): last season's box
         # scores and who is on an NFL reserve list. Neither feeds a projection.
         prior_weekly=(adv_inputs or {}).get("prior_weekly"),
-        reserve=adv_model.reserve_ids((adv_inputs or {}).get("reserve"), report_week))
+        **watch_reserve(adv_inputs, report_week, now))
 
     # The report card: every graded week of the season, from the ledger the
     # grading step keeps (counts only). Read after the build, so the archive

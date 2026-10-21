@@ -2,24 +2,30 @@
 
 Pins, with invented players:
   1. last season's starters are ranked by league points per game within
-     position, scored by the one scoring implementation (rule #2), and a
-     player under MIN_PRIOR_GAMES is never ranked;
+     LAST season's position, scored by the one scoring implementation
+     (rule #2), and a player under MIN_PRIOR_GAMES is never ranked;
   2. league drops: the latest COMPLETE drop per id, timestamps from Sleeper's
      milliseconds; a missing or failed transactions block says drops are
      UNKNOWN instead of returning "no drops";
-  3. the waiver timing the league's settings imply: the first Wednesday
-     ~03:00 Eastern at least two days after the drop (2026 week 7: a Friday
-     03:00 UTC drop was claimed Wednesday 07:17 UTC);
+  3. the waiver clock, built from this league's own transactions: on waivers
+     for two days after a drop, then a FREE AGENT until his kickoff, then
+     locked until the Wednesday run (a Wednesday drop was an instant add on
+     Sunday; every claim processed Wednesday ~07:17 UTC). Never an
+     instruction to bid (rule #11);
   4. a player with no number of ours who was a starter last season, or a
-     recent league drop whom Sleeper ranks as a starter, is notable; a
-     recent drop worth nothing this week is not;
+     recent league drop whom Sleeper ranks as a starter or who reaches the
+     weakest eligible starter (an empty slot counts as 0), is notable; a
+     recent drop worth nothing this week, or designated Out, is not;
   5. the market list carries every ABSTAINED player with a Sleeper number,
-     highest first, and never a withheld (Out / bye) one;
-  6. NEW marks only a player absent from the previous record's pool, and
-     nothing is NEW without a previous record.
+     highest first, never one withheld or designated Out, and the record
+     keeps every row;
+  6. the alert is a transition carried record to record: entering the pool,
+     first being listed, a drop, the end of a waiver period — not the
+     owner's own drop, not a degraded previous record, not a one-build gap.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -113,12 +119,11 @@ def test_missing_or_failed_transactions_are_unknown_not_none():
 
 
 # ---------------------------------------------------------------- 3. waivers
-def test_waiver_run_is_the_first_wednesday_three_am_eastern_after_the_clear():
+def test_the_episode_ends_at_the_first_wednesday_run_after_the_clear():
     # the 2026 week-7 case: dropped Fri 16 Oct 03:00 UTC, claimed Wed 21 Oct
     run = N.waiver_run_after(datetime(2026, 10, 16, 3, 0, tzinfo=UTC))
     assert run == datetime(2026, 10, 21, 7, 0, tzinfo=UTC)
     assert run.weekday() == 2
-    # dropped Tuesday: two days later is Thursday, so it waits for next Wednesday
     run = N.waiver_run_after(datetime(2026, 10, 20, 12, 0, tzinfo=UTC))
     assert run == datetime(2026, 10, 28, 7, 0, tzinfo=UTC)
     # Eastern standard time after 1 Nov: 03:00 EST is 08:00 UTC
@@ -126,14 +131,66 @@ def test_waiver_run_is_the_first_wednesday_three_am_eastern_after_the_clear():
     assert run == datetime(2026, 11, 11, 8, 0, tzinfo=UTC)
 
 
+def test_the_waiver_clock_follows_this_leagues_transactions():
+    """A Wednesday 08:13 drop was added as an instant FREE AGENT that Sunday,
+    days before the next run: two days on waivers, then a free agent until
+    his game, then locked until the Wednesday run."""
+    d = N.Drop("x", 7, datetime(2026, 9, 23, 8, 13, tzinfo=UTC), "free_agent")
+    sun = datetime(2026, 9, 27, 17, 0, tzinfo=UTC)
+    nxt = datetime(2026, 10, 4, 17, 0, tzinfo=UTC)
+    at = lambda *a: datetime(2026, *a, tzinfo=UTC)   # noqa: E731
+    c = N.waiver_clock(d, sun, at(9, 24, 12, 0))
+    assert c.phase == "WAIVERS" and c.until == at(9, 25, 8, 13)
+    c = N.waiver_clock(d, sun, at(9, 26, 12, 0))
+    assert c.phase == "FREE_AGENT" and "instant add" in c.text
+    assert c.events == (d.at, at(9, 25, 8, 13)) and c.until == sun
+    c = N.waiver_clock(d, sun, at(9, 28, 12, 0))
+    assert c.phase == "LOCKED" and c.until == at(9, 30, 7, 0)
+    # Tuesday: the board's week has rolled to the next game, last week's are played
+    c = N.waiver_clock(d, nxt, at(9, 29, 12, 0))
+    assert c.phase == "LOCKED" and "unless his team had a bye" in c.text
+    c = N.waiver_clock(d, nxt, at(9, 30, 10, 0))
+    assert c.phase == "FREE_AGENT"
+    assert N.waiver_clock(d, None, at(9, 26, 12, 0)).phase == "UNSURE"
+    for now in (at(9, 24, 12, 0), at(9, 26, 12, 0), at(9, 28, 12, 0)):
+        assert "bid" not in N.waiver_clock(d, sun, now).text.lower()
+
+
+def test_the_week_seven_player_was_an_instant_add_before_his_sunday_game():
+    d = N.Drop("j", 5, datetime(2026, 10, 16, 3, 0, tzinfo=UTC), "free_agent")
+    kick = datetime(2026, 10, 18, 17, 0, tzinfo=UTC)
+    assert N.waiver_clock(d, kick, datetime(2026, 10, 17, 12, 0, tzinfo=UTC)).phase == "WAIVERS"
+    c = N.waiver_clock(d, kick, datetime(2026, 10, 18, 12, 0, tzinfo=UTC))
+    assert c.phase == "FREE_AGENT" and c.until == kick
+    c = N.waiver_clock(d, kick, datetime(2026, 10, 19, 20, 0, tzinfo=UTC))
+    assert c.phase == "LOCKED" and c.until == datetime(2026, 10, 21, 7, 0, tzinfo=UTC)
+    # dropped, freed, locked: three transitions, the last one opening the bidding window
+    assert c.events == (d.at, datetime(2026, 10, 18, 3, 0, tzinfo=UTC), kick)
+    # a game that kicked off while he was still on waivers never freed him
+    early = N.waiver_clock(d, datetime(2026, 10, 17, 17, 0, tzinfo=UTC),
+                           datetime(2026, 10, 19, 20, 0, tzinfo=UTC))
+    assert early.phase == "LOCKED" and len(early.events) == 2
+
+
+def test_the_lock_before_the_run_is_alerted_so_the_bidding_window_is_on_screen():
+    d = N.Drop("j", 5, NOW - timedelta(days=4), "free_agent")     # clear: 2 days ago
+    kick = NOW - timedelta(hours=3)                               # locked 3 h ago
+    j = replace(P("j", "RB", gid="00-a"), kickoff=kick)
+    w = watch([j], drops={"j": d}, previous=prev(pool={"j"}, listed={"j"}))
+    assert w.notable[0].clock.phase == "LOCKED" and w.alerts
+
+
 # ---------------------------------------------------------------- 4/5/6. watch
-def watch(pool, *, market=None, drops=None, prev=None, ranks=None, prior=None):
+def watch(pool, *, market=None, drops=None, previous=None, ranks=None, prior=None, now=NOW,
+          roster=(), sleeper=None, best=None, mine=None):
     market = market or {}
     return N.build_watch(
-        pool, sleeper_players={}, market_of=lambda p: market.get(p.sleeper_id),
+        pool, sleeper_players=sleeper or {}, market_of=lambda p: market.get(p.sleeper_id),
         prior=N.prior_lines(prior_frame()) if prior is None else prior, prior_season=2025,
-        ranks=ranks, drops=drops or {}, drops_note="", now=NOW, best=lineup(), slots=SLOTS,
-        reserve={"00-a"}, previous_pool_ids=prev)
+        ranks=ranks, drops=drops or {}, drops_note="", now=now,
+        best=lineup() if best is None else best, slots=SLOTS, roster=roster,
+        out_designations={"OUT", "IR"}, reserve={"00-a"}, reserve_week=6, my_roster_id=mine,
+        previous=previous)
 
 
 def test_a_returning_starter_with_no_number_of_ours_is_named():
@@ -144,8 +201,8 @@ def test_a_returning_starter_with_no_number_of_ours_is_named():
     n = w.notable[0]
     assert n.ours is None and "no admissible box scores" in n.ours_note
     assert n.market == 11.7 and "RB1" in n.why[0]
-    assert "reserve list" in n.status
-    assert "open him in Sleeper" in n.waiver
+    assert "reserve list (RES/EXE, week-6 roster)" in n.status
+    assert "Sleeper card" in n.waiver
 
 
 def test_a_recent_league_drop_is_notable_when_sleeper_ranks_him_a_starter():
@@ -154,7 +211,7 @@ def test_a_recent_league_drop_is_notable_when_sleeper_ranks_him_a_starter():
     w = watch(pool, market={"x": 7.5}, drops={"x": d}, ranks={"x": 18})
     assert len(w.notable) == 1
     assert "roster #5" in w.notable[0].why[0] and "RB18" in w.notable[0].why[0]
-    assert "claim run at" in w.notable[0].waiver
+    assert "waiver period ended" in w.notable[0].waiver
     # same drop, ranked RB40 by Sleeper and below the weakest starter: not notable
     assert watch(pool, market={"x": 7.5}, drops={"x": d}, ranks={"x": 40}).notable == ()
 
@@ -163,14 +220,34 @@ def test_a_drop_reaching_the_weakest_eligible_starter_is_notable():
     d = N.Drop("y", 2, NOW - timedelta(days=1), "waiver")
     w = watch([P("y", "WR", 9.5, gid="00-y")], drops={"y": d})
     assert len(w.notable) == 1 and "reaches your weakest eligible starter" in w.notable[0].why[0]
+    assert w.notable[0].clock.phase == "WAIVERS"
     old = N.Drop("y", 2, NOW - timedelta(days=N.DROP_WINDOW_DAYS + 1), "waiver")
     assert watch([P("y", "WR", 9.5, gid="00-y")], drops={"y": old}).notable == ()
 
 
-def test_a_waiver_run_already_past_says_free_agent_not_on_waivers():
-    d = N.Drop("y", 2, NOW - timedelta(days=8), "waiver")
-    w = watch([P("y", "WR", 9.5, gid="00-y")], drops={"y": d})
-    assert "already past" in w.notable[0].waiver and "FREE AGENT" in w.notable[0].waiver
+def test_a_player_who_will_not_play_is_never_worth_a_look_this_week():
+    d = N.Drop("o", 2, NOW - timedelta(days=1), "waiver")
+    withheld = P("o", "RB", 12.0, gid="00-o", withheld=True)
+    assert watch([withheld], market={"o": 12.0}, drops={"o": d}, ranks={"o": 3}).notable == ()
+    tagged = P("o", "RB", gid="00-o")                    # abstained, tagged Out by Sleeper
+    w = watch([tagged], market={"o": 12.0}, drops={"o": d}, ranks={"o": 3},
+              sleeper={"o": {"injury_status": "Out"}})
+    assert w.notable == () and w.market == ()
+
+
+def test_an_empty_slot_counts_as_zero_but_an_unprojected_player_is_not_empty():
+    best = [None if s == "TE" else b for s, b in zip(SLOTS, lineup())]
+    ir_te = replace(P("t9", "TE", 7.0), lineup="IR")
+    roster = [b for b in best if b is not None] + [ir_te]
+    d = N.Drop("z", 4, NOW - timedelta(days=1), "free_agent")
+    w = watch([P("z", "TE", gid="00-z")], market={"z": 6.0}, drops={"z": d}, best=best,
+              roster=roster)
+    assert len(w.notable) == 1 and "an empty TE slot, 0.0" in w.notable[0].why[0]
+    # a TE on the bench the lineup could not place (no number): unknown, not empty
+    bench_te = replace(P("t8", "TE"), lineup="BENCH")
+    w = watch([P("z", "TE", gid="00-z")], market={"z": 6.0}, drops={"z": d}, best=best,
+              roster=roster + [bench_te])
+    assert w.notable == ()
 
 
 def test_market_list_is_abstained_players_with_a_sleeper_number_highest_first():
@@ -182,13 +259,9 @@ def test_market_list_is_abstained_players_with_a_sleeper_number_highest_first():
     assert [m.player.sleeper_id for m in w.market] == ["m2", "m1"]
     assert w.market[0].gain == round(12.9 - 9.0, 2)
     assert all("no admissible box scores" in m.why_unprojected for m in w.market)
-
-
-def test_new_needs_a_previous_pool_and_absence_from_it():
-    returner = P("a", "RB", gid="00-a")
-    assert not watch([returner]).notable[0].new
-    assert watch([returner], prev=["zz"]).notable[0].new
-    assert not watch([returner], prev=["a"]).notable[0].new
+    many = [P(f"k{i}", "WR", gid=f"00-k{i}") for i in range(N.MARKET_CAP + 5)]
+    w = watch(many, market={f"k{i}": 20.0 - i for i in range(N.MARKET_CAP + 5)})
+    assert len(w.record()["market"]) == N.MARKET_CAP + 5, "the record keeps every row"
 
 
 def test_no_prior_season_is_said_not_silently_skipped():
@@ -215,40 +288,72 @@ def test_a_fullback_last_season_is_not_a_starter_running_back():
     assert w.notable == ()
 
 
-def test_the_owners_own_drop_says_you():
-    d = N.Drop("y", 3, NOW - timedelta(days=1), "free_agent")
-    w = N.build_watch([P("y", "WR", 9.5, gid="00-y")], sleeper_players={},
-                      market_of=lambda p: None, prior={}, prior_season=2025, drops={"y": d},
-                      drops_note="", now=NOW, best=lineup(), slots=SLOTS, my_roster_id=3)
-    assert "dropped by YOU (roster #3)" in w.notable[0].why[0]
+# ---------------------------------------------------------------- 6. transitions
+def prev(pool=(), listed=(), pool_since=None, listed_since=None, comparable=True):
+    return N.PreviousWatch(pool=frozenset(pool) if comparable else None,
+                           listed=frozenset(listed) if comparable else None,
+                           pool_since=pool_since or {}, listed_since=listed_since or {})
 
 
-def test_the_alert_is_a_transition_not_a_standing_state():
+def test_nothing_is_new_without_a_comparable_previous_record():
     stash = P("a", "RB", gid="00-a")                 # a starter last season, in the pool
-    # first build after the list existed: no first-seen known, no drop -> listed, no alert
-    w = watch([stash], prev=["a"])
+    w = watch([stash])
     assert w.notable and not w.alerts and w.notable[0].first_seen is None
-    # entered the pool this build -> NEW and alert; the time carries forward
-    w = watch([stash], prev=["zz"])
+    w = watch([stash], previous=prev(pool={"a"}, listed={"a"}))
+    assert not w.alerts and w.notable[0].first_seen is None
+
+
+def test_entering_the_pool_is_new_and_alerted_for_48_hours():
+    stash = P("a", "RB", gid="00-a")
+    w = watch([stash], previous=prev(pool={"zz"}))
     assert w.alerts and w.notable[0].new and w.notable[0].first_seen == NOW
-    later = NOW + timedelta(hours=N.ALERT_HOURS - 1)
-    w2 = N.build_watch([stash], sleeper_players={}, market_of=lambda p: None,
-                       prior=N.prior_lines(prior_frame()), prior_season=2025, drops={},
-                       drops_note="", now=later, best=lineup(), slots=SLOTS,
-                       previous_pool_ids=["a"], previous_first_seen={"a": NOW.isoformat()})
-    assert w2.alerts and not w2.notable[0].new and w2.notable[0].first_seen == NOW
-    w3 = N.build_watch([stash], sleeper_players={}, market_of=lambda p: None,
-                       prior=N.prior_lines(prior_frame()), prior_season=2025, drops={},
-                       drops_note="", now=NOW + timedelta(hours=N.ALERT_HOURS + 1),
-                       best=lineup(), slots=SLOTS, previous_pool_ids=["a"],
-                       previous_first_seen={"a": NOW.isoformat()})
-    assert w3.notable and not w3.alerts, "after the window he stays listed, off the top"
+    carried = N.PreviousWatch.from_record({"radar": {"pool": [{"id": "a"}]},
+                                           "watch": w.record()})
+    later = watch([stash], previous=carried, now=NOW + timedelta(hours=N.ALERT_HOURS - 1))
+    assert later.alerts and not later.notable[0].new and later.notable[0].first_seen == NOW
+    gone = watch([stash], now=NOW + timedelta(hours=N.ALERT_HOURS + 1),
+                 previous=N.PreviousWatch.from_record({"radar": {"pool": [{"id": "a"}]},
+                                                       "watch": later.record()}))
+    assert gone.notable and not gone.alerts, "after the window he stays listed, off the top"
 
 
-def test_an_open_waiver_window_keeps_the_alert_up():
-    d = N.Drop("a", 5, NOW - timedelta(days=3), "free_agent")    # run: Wed 21 Oct
-    w = watch([P("a", "RB", gid="00-a")], drops={"a": d}, prev=["a"])
-    assert w.alerts and w.notable[0].first_seen is None
+def test_becoming_notable_while_already_in_the_pool_is_a_transition():
+    d = N.Drop("x", 5, NOW - timedelta(days=6), "free_agent")
+    pool = [P("x", "RB", gid="00-x")]
+    w = watch(pool, market={"x": 12.0}, drops={"x": d}, ranks={"x": 15},
+              previous=prev(pool={"x"}, listed=()))
+    assert w.notable[0].new and w.alerts
+
+
+def test_a_one_build_gap_does_not_end_an_alert():
+    stash = P("a", "RB", gid="00-a")
+    t0 = NOW - timedelta(hours=1)
+    w = watch([stash], previous=prev(pool={"a"}, listed=(), listed_since={"a": t0},
+                                     pool_since={"a": t0}))
+    assert w.alerts and not w.notable[0].new and w.notable[0].first_seen == t0
+
+
+def test_a_degraded_previous_record_marks_nothing_new():
+    stash = P("a", "RB", gid="00-a")
+    empty_pool = {"radar": {"pool": []}, "watch": {"prior_loaded": True, "notable": []}}
+    assert not watch([stash], previous=N.PreviousWatch.from_record(empty_pool)).alerts
+    no_prior = {"radar": {"pool": [{"id": "a"}]}, "watch": {"prior_loaded": False,
+                                                              "notable": []}}
+    assert not watch([stash], previous=N.PreviousWatch.from_record(no_prior)).alerts
+    first_deploy = {"radar": {"pool": [{"id": "a"}]}}
+    assert not watch([stash], previous=N.PreviousWatch.from_record(first_deploy)).alerts
+
+
+def test_the_end_of_a_waiver_period_is_alerted_and_the_owners_own_drop_never_is():
+    d = N.Drop("y", 2, NOW - timedelta(hours=60), "free_agent")     # clear 12 h ago
+    kick = NOW + timedelta(hours=5)
+    y = replace(P("y", "WR", 9.5, gid="00-y"), kickoff=kick)
+    w = watch([y], drops={"y": d}, previous=prev(pool={"y"}, listed={"y"}))
+    assert w.alerts and w.notable[0].clock.phase == "FREE_AGENT"
+    mine = N.Drop("y", 3, NOW - timedelta(hours=1), "free_agent")
+    w = watch([y], drops={"y": mine}, previous=prev(pool={"zz"}), mine=3)
+    assert w.notable and "dropped by YOU (roster #3)" in w.notable[0].why[0]
+    assert not w.alerts
 
 
 def test_malformed_optional_inputs_never_raise():
@@ -258,3 +363,5 @@ def test_malformed_optional_inputs_never_raise():
     drops, note = N.league_drops({"rows": [{"status": "complete", "drops": ["501"],
                                             "created": 1}, "junk"], "error": ""})
     assert drops == {} and note == ""
+    assert N.PreviousWatch.from_record({"radar": "x", "watch": {"pool_since": {"a": "bad"}}}) \
+        == N.PreviousWatch()

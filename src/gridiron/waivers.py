@@ -64,7 +64,7 @@ suggestions and listed separately with the reason, for a human to price.
 snapshot proves one thing — this id appears on no roster's `players` list at
 the snapshot's as-of. It does not say whether the player is a free agent or
 sitting on waivers, when he was dropped, or whether a claim is already in on
-him. The snapshot carries this league's transactions for this week and last
+him. The snapshot carries this league's last three transaction legs
 (`SleeperReadOnly.recent_transactions`, read by `gridiron.notable`), which
 date a recent drop; the waiver clock itself and pending claims are not in
 them. So eligibility is reported as UNVERIFIED with its evidence and the

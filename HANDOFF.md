@@ -14,18 +14,27 @@ the Wednesday waiver run. Fixed in three parts:
 
 - **Notable free agents** (`gridiron.notable`, radar section `#notable`,
   record `watch.notable`): last season's starters by league ppg and this
-  league's recent drops that matter this week, each with status, ours or
-  why not, Sleeper's number and rank, and the waiver run the settings imply.
-  The first-screen alert (top of the Action Desk) shows only rows first
-  listed in the last 48 h or inside an open waiver window; `first_seen`
-  carries record to record. The snapshot now carries this week's and last
-  week's league transactions (`SleeperReadOnly.recent_transactions`, never
-  raises). Last season's box scores ride in the model inputs
-  (`prior_weekly.parquet`, ~0.9 MB, refreshed with them every 6 h). Until
-  the first cloud pull after this merge, the page says the starter check
-  cannot run.
+  league's recent drops that matter this week (an empty slot counts as 0;
+  never a player designated Out), each with status (Sleeper tag; NFL
+  reserve list with its roster week, only from inputs young enough for the
+  model), ours or why not, Sleeper's number and rank, and the waiver clock
+  (`notable.waiver_clock`, from this league's own transactions): on
+  waivers 2 days after the drop, then a FREE AGENT until his kickoff, then
+  locked until the Wednesday run. The first-screen alert (top of the
+  Action Desk) is a transition, 48 h each: entered the pool, first listed,
+  or a change of that clock — never the owner's own drop. The times carry
+  record to record (`notable.PreviousWatch`), and a previous record that
+  cannot compare (no watch block, last season not loaded, a pool built
+  without the player map) marks nothing new. The snapshot now carries the
+  last three transaction legs (`SleeperReadOnly.recent_transactions`, never
+  raises; the leg advances at Wednesday's run, a day after `state.week`).
+  Last season's box scores ride in the model inputs (`prior_weekly.parquet`,
+  ~0.9 MB, refreshed with them every 6 h; a failed refresh keeps the good
+  copy). Until the first cloud pull after this merge, the page says the
+  starter check cannot run.
 - **Can't project — Sleeper's number** (`#market`, `watch.market`): every
-  abstained pool player Sleeper projects, highest first, with our reason.
+  abstained pool player Sleeper projects and who is not known to sit,
+  highest first, with our reason; the record keeps every row.
   The weekly review shows both lists.
 - **Returner projection: researched, NOT shipped**
   (docs/research/RETURNER_BACKTEST.md). Pre-registered `returner_v1`
@@ -33,9 +42,17 @@ the Wednesday waiver run. Fixed in three parts:
   about half their output (+2.5 bias n=41, +5.0 n=14). Sleeper beat it on
   the same rows. `returner_v2` is declared and is tested on 2026 returners
   at season end.
-- Replay on the 41 real builds of 15-21 Oct: the week-7 player is on the
-  first screen in all 33 builds he was in the pool, and the alerts clear
-  after the waiver run.
+- Replay on the 41 real builds of 15-21 Oct (real kickoffs): the week-7
+  player is on the first screen in all 33 builds he was in the pool —
+  on waivers to Sun 03:00 UTC, an instant-add FREE AGENT until his
+  Sunday-night kickoff (Mon 00:20 UTC) by the inferred clock, then locked
+  until the run — with at most four alerts at a time.
+- An adversarial review of the first version (40 agents) confirmed and this
+  PR fixed: the waiver model (claimed "on waivers, bid before Wed" for an
+  instant free agent), two-leg transaction reads, alert transitions lost
+  or invented across records, the empty-slot and Out cases, and a
+  shadowed `reserve` variable that kept the NFL reserve label off the
+  page.
 - **Next:** after the first cloud build, check the record's
   `watch.notes` has no "not loaded" line, and that `watch.notable` is
   short enough to read.

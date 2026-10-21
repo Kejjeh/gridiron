@@ -26,7 +26,7 @@ import importlib.util
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -719,7 +719,8 @@ def test_an_unprojected_league_drop_is_named_on_the_first_screen(tmp_path, no_ne
     n = next(x for x in rec["watch"]["notable"] if x["id"] == sid)
     assert n["ours"] is None and "no admissible box scores" in n["ours_note"]
     assert n["market"] == SCN._RETURNER[5] and n["dropped_by"] == 2
-    assert "claim run at Wed 30 Sep 07:00 UTC" in n["waiver"]
+    assert n["waiver_phase"] == "WAIVERS" and "on waivers until about Sun 27 Sep 00:00 UTC" \
+        in n["waiver"] and "bid" not in n["waiver"].lower()
     assert any(m["id"] == sid for m in rec["watch"]["market"])
     desk = html[html.index('id="desk"'):html.index('class="dcard')]
     assert "notable-alert" in desk and SCN._RETURNER[2] in desk
@@ -730,3 +731,43 @@ def test_without_transactions_the_page_says_drops_are_unknown(tmp_path, no_netwo
     assert rec["watch"]["notable"] == []
     assert any("drops UNKNOWN" in x for x in rec["watch"]["notes"])
     assert "drops UNKNOWN" in html and "notable-alert\"" not in html
+
+
+def _render_with_model_inputs(tmp_path, kind, *, age):
+    """The `notable` scenario plus a model-inputs folder fetched `age` before
+    the render, holding an NFL reserve list (week 3) and last season's box
+    scores for the invented returner."""
+    import pandas as pd
+    from gridiron import ingest as ing
+    from gridiron.models import advanced as A
+    root = tmp_path / kind
+    SCN.build_scenario(root, "notable", now=NOW)
+    gid = SCN._RETURNER[1]
+    empty = {"xfp": pd.DataFrame(columns=["gsis_id", "week", "xfp"]),
+             "ngs": pd.DataFrame(columns=["gsis_id", "week"]),
+             "depth": pd.DataFrame(columns=["week", "gsis_id", "depth_rank"])}
+    prior = pd.DataFrame([{"player_id": gid, "position": "RB", "team": "CAR", "week": w,
+                           "season_type": "REG", "rushing_yards": 110, "receptions": 4,
+                           "receiving_yards": 35} for w in range(1, 10)])
+    A.write_inputs(ing.season_cache(2026, root), 2026,
+                   {**empty, "reserve": pd.DataFrame({"week": [3], "gsis_id": [gid]}),
+                    "prior_weekly": prior}, NOW - age)
+    out = tmp_path / "out" / kind
+    assert CLI.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
+                     "--out-dir", str(out), "--no-archive", "--now", NOW.isoformat()]) == 0
+    html = (out / "dashboard_latest.html").read_text("utf-8")
+    return html, json.loads((out / "dashboard_latest.json").read_text("utf-8"))
+
+
+def test_the_nfl_reserve_list_and_last_season_reach_the_page(tmp_path, no_network):
+    """build_dashboard's own `reserve` (the owner's IR slots) once shadowed
+    the NFL list, so the label never showed; fresh inputs now reach the
+    page, with the roster week, and stale ones are unknown, not shown."""
+    html, rec = _render_with_model_inputs(tmp_path, "fresh", age=timedelta(hours=1))
+    n = next(x for x in rec["watch"]["notable"] if x["id"] == SCN._RETURNER[0])
+    assert "on an NFL reserve list (RES/EXE, week-3 roster)" in n["status"]
+    assert any("a starter last season (2025 RB1" in w for w in n["why"])
+    assert rec["watch"]["prior_loaded"] is True and "week-3 roster" in html
+    _, rec = _render_with_model_inputs(tmp_path, "stale", age=timedelta(days=15))
+    n = next(x for x in rec["watch"]["notable"] if x["id"] == SCN._RETURNER[0])
+    assert "reserve list" not in n["status"]

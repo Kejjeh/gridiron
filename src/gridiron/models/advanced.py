@@ -713,10 +713,25 @@ def prior_weekly_frame(raw: pd.DataFrame | None) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+#: Inputs that cannot change once published (last season is final): an
+#: empty refresh — the optional loader failed — never replaces a good copy.
+KEEP_LAST_GOOD = ("prior_weekly",)
+
+
 def write_inputs(directory: Path, season: int, frames: Mapping[str, pd.DataFrame],
                  now) -> Path:
     folder = Path(directory) / INPUT_DIR
     folder.mkdir(parents=True, exist_ok=True)
+    frames = dict(frames)
+    for name in KEEP_LAST_GOOD:
+        path = folder / f"{name}.parquet"
+        if name in frames and len(frames[name]) == 0 and path.exists():
+            try:
+                kept = pd.read_parquet(path)
+            except (OSError, ValueError):
+                continue
+            if len(kept):
+                frames[name] = kept
     for name, df in frames.items():
         tmp = folder / f"{name}.parquet.part"
         df.to_parquet(tmp, index=False)

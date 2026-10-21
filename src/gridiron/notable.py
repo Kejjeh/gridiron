@@ -3,31 +3,38 @@
 The Free Agent Radar ranks every pool player it can PROJECT. Everyone else
 was a count ("missing evidence: 346"), and that is how a former starter sat
 in the pool for five days, unranked, until another manager claimed him
-(2026 week 7: dropped by a league team on a Thursday, on the exempt list,
-no game yet this season, Sleeper projecting him from the Tuesday on).
+(2026 week 7: dropped by a league team on a Thursday night, on the exempt
+list, no game yet this season, Sleeper projecting him from the Tuesday on).
 
 Two lists close that hole (`build_watch`). Neither is a projection of ours
 and neither is a move: they say WHO to look at, and why, with the check the
 owner makes in Sleeper.
 
   * notable — a pool player who was a starter last season (`prior_lines`:
-    league points per game, ranked within his position last season among
+    league points per game, ranked within his position LAST season among
     players with `MIN_PRIOR_GAMES`), or who was dropped by a team in THIS
     league in the last `DROP_WINDOW_DAYS` days (`league_drops`, from the
-    snapshot's transactions) and is worth a look this week (Sleeper ranks
+    snapshot's transactions) and is worth a look this week: Sleeper ranks
     him a starter at his position, or ours or Sleeper's number reaches the
-    owner's weakest eligible starter). Each row carries the drop (who,
-    when), the waiver timing the league's settings imply, his status tags
-    and both numbers, and when the page first listed him. The first-screen
-    ALERT is a transition (rule #8): a row first listed in the last
-    `ALERT_HOURS`, or one still inside its waiver window. A starter from
-    last season who has sat in the pool for weeks stays in the radar's list
-    and off the first screen.
-  * market — every pool player WE abstain on (not withheld: a designated
-    Out or a declared/proven bye is known not to play) for whom Sleeper's
-    pre-kickoff projection exists, sorted by it, with OUR reason for
-    abstaining and what Sleeper's number would mean against the owner's
-    weakest eligible starter. Labelled as Sleeper's number, never ours.
+    owner's weakest eligible starter (an empty slot he can fill counts as
+    0). A player designated Out is never "worth a look this week".
+    Each row carries the drop and the waiver clock the league's settings
+    imply (`waiver_clock`), his status tags and both numbers.
+  * market — every pool player WE abstain on, and who is not known to sit
+    (withheld, or designated Out by Sleeper), for whom Sleeper's pre-kickoff
+    projection exists, sorted by it, with OUR reason for abstaining and
+    what Sleeper's number would mean against the owner's weakest eligible
+    starter. Labelled as Sleeper's number, never ours.
+
+The first-screen ALERT is a transition (rule #8), carried record to record
+(`PreviousWatch`): a row is alerted for `ALERT_HOURS` after he entered the
+pool, after he was first listed, and after each change of his waiver clock
+(dropped by a league team; his waiver period ran out and he became an
+instant add; his game locked him on waivers until the weekly run, when
+claims are the only way in) — never for the owner's own drop. A starter from last season who has sat in the pool for
+weeks stays in the radar's list and off the first screen. A previous record
+that could not compare (no watch block, last season not loaded, a pool
+built without the player map) marks nothing new and carries its times.
 
 Joins are by id only (rule #3): Sleeper ids from the snapshot and the pool,
 gsis ids through the crosswalk the pool was built with; last season's box
@@ -56,8 +63,7 @@ STARTER_RANK = {"QB": 12, "RB": 24, "WR": 30, "TE": 12}
 MIN_PRIOR_GAMES = 4
 #: How far back a league drop still makes a pool player notable.
 DROP_WINDOW_DAYS = 10
-#: A notable row is on the first screen this long after the page first
-#: listed him (and for as long as his waiver window is open).
+#: A notable row is on the first screen this long after each transition.
 ALERT_HOURS = 48
 #: Rows shown before "and N more" (the record keeps every notable row: its
 #: first-seen times carry to the next build).
@@ -165,22 +171,92 @@ def league_drops(transactions: Mapping[str, object] | None) -> tuple[dict[str, D
     return out, ""
 
 
-def waiver_run_after(dropped: datetime) -> datetime:
-    """The first league waiver run at least WAIVER_CLEAR_DAYS after a drop:
-    the next waiver day (WAIVER_CLEAR_WEEKDAY, 0 = Monday) at about
-    03:00 Eastern. What the league's settings imply, not Sleeper's clock for
-    this player — the page says to verify it there."""
-    earliest = dropped + timedelta(days=WAIVER_CLEAR_DAYS)
-    local = earliest.astimezone(_ET)
-    target = WAIVER_CLEAR_WEEKDAY
-    day = local.date()
+def next_waiver_run(after: datetime) -> datetime:
+    """The first league waiver run strictly after `after`: the waiver day
+    (WAIVER_CLEAR_WEEKDAY, Monday = 0) at about 03:00 Eastern."""
+    local = after.astimezone(_ET)
     for i in range(8):
-        d = day + timedelta(days=i)
-        if d.weekday() == target:
+        d = local.date() + timedelta(days=i)
+        if d.weekday() == WAIVER_CLEAR_WEEKDAY:
             run = datetime(d.year, d.month, d.day, WAIVER_RUN_LOCAL_HOUR, tzinfo=_ET)
-            if run >= local:
+            if run > local:
                 return run.astimezone(timezone.utc)
-    return earliest
+    raise AssertionError("no waiver day within eight days")    # unreachable
+
+
+def waiver_run_after(dropped: datetime) -> datetime:
+    """The end of a drop's episode: the first waiver run after his
+    `WAIVER_CLEAR_DAYS`-day clear. By then he has been claimed, or he was a
+    free agent until his kickoff and is one again after the run."""
+    return next_waiver_run(dropped + timedelta(days=WAIVER_CLEAR_DAYS) - timedelta(seconds=1))
+
+
+#: Between the last game of an NFL week (Monday night, ~00:15 UTC Tuesday)
+#: and the waiver run (~07:00 UTC Wednesday) every player whose team played
+#: is on waivers; the board's week has already rolled to the next game.
+_AFTER_LAST_GAMES = timedelta(hours=31)
+
+
+@dataclass(frozen=True)
+class WaiverClock:
+    """Where a dropped player stands, by the league's settings (Sleeper
+    keeps the authoritative clock on his player card).
+
+    The cycle, consistent with every transaction in this league's history:
+    on WAIVERS for `WAIVER_CLEAR_DAYS` after the drop, then a FREE AGENT (an
+    instant add) until his game kicks off, then LOCKED on waivers until the
+    weekly run."""
+
+    phase: str                    # WAIVERS | FREE_AGENT | LOCKED | UNSURE
+    since: datetime               # when this phase began
+    until: datetime | None
+    text: str
+    #: Every phase change so far (dropped, became a free agent, locked until
+    #: the run): each one changes what the owner can do, so each is a
+    #: transition the first screen shows for ALERT_HOURS (rule #8).
+    events: tuple[datetime, ...] = ()
+
+
+def _t(t: datetime) -> str:
+    return f"{t:%a %d %b %H:%M} UTC"
+
+
+def waiver_clock(drop: Drop, kickoff: datetime | None, now: datetime) -> WaiverClock:
+    """The phase `drop`'s player is in at `now`. `kickoff` is his game in the
+    page's week (None: no timed game, so the phase after the clear is
+    unsure). Neutral wording: a clock, never an instruction (rule #11)."""
+    clear = drop.at + timedelta(days=WAIVER_CLEAR_DAYS)
+    run = next_waiver_run(now)
+    tail = " (the league's settings; his Sleeper card is the authority)"
+    if now < clear:
+        return WaiverClock("WAIVERS", drop.at, clear,
+                           f"on waivers until about {_t(clear)}, the league's "
+                           f"{WAIVER_CLEAR_DAYS}-day clear: claims only, processed then; "
+                           f"after that a free agent until his game kicks off" + tail,
+                           (drop.at,))
+    # a game that kicked off while he was still on waivers keeps him there
+    freed = (clear,) if kickoff is None or kickoff > clear else ()
+    if kickoff is not None and kickoff <= now:
+        lock = max(kickoff, clear)
+        return WaiverClock("LOCKED", lock, run,
+                           f"his game kicked off {_t(kickoff)}: on waivers until the "
+                           f"weekly run, about {_t(run)} — claims only" + tail,
+                           (drop.at, *freed, lock))
+    if run - now <= _AFTER_LAST_GAMES:
+        lock = max(clear, run - _AFTER_LAST_GAMES)
+        return WaiverClock("LOCKED", lock, run,
+                           f"last week's games have been played: unless his team had a "
+                           f"bye he is on waivers until the weekly run, about {_t(run)} — "
+                           f"claims only" + tail, (drop.at, clear, lock))
+    if kickoff is not None:
+        return WaiverClock("FREE_AGENT", clear, kickoff,
+                           f"his {WAIVER_CLEAR_DAYS}-day waiver period ended {_t(clear)}: a "
+                           f"FREE AGENT (an instant add) until his game kicks off "
+                           f"{_t(kickoff)}" + tail, (drop.at, clear))
+    return WaiverClock("UNSURE", clear, None,
+                       f"his {WAIVER_CLEAR_DAYS}-day waiver period ended {_t(clear)}: a free "
+                       f"agent until his game kicks off (no timed game here), then on "
+                       f"waivers until the weekly run" + tail, (drop.at, clear))
 
 
 def market_ranks(players: Mapping[str, object] | None) -> dict[str, int]:
@@ -201,22 +277,41 @@ def market_ranks(players: Mapping[str, object] | None) -> dict[str, int]:
     return out
 
 
-def weakest_starter(best: Sequence[Player | None], slots: Sequence[str],
-                    position: str) -> Player | None:
+@dataclass(frozen=True)
+class Starter:
+    name: str
+    mean: float
+
+
+def weakest_starter(best: Sequence[Player | None], slots: Sequence[str], position: str,
+                    roster: Sequence[Player] = ()) -> Starter | None:
     """The owner's lowest-projected starter in a slot `position` can fill
-    (its own slot, or FLEX for RB/WR/TE), from the best legal lineup."""
-    pool = [p for s, p in zip(slots, best) if p is not None and p.projection.usable
-            and eligible(s, position)]
-    return min(pool, key=lambda p: p.projection.mean) if pool else None
+    (its own slot, or FLEX for RB/WR/TE), from the best legal lineup. A slot
+    the lineup leaves EMPTY counts as 0 when no active roster player could
+    fill it (an unprojected or frozen player there is unknown, not empty)."""
+    placed = {p.sleeper_id for p in best if p is not None}
+    out: list[Starter] = []
+    for s, p in zip(slots, best):
+        if not eligible(s, position):
+            continue
+        if p is not None and p.projection.usable:
+            out.append(Starter(p.name, float(p.projection.mean)))
+        elif p is None and roster and not any(
+                r.lineup != "IR" and r.sleeper_id not in placed and eligible(s, r.position)
+                for r in roster):
+            out.append(Starter(f"an empty {s} slot", 0.0))
+    return min(out, key=lambda x: x.mean) if out else None
 
 
-def _status(p: Player, sleeper: Mapping[str, object], reserve: set[str] | None) -> str:
+def _status(p: Player, sleeper: Mapping[str, object], reserve: set[str] | None,
+            reserve_week: int | None) -> str:
     bits = []
     tag = str(sleeper.get("injury_status") or "")
     if tag:
         bits.append(f"Sleeper: {tag}")
     if reserve is not None and p.gsis_id and p.gsis_id in reserve:
-        bits.append("on an NFL reserve list (weekly roster: RES/EXE)")
+        bits.append("on an NFL reserve list (RES/EXE"
+                    + (f", week-{reserve_week} roster)" if reserve_week else ")"))
     return "; ".join(bits) or "no tag"
 
 
@@ -226,19 +321,19 @@ class NotableFreeAgent:
     why: tuple[str, ...]
     prior: PriorLine | None
     drop: Drop | None
-    ours: float | None            # our projection mean, None when abstained
+    ours: float | None            # our projection mean, None when abstained or withheld
     ours_note: str                # why not, when not
     market: float | None          # Sleeper's pre-kickoff number
     status: str
     waiver: str
-    new: bool                     # first listed by THIS build
+    new: bool                     # a transition THIS build (entered the pool or first listed)
     versus: str = ""
-    #: When a build first listed him (carried record to record); None when
-    #: no earlier record can say (the first build, or a record before this list).
+    #: The latest of: entered the pool, first listed (carried record to
+    #: record; None when no comparable record can say).
     first_seen: datetime | None = None
-    #: On the first screen: first listed within ALERT_HOURS, or still inside
-    #: his waiver window. The transition, not the standing state (rule #8).
+    #: On the first screen: a transition within ALERT_HOURS (rule #8).
     alert: bool = False
+    clock: WaiverClock | None = None
 
     def record(self) -> dict:
         return {"id": self.player.sleeper_id, "gsis_id": self.player.gsis_id,
@@ -249,6 +344,7 @@ class NotableFreeAgent:
                                else self.first_seen.isoformat(timespec="seconds")),
                 "ours": self.ours, "ours_note": self.ours_note, "market": self.market,
                 "status": self.status, "waiver": self.waiver, "versus": self.versus,
+                "waiver_phase": None if self.clock is None else self.clock.phase,
                 "dropped_by": None if self.drop is None else self.drop.roster_id,
                 "dropped_at": None if self.drop is None
                 else self.drop.at.isoformat(timespec="seconds"),
@@ -275,27 +371,80 @@ class MarketRow:
                 "versus": self.versus, "gain": self.gain, "rank": self.rank}
 
 
-def _versus(value: float | None, best: Sequence[Player | None], slots: Sequence[str],
-            position: str, label: str) -> tuple[str, float | None]:
-    w = weakest_starter(best, slots, position)
+def _versus(value: float | None, w: Starter | None, label: str) -> tuple[str, float | None]:
     if value is None or w is None:
         return "", None
-    gain = round(value - float(w.projection.mean), 2)
+    gain = round(value - w.mean, 2)
     word = "above" if gain > 0 else "below"
     return (f"at {label} {value:.1f}: {abs(gain):.1f} {word} your weakest eligible starter "
-            f"({w.name}, {w.projection.mean:.1f})"), gain
+            f"({w.name}, {w.mean:.1f})"), gain
+
+
+def _iso(t: datetime | None) -> str | None:
+    return None if t is None else t.isoformat(timespec="seconds")
+
+
+def _times(raw: object) -> dict[str, datetime]:
+    out: dict[str, datetime] = {}
+    for k, v in (raw.items() if isinstance(raw, Mapping) else ()):
+        try:
+            t = datetime.fromisoformat(str(v))
+        except (TypeError, ValueError):
+            continue
+        if t.tzinfo is not None and normalize_id(k):
+            out[normalize_id(k)] = t
+    return out
+
+
+@dataclass(frozen=True)
+class PreviousWatch:
+    """What the previous record knew, for transitions (rule #8).
+
+    `pool` is None when that record's pool cannot be compared (no record,
+    or a pool built without the player map: empty); `listed` is None when
+    its list cannot be (no pool, no watch block, or last season was not
+    loaded). The two time maps carry either way."""
+
+    pool: frozenset[str] | None = None
+    listed: frozenset[str] | None = None
+    pool_since: Mapping[str, datetime] = field(default_factory=dict)
+    listed_since: Mapping[str, datetime] = field(default_factory=dict)
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, object] | None) -> "PreviousWatch":
+        if not isinstance(record, Mapping):
+            return cls()
+        radar = record.get("radar") if isinstance(record.get("radar"), Mapping) else {}
+        rows = radar.get("pool") if isinstance(radar.get("pool"), list) else []
+        ids = frozenset(normalize_id(r.get("id")) for r in rows
+                        if isinstance(r, Mapping) and normalize_id(r.get("id")))
+        w = record.get("watch") if isinstance(record.get("watch"), Mapping) else None
+        listed = None           # a list drawn from no pool compares nothing
+        if ids and w is not None and w.get("prior_loaded") is True:
+            listed = frozenset(normalize_id(r.get("id")) for r in w.get("notable") or []
+                               if isinstance(r, Mapping) and normalize_id(r.get("id")))
+        return cls(pool=ids or None, listed=listed,
+                   pool_since=_times((w or {}).get("pool_since")),
+                   listed_since=_times((w or {}).get("listed_since")))
 
 
 @dataclass(frozen=True)
 class FreeAgentWatch:
     notable: tuple[NotableFreeAgent, ...] = field(default=())   # every row, alerts first
-    market: tuple[MarketRow, ...] = field(default=())           # the top MARKET_CAP
+    market: tuple[MarketRow, ...] = field(default=())           # every row, highest first
     notes: tuple[str, ...] = field(default=())
-    market_total: int = 0
+    prior_loaded: bool = False
+    #: Transition times carried to the next record (pruned to ALERT_HOURS).
+    pool_since: Mapping[str, datetime] = field(default_factory=dict)
+    listed_since: Mapping[str, datetime] = field(default_factory=dict)
 
     @property
     def notable_total(self) -> int:
         return len(self.notable)
+
+    @property
+    def market_total(self) -> int:
+        return len(self.market)
 
     @property
     def alerts(self) -> tuple[NotableFreeAgent, ...]:
@@ -305,44 +454,58 @@ class FreeAgentWatch:
         return {"notable": [n.record() for n in self.notable],
                 "notable_total": self.notable_total,
                 "market": [m.record() for m in self.market],
-                "market_total": self.market_total, "notes": list(self.notes)}
+                "market_total": self.market_total, "notes": list(self.notes),
+                "prior_loaded": self.prior_loaded,
+                "pool_since": {k: _iso(v) for k, v in sorted(self.pool_since.items())},
+                "listed_since": {k: _iso(v) for k, v in sorted(self.listed_since.items())}}
 
 
 def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping[str, object]],
                 market_of, prior: Mapping[str, PriorLine], prior_season: int | None,
-                ranks: Mapping[str, int] | None = None,
                 drops: Mapping[str, Drop], drops_note: str, now: datetime,
                 best: Sequence[Player | None], slots: Sequence[str],
-                reserve: set[str] | None = None, my_roster_id: int | None = None,
-                previous_pool_ids: Iterable[str] | None = None,
-                previous_first_seen: Mapping[str, str] | None = None) -> FreeAgentWatch:
+                roster: Sequence[Player] = (), ranks: Mapping[str, int] | None = None,
+                out_designations: Iterable[str] = (),
+                reserve: set[str] | None = None, reserve_week: int | None = None,
+                my_roster_id: int | None = None,
+                previous: PreviousWatch | None = None) -> FreeAgentWatch:
     """Both lists. `market_of(player)` returns Sleeper's pre-kickoff number
     for him or None (the dashboard's `shadow_number`, which already refuses
     a stale or post-kickoff feed); `ranks` is `market_ranks` of that feed,
-    read only for a player `market_of` serves. `previous_pool_ids` is the
-    last record's pool (None: no comparable record, nothing marked NEW) and
-    `previous_first_seen` its notable rows' first-seen times by id."""
+    read only for a player `market_of` serves. `out_designations` are the
+    Sleeper tags that mean he will not play (the dashboard's
+    WITHHOLD_DESIGNATIONS). `previous` is the last record's view
+    (`PreviousWatch.from_record`)."""
+    prev = previous or PreviousWatch()
     ranks = ranks or {}
-    seen_before = {}
-    for k, v in (previous_first_seen or {}).items():
-        try:
-            t = datetime.fromisoformat(str(v))
-        except (TypeError, ValueError):
-            continue
-        if t.tzinfo is not None:
-            seen_before[normalize_id(k)] = t
-    prev = None if previous_pool_ids is None else {normalize_id(x) for x in previous_pool_ids}
+    outs = {str(x).upper() for x in out_designations}
+    window_s = timedelta(hours=ALERT_HOURS)
     notes = [drops_note] if drops_note else []
     if not prior:
         notes.append("last season's box scores not loaded: 'a starter last season' "
                      "cannot be checked")
+
+    # -- when each pool player entered the pool (a transition), carried
+    ids = [normalize_id(p.sleeper_id) for p in pool]
+    if ids:
+        pool_since = {}
+        for sid in ids:
+            if prev.pool is not None and sid not in prev.pool:
+                pool_since[sid] = now
+            elif sid in prev.pool_since:
+                pool_since[sid] = prev.pool_since[sid]
+    else:                       # no pool this build (no player map): carry, compare nothing
+        pool_since = dict(prev.pool_since)
+
     notable: list[NotableFreeAgent] = []
     market: list[MarketRow] = []
+    listed_since: dict[str, datetime] = {}
     window = now - timedelta(days=DROP_WINDOW_DAYS)
     for p in pool:
         sid = normalize_id(p.sleeper_id)
         rec = sleeper_players.get(sid) or {}
         pr = p.projection
+        sits = pr.is_withheld or str(rec.get("injury_status") or "").upper() in outs
         if pr.usable and not pr.is_withheld:
             ours, ours_note = float(pr.mean), ""
         elif pr.is_withheld:            # known not to play this week: 0, with why
@@ -351,11 +514,12 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
             ours, ours_note = None, (pr.reasons[0] if pr.reasons else "not projected")
         mkt = market_of(p)
         mrank = ranks.get(sid) if mkt is not None else None
-        status = _status(p, rec, reserve)
+        status = _status(p, rec, reserve, reserve_week)
         cutoff = STARTER_RANK.get(p.position)       # this week's position, for this week's rank
-        # -- the market list: abstained (not withheld) with a Sleeper number
-        if not pr.usable and not pr.is_withheld and mkt is not None:
-            vs, gain = _versus(mkt, best, slots, p.position, "Sleeper's")
+        w = weakest_starter(best, slots, p.position, roster)
+        # -- the market list: abstained, not known to sit, with a Sleeper number
+        if not pr.usable and not sits and mkt is not None:
+            vs, gain = _versus(mkt, w, "Sleeper's")
             market.append(MarketRow(p, round(float(mkt), 2), ours_note, status, vs, gain,
                                     mrank))
         # -- notable
@@ -364,44 +528,54 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
         if pl is not None and pl.starter:
             why.append(f"a starter last season ({pl.describe(prior_season)})")
         d = drops.get(sid)
-        if d is not None and d.at >= window:
-            value = ours if ours is not None else mkt
-            w = weakest_starter(best, slots, p.position)
+        d = d if d is not None and d.at >= window else None
+        if d is not None:
             worth = []
-            if mrank is not None and cutoff and mrank <= cutoff:
-                worth.append(f"Sleeper ranks him {p.position}{mrank} this week "
-                             f"({mkt:.1f})")
-            if w is not None and value is not None and value >= float(w.projection.mean):
-                worth.append(f"{'ours' if ours is not None else 'Sleeper'} {value:.1f} "
-                             f"reaches your weakest eligible starter "
-                             f"({w.projection.mean:.1f})")
+            if not sits:                # a player who will not play is never worth it THIS week
+                value = ours if ours is not None else mkt
+                if mrank is not None and cutoff and mrank <= cutoff:
+                    worth.append(f"Sleeper ranks him {p.position}{mrank} this week "
+                                 f"({mkt:.1f})")
+                if w is not None and value is not None and value >= w.mean:
+                    worth.append(f"{'ours' if ours is not None else 'Sleeper'} {value:.1f} "
+                                 f"reaches your weakest eligible starter ({w.name}, "
+                                 f"{w.mean:.1f})")
             if worth:
                 why.append(f"{d.describe(my_roster_id)}, and " + "; ".join(worth))
             elif why:
                 why.append(d.describe(my_roster_id))
         if not why:
             continue
-        run = waiver_run_after(d.at) if d is not None and d.at >= window else None
-        if run is not None:
-            waiver = ((f"on waivers: the league's settings put the first claim run at "
-                       f"{run:%a %d %b %H:%M} UTC ({WAIVER_CLEAR_DAYS}-day clear, FAAB) — "
-                       f"verify in Sleeper and bid before it") if run > now else
-                      (f"the league's settings put his waiver run at {run:%a %d %b %H:%M} "
-                       f"UTC, already past: unclaimed, he should be a FREE AGENT now — "
-                       f"verify in Sleeper"))
-        else:
-            waiver = ("no league drop in the last "
-                      f"{DROP_WINDOW_DAYS} days on record: open him in Sleeper — it shows "
-                      "FREE AGENT or the waiver clear time")
-        vs, _ = _versus(ours if ours is not None else mkt, best, slots, p.position,
+        clock = waiver_clock(d, p.kickoff, now) if d is not None else None
+        waiver = clock.text if clock is not None else (
+            f"no drop by a league team in the last {DROP_WINDOW_DAYS} days on record: his "
+            f"Sleeper card says FREE AGENT or when his waivers clear")
+        vs, _ = _versus(None if sits else (ours if ours is not None else mkt), w,
                         "ours" if ours is not None else "Sleeper's")
-        new = bool(prev is not None and sid not in prev and sid not in seen_before)
-        first = now if new else seen_before.get(sid)
-        alert = bool((first is not None and now - first <= timedelta(hours=ALERT_HOURS))
-                     or (run is not None and run > now))
-        notable.append(NotableFreeAgent(p, tuple(why), pl, d if run is not None else None,
-                                        ours, ours_note, mkt, status, waiver, new=new,
-                                        versus=vs, first_seen=first, alert=alert))
+        # -- when he was first listed (a transition), carried
+        if sid in prev.listed_since:
+            listed = prev.listed_since[sid]
+        elif prev.listed is not None and sid not in prev.listed:
+            listed = now
+        else:
+            listed = None
+        if listed is not None:
+            listed_since[sid] = listed
+        known = [t for t in (pool_since.get(sid), listed) if t is not None]
+        first = max(known) if known else None
+        own = d is not None and my_roster_id is not None and d.roster_id == my_roster_id
+        events = [first, *(clock.events if clock is not None else ())]
+        alert = not own and any(t is not None and timedelta(0) <= now - t <= window_s
+                                for t in events)
+        notable.append(NotableFreeAgent(p, tuple(why), pl, d, ours, ours_note, mkt, status,
+                                        waiver, new=first == now, versus=vs,
+                                        first_seen=first, alert=alert, clock=clock))
+
+    # carry a recent listing through a build that does not list him (a feed
+    # glitch must not end his alert), then forget anything past the window
+    for sid, t in prev.listed_since.items():
+        listed_since.setdefault(sid, t)
+    keep = lambda m: {k: v for k, v in m.items() if now - v <= window_s}   # noqa: E731
 
     def nkey(n: NotableFreeAgent):
         frac = (n.prior.rank / STARTER_RANK.get(n.prior.position, 30)
@@ -410,5 +584,6 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
                 -(n.ours if n.ours is not None else (n.market or 0.0)))
     notable.sort(key=nkey)
     market.sort(key=lambda m: -m.market)
-    return FreeAgentWatch(tuple(notable), tuple(market[:MARKET_CAP]), tuple(notes),
-                          market_total=len(market))
+    return FreeAgentWatch(tuple(notable), tuple(market), tuple(notes),
+                          prior_loaded=bool(prior), pool_since=keep(pool_since),
+                          listed_since=keep(listed_since))

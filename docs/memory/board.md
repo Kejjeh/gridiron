@@ -14,12 +14,16 @@ A free agent the radar cannot rank is still NAMED (2026-10-21,
 starters (league ppg rank within LAST season's position, 4+ games) and drops
 by this league's teams in the last 10 days (the snapshot's `transactions`)
 that Sleeper ranks a starter or that reach the owner's weakest eligible
-starter, each with status, ours/Sleeper, and the waiver run the league's
-settings imply ("verify in Sleeper"). The first-screen alert is a transition:
-first listed in the last 48 h (first-seen carried record to record) or
-inside an open waiver window. "Can't project — Sleeper's number" lists every
-ABSTAINED pool player Sleeper projects, labelled as Sleeper's; withheld
-(Out, bye) players are never on it. Neither list is a move, and no returner
+starter (an empty slot counts as 0; never a player designated Out), each
+with status, ours/Sleeper, and the waiver clock from the league's settings
+(`waiver_clock`: waivers 2 days, then a free agent until his kickoff, then
+locked until the Wednesday run; "his Sleeper card is the authority"). The
+first-screen alert is a transition, 48 h each: entered the pool, first
+listed, or a change of that clock, never the owner's own drop; times carry
+record to record (`PreviousWatch`), and a previous record that cannot
+compare marks nothing new. "Can't project — Sleeper's number" lists every
+ABSTAINED pool player Sleeper projects, labelled as Sleeper's; withheld or
+Sleeper-Out players are never on it. Neither list is a move, and no returner
 number of ours is served (the backtest cleared its bar and still
 under-projects last season's starters).
 

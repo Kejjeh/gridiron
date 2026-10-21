@@ -49,7 +49,7 @@ stale, and when inputs are missing. Nothing here reads the real cache.
             lineup is an add with NO drop, and two such adds are not an
             either/or because both spots are free.
   notable   the complete cache plus an invented free agent with no game this
-            season, dropped by the opponent two days earlier, whom Sleeper
+            season, dropped by the opponent 36 hours earlier, whom Sleeper
             projects: the radar cannot rank him, so the first screen names
             him (`gridiron.notable`), with the waiver timing, and the "Can't
             project" list carries Sleeper's number.
@@ -124,7 +124,7 @@ _OPPONENT = {"9221": ("Jahmyr Gibbs", "RB", "DET"), "9228": ("Bryce Young", "QB"
 _FREE_AGENTS = {"11646": ("Jalen Coker", "WR", "CAR"), "11564": ("Drake Maye", "QB", "NE"),
                 "11560": ("Caleb Williams", "QB", "CHI")}
 #: The `notable` twist's free agent (an invented player): no game this
-#: season, dropped by the opponent two days before the render, projected by
+#: season, dropped by the opponent 36 hours before the render, projected by
 #: Sleeper — the case the radar cannot rank and `gridiron.notable` names.
 _RETURNER = ("99001", "00-0099001", "Rex Returner", "RB", "CAR", 16.4)
 
@@ -288,7 +288,7 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
     snapshot["matchups"][1]["starters"] = list(opp["starters"])
     snapshot["matchups"][1]["players"] = list(opp["players"])
     if twist == "notable":
-        dropped = int((now - timedelta(days=2)).timestamp() * 1000)
+        dropped = int((now - timedelta(hours=36)).timestamp() * 1000)
         snapshot["transactions"] = {"weeks": [2, 3], "error": "", "rows": [{
             "transaction_id": "fixture-drop-1", "type": "free_agent", "status": "complete",
             "roster_ids": [int(opp["roster_id"])], "adds": None,
