@@ -91,9 +91,9 @@ def test_transactions_ride_in_the_snapshot_and_a_failure_never_loses_it(league_s
 
     snap = S.SleeperReadOnly("L1", fetch=fake).snapshot()
     block = snap["transactions"]
-    assert block["weeks"] == [1, 2] and block["error"] == ""
-    # three legs: the leg advances at Wednesday's run, a day after state.week
-    assert S.SleeperReadOnly("L1", fetch=fake).recent_transactions(7)["weeks"] == [5, 6, 7]
+    assert block["weeks"] == [1, 2, 3] and block["error"] == ""
+    # the leg advances at Wednesday's run, a day after state.week: read around it
+    assert S.SleeperReadOnly("L1", fetch=fake).recent_transactions(7)["weeks"] == [5, 6, 7, 8]
     assert block["rows"][0]["drops"] == {"501": 3} and "metadata" not in block["rows"][0]
     snap = S.SleeperReadOnly("L1", fetch=lambda u: fake(u, fail=True)).snapshot()
     assert snap["rosters"] and snap["transactions"]["rows"] == []

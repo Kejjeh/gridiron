@@ -383,6 +383,23 @@ def feed_absence(shadow: Mapping[str, object] | None, sid: str, position: str,
             f"missing), so no number is given; verify his status in Sleeper")
 
 
+def shadow_any(shadow: Mapping[str, object] | None, sid: str, now: datetime) -> float | None:
+    """Sleeper's number for `sid` this week from a feed under
+    `STACK_SHADOW_MAX_AGE_HOURS` old, fetched before his kickoff or not.
+    Research only (`gridiron.notable`'s "worth a look" test, so a drop does
+    not vanish while he is locked on waivers); never stacked or graded."""
+    fetched = (shadow or {}).get("fetched_at_dt")
+    if not isinstance(fetched, datetime) or \
+            now - fetched > timedelta(hours=STACK_SHADOW_MAX_AGE_HOURS):
+        return None
+    hit = (shadow.get("players") or {}).get(normalize_id(sid))
+    try:
+        return float(hit["points"]) if isinstance(hit, Mapping) and \
+            hit.get("points") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def shadow_number(shadow: Mapping[str, object] | None, sid: str, kickoff: datetime | None,
                   now: datetime) -> float | None:
     """Sleeper's pre-kickoff number for `sid`, or None when there is nothing
@@ -799,11 +816,17 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         notes_watch = f"last season's box scores unreadable ({type(exc).__name__})"
         drops_note = "; ".join(x for x in (drops_note, notes_watch) if x)
 
+    last_week = kickoff_index(schedule, week - 1) if schedule is not None and week > 1 else None
+    last_kicks = dict(last_week.kickoffs) if last_week is not None else {}
+
     def watch(previous: PreviousWatch) -> FreeAgentWatch:
         return build_watch(
             pool, sleeper_players=sleeper_players,
             market_of=lambda p: (shadow_number(shadow, p.sleeper_id, p.kickoff, now)
                                  if p.position in SKILL_POSITIONS else None),
+            market_any=lambda p: (shadow_any(shadow, p.sleeper_id, now)
+                                  if p.position in SKILL_POSITIONS else None),
+            last_kickoff_of=lambda p: last_kicks.get(nflverse_team(p.team)),
             prior=priors, prior_season=context.season - 1,
             ranks=market_ranks((shadow or {}).get("players")), drops=drops,
             drops_note=drops_note, now=now, best=plan.best, slots=slots, roster=roster,
@@ -2594,7 +2617,7 @@ def _watch_alert(d: Dashboard) -> str:
         for n in head)
     more = len(rows) - len(head)
     why = ("None has a number of ours, so the radar cannot rank them; they are named "
-           "here instead." if all(n.ours is None for n in rows) else
+           "here instead." if all(not n.player.projection.usable for n in rows) else
            "Last season's starters and this league's recent drops, named here whether or "
            "not the radar ranks them.")
     return ("<div class=\"gatebox notable-alert\"><b class=\"warn\">Look at "
@@ -2642,11 +2665,11 @@ def _watch_html(d: Dashboard) -> str:
                "least 4 games); a drop in this league in the last ten days is listed when "
                "Sleeper ranks him a starter at his position this week, or ours or Sleeper's "
                "number reaches your weakest eligible starter (an empty slot counts as 0), "
-               "never when he is designated Out. NEW = entered the pool or was first listed "
-               f"this build; ALERT = one of those, or a change of his waiver clock (dropped, "
-               f"free agent, locked until the run), in the last {ALERT_HOURS} h (only those "
-               "reach the top of the page; never your own drop). The waiver clock is the "
-               "league's settings — on "
+               "never when he is designated Out. NEW = entered the pool this build; ALERT "
+               f"= a change of his waiver clock (dropped, free agent, locked until the run, "
+               f"freed by it) in the last {ALERT_HOURS} h, or, with no league drop behind "
+               "him, entering the pool (only those reach the top of the page; never your own "
+               "drop). The waiver clock is the league's settings — on "
                "waivers for two days after a drop, then a free agent until his game kicks "
                "off, then on waivers until the weekly run; Sleeper's player card is the "
                "authority.</p>")

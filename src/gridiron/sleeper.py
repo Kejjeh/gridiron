@@ -121,15 +121,17 @@ class SleeperReadOnly:
         return self._fetch(f"{BASE}/league/{self.league_id}/transactions/{int(week)}") or []
 
     def recent_transactions(self, week: int) -> dict:
-        """The league's transactions in the last three "legs", trimmed to
-        what the board reads (who moved whom, and when). Sleeper files each
-        transaction under the league's leg, which advances at the weekly
-        waiver run — about a day AFTER `state.week` does — so two legs read
-        on a Tuesday would miss every drop since the previous Wednesday;
-        three cover at least 13 days. Never raises: a failed read is an
-        `error`, so the league snapshot it rides in is never lost to it, and
-        the board says the drops are UNKNOWN rather than none."""
-        weeks = [w for w in (int(week) - 2, int(week) - 1, int(week)) if w >= 1]
+        """The league's transactions in the legs around `week` (week-2 to
+        week+1), trimmed to what the board reads (who moved whom, and when).
+        Sleeper files each transaction under the league's leg, which
+        advances at the weekly waiver run — about a day AFTER `state.week`
+        did in 2026 — so two legs read on a Tuesday missed every drop since
+        the previous Wednesday. Three back cover about 12.5 days or more;
+        the leg after `week` (empty until it opens) removes the dependence
+        on which of the two advances first. Never raises: a failed read is
+        an `error`, so the league snapshot it rides in is never lost to it,
+        and the board says the drops are UNKNOWN rather than none."""
+        weeks = [w for w in range(int(week) - 2, int(week) + 2) if w >= 1]
         keep = ("transaction_id", "type", "status", "roster_ids", "adds", "drops",
                 "created", "status_updated", "leg")
         rows: list[dict] = []

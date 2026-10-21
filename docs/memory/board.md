@@ -17,11 +17,12 @@ that Sleeper ranks a starter or that reach the owner's weakest eligible
 starter (an empty slot counts as 0; never a player designated Out), each
 with status, ours/Sleeper, and the waiver clock from the league's settings
 (`waiver_clock`: waivers 2 days, then a free agent until his kickoff, then
-locked until the Wednesday run; "his Sleeper card is the authority"). The
-first-screen alert is a transition, 48 h each: entered the pool, first
-listed, or a change of that clock, never the owner's own drop; times carry
-record to record (`PreviousWatch`), and a previous record that cannot
-compare marks nothing new. "Can't project — Sleeper's number" lists every
+locked until the Wednesday run, then free; "his Sleeper card is the
+authority"). The first-screen alert is a transition, 48 h each, read off
+this build's data: each change of that clock; the one carried comparison
+(`PreviousWatch`) is a pool entry with no league drop behind it, against a
+previous record under 24 h old with a pool, only while the drops are known.
+Never the owner's own drop. "Can't project — Sleeper's number" lists every
 ABSTAINED pool player Sleeper projects, labelled as Sleeper's; withheld or
 Sleeper-Out players are never on it. Neither list is a move, and no returner
 number of ours is served (the backtest cleared its bar and still

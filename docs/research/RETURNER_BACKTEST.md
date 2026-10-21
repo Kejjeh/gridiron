@@ -110,17 +110,18 @@ instead (`gridiron.notable`):
 
 - **Notable free agents.** Last season's starters and this league's recent
   drops, with status, the waiver clock and Sleeper's number. A first-screen
-  alert appears for 48 hours after each transition: he entered the pool,
-  was first listed, or his waiver clock changed.
+  alert appears for 48 hours after each change of a drop's waiver clock,
+  or after a player with no drop behind him enters the pool.
 - **Can't project — Sleeper's number.** Every pool player we abstain on
   whom Sleeper projects, labelled as Sleeper's.
 
 Replayed on the 41 archived builds from 15–21 Oct (real pool ids, real
 league transactions, real kickoffs, real 2025 box scores, transitions
-carried build to build), the week-7 player was on the first screen in all
-33 builds from the first one after his drop (06:18 UTC, 16 Oct) to the last
-one before the waiver run (04:32 UTC, 21 Oct). He was first listed as a
-2025 starter (RB8) dropped by roster #5. By the waiver clock inferred from
+carried build to build), the week-7 player was on the first screen in 32
+of the 33 builds he was in the pool: from the first one after his drop
+(06:18 UTC, 16 Oct) to 00:04 UTC on 21 Oct. The last build, three hours
+before the run, was past the 48 hours after his lock. He was first listed
+as a 2025 starter (RB8) dropped by roster #5. By the waiver clock inferred from
 this league's transactions, he was on waivers until 03:00 UTC Sunday, an
 instant-add free agent until his Sunday-night kickoff (00:20 UTC Monday),
 then locked until the run. At most four rows were on the first screen at

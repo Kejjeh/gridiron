@@ -18,14 +18,15 @@ the Wednesday waiver run. Fixed in three parts:
   never a player designated Out), each with status (Sleeper tag; NFL
   reserve list with its roster week, only from inputs young enough for the
   model), ours or why not, Sleeper's number and rank, and the waiver clock
-  (`notable.waiver_clock`, from this league's own transactions): on
-  waivers 2 days after the drop, then a FREE AGENT until his kickoff, then
-  locked until the Wednesday run. The first-screen alert (top of the
-  Action Desk) is a transition, 48 h each: entered the pool, first listed,
-  or a change of that clock — never the owner's own drop. The times carry
-  record to record (`notable.PreviousWatch`), and a previous record that
-  cannot compare (no watch block, last season not loaded, a pool built
-  without the player map) marks nothing new. The snapshot now carries the
+  (`notable.waiver_clock`, from this league's own transactions and the
+  real kickoffs, this week's and last): on waivers 2 days after the drop,
+  then a FREE AGENT until his kickoff, then locked until the Wednesday run
+  (~03:20 ET), then free again. The first-screen alert (top of the Action
+  Desk) is a transition, 48 h each, read off this build's data: each change
+  of that clock. The one carried comparison (`notable.PreviousWatch`) is a
+  pool entry with no league drop behind it (an NFL activation), against a
+  previous record under 24 h old with a pool, and only when this build can
+  see the drops. Never the owner's own drop. The snapshot now carries the
   last three transaction legs (`SleeperReadOnly.recent_transactions`, never
   raises; the leg advances at Wednesday's run, a day after `state.week`).
   Last season's box scores ride in the model inputs (`prior_weekly.parquet`,
@@ -43,16 +44,19 @@ the Wednesday waiver run. Fixed in three parts:
   the same rows. `returner_v2` is declared and is tested on 2026 returners
   at season end.
 - Replay on the 41 real builds of 15-21 Oct (real kickoffs): the week-7
-  player is on the first screen in all 33 builds he was in the pool —
-  on waivers to Sun 03:00 UTC, an instant-add FREE AGENT until his
-  Sunday-night kickoff (Mon 00:20 UTC) by the inferred clock, then locked
-  until the run — with at most four alerts at a time.
-- An adversarial review of the first version (40 agents) confirmed and this
-  PR fixed: the waiver model (claimed "on waivers, bid before Wed" for an
-  instant free agent), two-leg transaction reads, alert transitions lost
-  or invented across records, the empty-slot and Out cases, and a
-  shadowed `reserve` variable that kept the NFL reserve label off the
-  page.
+  player is on the first screen in 32 of the 33 builds he was in the pool
+  (Fri 06:18 to Wed 00:04 UTC; the 04:32 build, three hours before the
+  run, is past 48 h from his lock) — on waivers to Sun 03:00 UTC, an
+  instant-add FREE AGENT until his Sunday-night kickoff (Mon 00:20 UTC) by
+  the inferred clock, then locked until the run — with at most four alerts
+  at a time.
+- Two adversarial reviews (40 + 29 agents) confirmed and this PR fixed:
+  the waiver model (claimed "on waivers, bid before Wed" for an instant
+  free agent), two-leg transaction reads, alert transitions lost or
+  invented across records (the "first listed" comparison was removed
+  rather than patched: it had five ways to compare against a degraded
+  record), the empty-slot, locked-bench and Out cases, and a shadowed
+  `reserve` variable that kept the NFL reserve label off the page.
 - **Next:** after the first cloud build, check the record's
   `watch.notes` has no "not loaded" line, and that `watch.notable` is
   short enough to read.
