@@ -59,13 +59,14 @@ TRADE_DEADLINE_WEEK = 13
 REGULAR_SEASON_WEEKS = 14
 
 # Waivers, read off the live league `settings` block 2026-09-17:
-# waiver_type 2 = FAAB, waiver_day_of_week 2 = Wednesday (0 = Sunday),
+# waiver_type 2 = FAAB, waiver_day_of_week 2 = Wednesday (read as 0 = Monday;
+# this league's claims were processed Wed 2026-10-21 07:17 UTC),
 # waiver_clear_days 2, waiver_budget 100, waiver_bid_min 0, trade_review_days 2.
 # Rule #8 cadence: a claim entered Monday clears Wednesday ~3 AM ET.
 WAIVER_TYPE = "faab"
 WAIVER_BUDGET = 100
 WAIVER_MIN_BID = 0
-WAIVER_CLEAR_WEEKDAY = 2          # 0 = Sunday, Sleeper's convention
+WAIVER_CLEAR_WEEKDAY = 2          # Wednesday, Monday = 0 (Python's weekday())
 WAIVER_CLEAR_DAYS = 2
 TRADE_REVIEW_DAYS = 2
 MAX_KEEPERS = 1

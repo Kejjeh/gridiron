@@ -9,6 +9,26 @@ CONDITIONAL (availability UNVERIFIED); the Free Agent Radar (`gridiron.radar`,
 under the Action Desk) verdicts every projected pool player; rollover = "no
 comparison".
 
+A free agent the radar cannot rank is still NAMED (2026-10-21,
+`gridiron.notable`, docs/research/RETURNER_BACKTEST.md): last season's
+starters (league ppg rank within LAST season's position, 4+ games) and drops
+by this league's teams in the last 10 days (the snapshot's `transactions`)
+that Sleeper ranks a starter or that reach the owner's weakest eligible
+starter (an empty slot counts as 0; never a player designated Out), each
+with status, ours/Sleeper, and the waiver clock from the league's settings
+(`waiver_clock`: waivers 2 days, then a free agent until his kickoff — or
+the week's last kickoff, with no game of his own — then locked until the
+Wednesday run, then free; "his Sleeper card is the
+authority"). The first-screen alert is a transition, 48 h each, read off
+this build's data: each change of that clock; the one carried comparison
+(`PreviousWatch`) is a pool entry (never a team defense), against a
+previous record under 24 h old with a pool, only while the drops are known.
+Never the owner's own drop. "Can't project — Sleeper's number" lists every
+ABSTAINED pool player Sleeper projects, labelled as Sleeper's; withheld or
+Sleeper-Out players are never on it. Neither list is a move, and no returner
+number of ours is served (the backtest cleared its bar and still
+under-projects last season's starters).
+
 Game Day (`scripts/weekly/gameday.py`, scenarios A-F in `gameday_scenarios.py
 --screenshot --browser`): platform actuals only, game status OBSERVED or
 UNKNOWN (never inferred from the clock), every archived move re-judged NOW by

@@ -331,12 +331,17 @@ def pull_model_inputs(manifest: ing.Manifest, season: int, now: datetime,
         frames = adv_model.fetch_inputs(
             season, loaders=loaders,
             log=lambda m: print(f"  model_inputs: {m} (optional; left unknown)", file=sys.stderr))
-        adv_model.write_inputs(directory, season, frames, now)   # a write error is this step's too
+        folder = adv_model.write_inputs(directory, season, frames, now)  # its error is ours
     except Exception as exc:                                  # noqa: BLE001
         print(f"  model_inputs: FAILED {type(exc).__name__}: {exc} — the page "
               f"keeps the baseline projection", file=sys.stderr)
         return
-    print("  model_inputs: " + ", ".join(f"{k} {len(v)} rows" for k, v in frames.items()))
+    # what was WRITTEN (a failed refresh of a final input keeps its last good copy)
+    try:
+        rows = json.loads((folder / adv_model.INPUT_META).read_text("utf-8"))["rows"]
+    except (OSError, ValueError, KeyError):
+        rows = {k: len(v) for k, v in frames.items()}
+    print("  model_inputs: " + ", ".join(f"{k} {n} rows" for k, n in rows.items()))
 
 
 def run_number(text: str | None) -> int | None:

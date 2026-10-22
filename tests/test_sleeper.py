@@ -70,6 +70,36 @@ def test_fetch_is_injectable_so_the_adapter_runs_offline(league_snapshot):
     assert all(url.startswith(S.BASE) for url in calls)
 
 
+def test_transactions_ride_in_the_snapshot_and_a_failure_never_loses_it(league_snapshot):
+    tx = [{"transaction_id": "t1", "type": "free_agent", "status": "complete",
+           "drops": {"501": 3}, "adds": None, "status_updated": 1, "metadata": {"x": 1}}]
+
+    def fake(url: str, fail: bool = False):
+        if url.endswith("/state/nfl"):
+            return league_snapshot["state"]
+        if url.endswith("/rosters"):
+            return league_snapshot["rosters"]
+        if url.endswith("/users"):
+            return league_snapshot["users"]
+        if "/matchups/" in url:
+            return league_snapshot["matchups"]
+        if "/transactions/" in url:
+            if fail:
+                raise OSError("boom")
+            return tx
+        return league_snapshot["league"]
+
+    snap = S.SleeperReadOnly("L1", fetch=fake).snapshot()
+    block = snap["transactions"]
+    assert block["weeks"] == [1, 2, 3] and block["error"] == ""
+    # the leg advances at Wednesday's run, a day after state.week: read around it
+    assert S.SleeperReadOnly("L1", fetch=fake).recent_transactions(7)["weeks"] == [5, 6, 7, 8]
+    assert block["rows"][0]["drops"] == {"501": 3} and "metadata" not in block["rows"][0]
+    snap = S.SleeperReadOnly("L1", fetch=lambda u: fake(u, fail=True)).snapshot()
+    assert snap["rosters"] and snap["transactions"]["rows"] == []
+    assert "OSError" in snap["transactions"]["error"]
+
+
 def test_a_missing_endpoint_degrades_to_empty_not_a_crash():
     client = S.SleeperReadOnly("L1", fetch=lambda url: None)
     assert client.rosters() == [] and client.league() == {} and client.players() == {}

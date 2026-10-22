@@ -425,3 +425,18 @@ def test_the_board_refines_before_withholding(tmp_path, monkeypatch):
     for p in rec["roster"]:
         if p["withheld"]:
             assert p["projected"] == 0.0                     # withholding still wins
+
+
+def test_a_failed_refresh_never_blanks_last_seasons_box_scores(tmp_path):
+    """Last season is final: the optional loader failing (an empty frame)
+    keeps the good copy instead of overwriting it for six hours."""
+    base = {"xfp": pd.DataFrame(columns=["gsis_id", "week", "xfp"]),
+            "ngs": pd.DataFrame(columns=["gsis_id", "week"]),
+            "depth": pd.DataFrame(columns=["week", "gsis_id", "depth_rank"])}
+    good = pd.DataFrame({"player_id": ["00-a", "00-a"], "week": [1, 2],
+                         "position": ["RB", "RB"], "rushing_yards": [80, 90]})
+    A.write_inputs(tmp_path, 2026, {**base, "prior_weekly": good}, datetime(2026, 10, 1, tzinfo=UTC))
+    A.write_inputs(tmp_path, 2026, {**base, "prior_weekly": A.prior_weekly_frame(None)},
+                   datetime(2026, 10, 2, tzinfo=UTC))
+    back = A.load_inputs(tmp_path, 2026)
+    assert len(back["prior_weekly"]) == 2 and back["meta"]["rows"]["prior_weekly"] == 2
