@@ -817,14 +817,22 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         prior_note = f"last season's box scores unreadable ({type(exc).__name__})"
 
     last_week = kickoff_index(schedule, week - 1) if schedule is not None and week > 1 else None
+    next_week = kickoff_index(schedule, week + 1) if schedule is not None else None
     last_kicks = dict(last_week.kickoffs) if last_week is not None else {}
+    next_kicks = dict(next_week.kickoffs) if next_week is not None else {}
     this_kicks = dict(kickoffs.kickoffs) if kickoffs is not None else {}
-    # a week's last kickoff is known only when every game in it has a time
-    # (an untimed late game would make an earlier one look like the last)
-    weeks_ix = (kickoffs, last_week)
-    slate_ends = tuple(max(ix.kickoffs.values()) if ix is not None and ix.kickoffs
-                       and not ix.time_unknown else None for ix in weeks_ix)
-    slate_unknown = any(ix is not None and bool(ix.time_unknown) for ix in weeks_ix)
+
+    def end_known(ix: KickoffIndex) -> bool:
+        """A week's last kickoff is known only when its rows are intact and
+        every team in the season is timed or on a bye (an untimed, missing
+        or unnamed late game would make an earlier one look like the last)."""
+        return bool(ix.kickoffs) and ix.rows_intact and all(
+            t in ix.kickoffs or t in ix.byes for t in ix.season_teams)
+
+    weeks_ix = [ix for ix in (last_week, kickoffs, next_week) if ix is not None]
+    slate_ends = tuple(max(ix.kickoffs.values()) for ix in weeks_ix if end_known(ix))
+    open_weeks = tuple(min(ix.kickoffs.values()) if ix.kickoffs else None
+                       for ix in weeks_ix if not end_known(ix))
 
     def time_unknown(p: Player) -> bool:
         team = nflverse_team(p.team)
@@ -838,9 +846,10 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             # skill-only and pre-kickoff: `refine`)
             market_of=lambda p: shadow_number(shadow, p.sleeper_id, p.kickoff, now),
             market_any=lambda p: shadow_any(shadow, p.sleeper_id, now),
-            kickoffs_of=lambda p: (p.kickoff, last_kicks.get(nflverse_team(p.team))),
+            kickoffs_of=lambda p: (last_kicks.get(nflverse_team(p.team)), p.kickoff,
+                                   next_kicks.get(nflverse_team(p.team))),
             slate_ends=slate_ends, time_unknown_of=time_unknown,
-            slate_unknown=slate_unknown, extra_notes=(prior_note,),
+            open_weeks=open_weeks, extra_notes=(prior_note,),
             prior=priors, prior_season=context.season - 1,
             ranks=market_ranks((shadow or {}).get("players")), drops=drops,
             drops_note=drops_note, now=now, best=plan.best, slots=slots, roster=roster,
@@ -2668,13 +2677,12 @@ def _watch_html(d: Dashboard) -> str:
         if w.notable_total > NOTABLE_CAP:
             out.append(f"<p class=\"small sub\">{w.notable_total - NOTABLE_CAP} more in "
                        f"the record.</p>")
-    elif w.drops_known:
-        out.append("<p class=\"small sub\">Nobody in the pool was a starter last season or "
-                   "was dropped by a team in this league recently and is worth a look this "
-                   "week.</p>")
     else:
-        out.append("<p class=\"small sub\">Nobody in the pool was a starter last season; "
-                   "this league's recent drops are UNKNOWN (below).</p>")
+        starters = ("Nobody in the pool was a starter last season" if w.prior_loaded else
+                    "Last season's starters cannot be checked (below)")
+        drops = ("nobody dropped by a team in this league recently is worth a look this "
+                 "week" if w.drops_known else "this league's recent drops are UNKNOWN (below)")
+        out.append(f"<p class=\"small sub\">{starters}; {drops}.</p>")
     for note in w.notes:
         out.append(f"<p class=\"small warn\">{_e(note)}</p>")
     out.append("<p class=\"small sub\">Research, not a move. A starter last season is "
@@ -2684,8 +2692,9 @@ def _watch_html(d: Dashboard) -> str:
                "number reaches your weakest eligible starter (an empty slot counts as 0), "
                "never when he is designated Out. NEW = entered the pool this build; ALERT "
                f"= a change of his waiver clock (dropped, free agent, locked until the run, "
-               f"freed by it), or entering the pool (never a team defense), in the last "
-               f"{ALERT_HOURS} h (only those reach the top of the page; never your own drop). "
+               f"freed by it), or entering the pool (never a team defense; only while this "
+               f"league's drops can be read), in the last {ALERT_HOURS} h (only those reach "
+               "the top of the page; never your own drop). "
                "The waiver clock is the league's settings and its history — on "
                "waivers for two days after a drop, then a free agent until his game kicks "
                "off (or the week's last game, if he has none), then on waivers until the "

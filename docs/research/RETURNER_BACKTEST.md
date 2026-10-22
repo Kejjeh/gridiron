@@ -111,7 +111,7 @@ instead (`gridiron.notable`):
 - **Notable free agents.** Last season's starters and this league's recent
   drops, with status, the waiver clock and Sleeper's number. A first-screen
   alert appears for 48 hours after each change of a drop's waiver clock,
-  or after a player with no drop behind him enters the pool.
+  or after a player enters the pool (never a team defense).
 - **Can't project — Sleeper's number.** Every pool player we abstain on
   whom Sleeper projects, labelled as Sleeper's.
 

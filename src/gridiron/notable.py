@@ -241,44 +241,51 @@ def _t(t: datetime) -> str:
 
 def waiver_clock(drop: Drop, now: datetime, *, kickoffs: Iterable[datetime | None] = (),
                  slate_ends: Iterable[datetime | None] = (),
-                 game_time_unknown: bool = False, slate_unknown: bool = False) -> WaiverClock:
+                 open_weeks: Iterable[datetime | None] = (),
+                 game_time_unknown: bool = False) -> WaiverClock:
     """The phase `drop`'s player is in at `now`. `kickoffs` are his own
-    known games (this week's and last); `slate_ends` the last kickoff of
-    this NFL week and of the last, None where a game in that week has no
-    time (from it, every unrostered player is on waivers until the run);
-    `game_time_unknown` says his own game this week has no time and
-    `slate_unknown` that some week's last kickoff cannot be known: either
-    turns a "free" conclusion into UNSURE. Neutral wording: a clock, never
-    an instruction (rule #11)."""
+    known games (last week's, this week's, next week's); `slate_ends` the
+    last kickoff of each of those weeks where it is KNOWN (from it, every
+    unrostered player is on waivers until the run); `open_weeks` the first
+    known kickoff of each week whose last kickoff is not known (None: a week
+    the schedule cannot place at all); `game_time_unknown` says his own game
+    this week has no time. A "free" conclusion inside a cycle the unknowns
+    touch reads UNSURE. Neutral wording: a clock, never an instruction
+    (rule #11)."""
     own = sorted(k for k in kickoffs if k is not None)
     ends = sorted(e for e in slate_ends if e is not None)
+    opens = list(open_weeks)
+    known = own + ends
     clear = drop.at + timedelta(days=WAIVER_CLEAR_DAYS)
     prev_run, run = last_waiver_run(now), next_waiver_run(now)
     tail = " (the league's settings and its history; his Sleeper card is the authority)"
 
     def lock_in(start: datetime, end: datetime) -> datetime | None:
-        cands = [k for k in own + ends if start <= k < end]
+        cands = [k for k in known if start <= k < end]
         return min(cands) if cands else None
 
-    lock = lock_in(prev_run, run)        # when this cycle locks him (None: unknown)
-    unsure = game_time_unknown or slate_unknown
+    def unsure_in(start: datetime, end: datetime) -> bool:
+        return game_time_unknown or any(f is None or start <= f < end for f in opens)
+
+    lock = lock_in(prev_run, run)        # when this cycle locks him (None: no lock known)
     if now < clear:
         # a lock inside his clear's own cycle keeps him on waivers to that
         # cycle's run (the clear may cross a run: a Tuesday-night drop and a
         # Thursday game)
-        at_clear = lock_in(last_waiver_run(clear), clear + timedelta(seconds=1))
+        cycle = last_waiver_run(clear)
+        at_clear = lock_in(cycle, clear + timedelta(seconds=1))
         free_at = next_waiver_run(clear) if at_clear is not None else clear
+        hedge = at_clear is None and unsure_in(cycle, clear + timedelta(seconds=1))
         return WaiverClock("WAIVERS", drop.at, free_at,
                            f"on waivers since the drop: claims only, until about "
                            f"{_t(free_at)}"
                            + (" (a game time is missing here, so it may run to the weekly "
-                              "run)" if unsure and at_clear is None else "") + tail,
-                           (drop.at,))
+                              "run)" if hedge else "") + tail, (drop.at,))
     # every unrostered player is locked from the week's last kickoff to each
-    # run, so a player dropped before the last run, and locked in that run's
-    # cycle, was freed by it (week 1: nothing locked him)
+    # run, so a player unrostered at the last run, in a cycle with a game
+    # (week 1's first run has none), was freed by it
     before = last_waiver_run(prev_run - timedelta(seconds=1))
-    locked_then = lock_in(max(drop.at, before), prev_run) is not None
+    locked_then = lock_in(before, prev_run) is not None
     free_from = max(clear, prev_run) if drop.at < prev_run and locked_then else clear
     if lock is not None and lock <= now and lock >= free_from:
         return WaiverClock("LOCKED", lock, run,
@@ -289,8 +296,11 @@ def waiver_clock(drop: Drop, now: datetime, *, kickoffs: Iterable[datetime | Non
         return WaiverClock("LOCKED", free_from, run,
                            f"on waivers until the weekly run, about {_t(run)}: claims only"
                            + tail, (drop.at,))
-    upcoming = lock if lock is not None and lock > now else None
-    if upcoming is None or unsure:
+    # the next lock, in this cycle or a later one (nothing happens at a run
+    # that no game reached: before the season's first games)
+    later = [k for k in known if k > now]
+    upcoming = min(later) if later else None
+    if upcoming is None or unsure_in(prev_run, upcoming):
         return WaiverClock("UNSURE", free_from, upcoming,
                            f"a free agent since about {_t(free_from)} until his game, or the "
                            f"week's last game, kicks off (a time is missing here)"
@@ -517,7 +527,7 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
                 best: Sequence[Player | None], slots: Sequence[str],
                 roster: Sequence[Player] = (), ranks: Mapping[str, int] | None = None,
                 market_any=None, kickoffs_of=None, slate_ends: Iterable[datetime | None] = (),
-                time_unknown_of=None, slate_unknown: bool = False,
+                time_unknown_of=None, open_weeks: Iterable[datetime | None] = (),
                 extra_notes: Iterable[str] = (),
                 out_designations: Iterable[str] = (),
                 reserve: set[str] | None = None, reserve_week: int | None = None,
@@ -529,9 +539,10 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
     a look" test may also use `market_any(player)`, the same week's number
     fetched after his kickoff, so a drop does not vanish while he is locked
     on waivers. `ranks` is `market_ranks` of that feed. `kickoffs_of`
-    gives his known games this week and last, `slate_ends` the last kickoff
-    of each of those weeks and `time_unknown_of` whether his game this week
-    has no time (the waiver clock). `out_designations`
+    gives his known games last week, this week and next, `slate_ends` the
+    last kickoff of each of those weeks where known, `open_weeks` the weeks
+    whose last kickoff is not, and `time_unknown_of` whether his game this
+    week has no time (`waiver_clock`). `out_designations`
     are the Sleeper tags that mean he will not play (the dashboard's
     WITHHOLD_DESIGNATIONS). `previous` is the last record's view
     (`PreviousWatch.from_record`)."""
@@ -540,11 +551,11 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
     market_any = market_any or market_of
     kickoffs_of = kickoffs_of or (lambda p: (p.kickoff,))
     time_unknown_of = time_unknown_of or (lambda p: False)
-    slate_ends = tuple(slate_ends)
+    slate_ends, open_weeks = tuple(slate_ends), tuple(open_weeks)
     outs = {str(x).upper() for x in out_designations}
     window_s = timedelta(hours=ALERT_HOURS)
     notes = ([drops_note] if drops_note else []) + [n for n in extra_notes if n]
-    if not prior:
+    if not prior and not any("box scores" in n for n in notes):
         notes.append("last season's box scores not loaded: 'a starter last season' "
                      "cannot be checked")
 
@@ -612,7 +623,7 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
             continue
         clock = (waiver_clock(d, now, kickoffs=kickoffs_of(p), slate_ends=slate_ends,
                               game_time_unknown=time_unknown_of(p),
-                              slate_unknown=slate_unknown)
+                              open_weeks=open_weeks)
                  if d is not None else None)
         waiver = clock.text if clock is not None else (
             "the league's transactions could not be read, so a recent drop is unknown: his "

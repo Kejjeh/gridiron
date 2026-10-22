@@ -21,9 +21,9 @@ Pins, with invented players:
      highest first, never one withheld or designated Out, and the record
      keeps every row;
   6. the alert is a transition: each change of a league drop's waiver clock
-     (read off this build's data), or, with no drop behind him, entering the
-     pool against a recent non-degraded record while the drops are known —
-     never the owner's own drop.
+     (read off this build's data), or entering the pool (never a team
+     defense) against a recent non-degraded record while the drops are
+     known — never the owner's own drop.
 """
 from __future__ import annotations
 
@@ -227,9 +227,47 @@ def test_week_one_has_no_run_to_be_freed_by():
 def test_an_untimed_last_game_makes_free_unsure_not_locked():
     d = N.Drop("u", 5, at(9, 23, 12, 0), "free_agent")
     # his Monday-night game has no time; the known Sunday games are NOT the slate end
-    c = N.waiver_clock(d, at(9, 28, 18, 0), kickoffs=(), slate_ends=(None, at(9, 22, 0, 15)),
-                       game_time_unknown=True, slate_unknown=True)
+    c = N.waiver_clock(d, at(9, 28, 18, 0), kickoffs=(), slate_ends=(at(9, 22, 0, 15),),
+                       open_weeks=(at(9, 25, 0, 15),), game_time_unknown=True)
     assert c.phase == "UNSURE" and "instant add" not in c.text
+    # a bye player, his own game no issue: the open week alone keeps it unsure...
+    c = N.waiver_clock(d, at(9, 28, 18, 0), kickoffs=(), slate_ends=(at(9, 22, 0, 15),),
+                       open_weeks=(at(9, 25, 0, 15),))
+    assert c.phase == "UNSURE"
+    # ...but an open LAST week does not touch a player dropped after its run
+    late = N.Drop("v", 5, at(9, 23, 9, 0), "free_agent")
+    c = N.waiver_clock(late, at(9, 26, 12, 0), kickoffs=(at(9, 27, 17, 0),),
+                       slate_ends=(at(9, 29, 0, 15),), open_weeks=(at(9, 18, 0, 15),))
+    assert c.phase == "FREE_AGENT"
+
+
+def test_next_weeks_game_is_seen_before_the_page_rolls():
+    """Dropped during Monday night of week 11; the clear crosses Wednesday's
+    run and holds the Wednesday-night Thanksgiving-week game: the page is
+    still on week 11, so next week's kickoff must be passed in."""
+    d = N.Drop("g", 5, at(11, 24, 3, 0), "free_agent")
+    wed_night = at(11, 26, 1, 0)
+    c = N.waiver_clock(d, at(11, 24, 5, 0), kickoffs=(at(11, 22, 18, 0), None, wed_night),
+                       slate_ends=(at(11, 24, 1, 15),))
+    assert c.phase == "WAIVERS" and c.until == at(12, 2, 8, 20)
+
+
+def test_a_lock_before_the_drop_still_means_the_run_freed_him():
+    """A week with no Monday game: dropped after its last kickoff, his clear
+    ends before Wednesday's run, yet he was locked until it."""
+    d = N.Drop("m", 5, at(10, 19, 1, 0), "free_agent")
+    c = N.waiver_clock(d, at(10, 21, 7, 30), kickoffs=(at(10, 18, 17, 0), at(10, 25, 17, 0)),
+                       slate_ends=(at(10, 19, 0, 20),))
+    assert c.phase == "FREE_AGENT" and c.since == at(10, 21, 7, 20)
+    assert c.events[-1] == at(10, 21, 7, 20)
+
+
+def test_before_the_first_run_nothing_happens_at_it():
+    d = N.Drop("p", 5, at(9, 3, 12, 0), "free_agent")
+    c = N.waiver_clock(d, at(9, 8, 12, 0), kickoffs=(None, at(9, 13, 17, 0), None),
+                       slate_ends=(at(9, 15, 0, 15),))
+    assert c.phase == "FREE_AGENT" and c.until == at(9, 13, 17, 0)
+    assert "weekly run" not in c.text
 
 
 # ---------------------------------------------------------------- 4/5/6. watch

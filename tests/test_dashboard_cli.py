@@ -733,6 +733,8 @@ def test_without_transactions_the_page_says_drops_are_unknown(tmp_path, no_netwo
     assert "drops UNKNOWN" in html and "notable-alert\"" not in html
     assert "recent drops are UNKNOWN" in html and "was dropped by a team in this league" \
         not in html, "an empty list never claims nobody was dropped when drops are unknown"
+    assert "Last season's starters cannot be checked" in html \
+        and "Nobody in the pool was a starter last season" not in html
 
 
 def _render_with_model_inputs(tmp_path, kind, *, age):
