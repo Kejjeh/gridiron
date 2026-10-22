@@ -27,9 +27,10 @@ the Wednesday waiver run. Fixed in three parts:
   mismatches, including MIN DEF on a bye, taken by a Tuesday claim. The first-screen alert (top of the Action
   Desk) is a transition, 48 h each, read off this build's data: each change
   of that clock. The one carried comparison (`notable.PreviousWatch`) is a
-  pool entry with no league drop behind it (an NFL activation), against a
-  previous record under 24 h old with a pool, and only when this build can
-  see the drops. Never the owner's own drop. The snapshot now carries the
+  pool entry (an NFL activation, a dropped player who only now has a team;
+  never a team defense), against a previous record under 24 h old with a
+  pool, and only when this build can see the drops. A week with an untimed
+  game makes "free" read UNSURE. Never the owner's own drop. The snapshot now carries the
   last three transaction legs (`SleeperReadOnly.recent_transactions`, never
   raises; the leg advances at Wednesday's run, a day after `state.week`).
   Last season's box scores ride in the model inputs (`prior_weekly.parquet`,

@@ -809,17 +809,22 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
     designations = {p.sleeper_id: str((sleeper_players.get(p.sleeper_id) or {})
                                       .get("injury_status") or "") for p in pool}
     drops, drops_note = league_drops(snapshot.get("transactions"))
+    prior_note = ""
     try:
         priors = prior_lines(prior_weekly, rules)
     except (KeyError, TypeError, ValueError) as exc:   # an optional input never sinks the page
         priors = {}
-        notes_watch = f"last season's box scores unreadable ({type(exc).__name__})"
-        drops_note = "; ".join(x for x in (drops_note, notes_watch) if x)
+        prior_note = f"last season's box scores unreadable ({type(exc).__name__})"
 
     last_week = kickoff_index(schedule, week - 1) if schedule is not None and week > 1 else None
     last_kicks = dict(last_week.kickoffs) if last_week is not None else {}
     this_kicks = dict(kickoffs.kickoffs) if kickoffs is not None else {}
-    slate_ends = tuple(max(k.values()) if k else None for k in (this_kicks, last_kicks))
+    # a week's last kickoff is known only when every game in it has a time
+    # (an untimed late game would make an earlier one look like the last)
+    weeks_ix = (kickoffs, last_week)
+    slate_ends = tuple(max(ix.kickoffs.values()) if ix is not None and ix.kickoffs
+                       and not ix.time_unknown else None for ix in weeks_ix)
+    slate_unknown = any(ix is not None and bool(ix.time_unknown) for ix in weeks_ix)
 
     def time_unknown(p: Player) -> bool:
         team = nflverse_team(p.team)
@@ -835,6 +840,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             market_any=lambda p: shadow_any(shadow, p.sleeper_id, now),
             kickoffs_of=lambda p: (p.kickoff, last_kicks.get(nflverse_team(p.team))),
             slate_ends=slate_ends, time_unknown_of=time_unknown,
+            slate_unknown=slate_unknown, extra_notes=(prior_note,),
             prior=priors, prior_season=context.season - 1,
             ranks=market_ranks((shadow or {}).get("players")), drops=drops,
             drops_note=drops_note, now=now, best=plan.best, slots=slots, roster=roster,
@@ -2662,10 +2668,13 @@ def _watch_html(d: Dashboard) -> str:
         if w.notable_total > NOTABLE_CAP:
             out.append(f"<p class=\"small sub\">{w.notable_total - NOTABLE_CAP} more in "
                        f"the record.</p>")
-    else:
+    elif w.drops_known:
         out.append("<p class=\"small sub\">Nobody in the pool was a starter last season or "
                    "was dropped by a team in this league recently and is worth a look this "
                    "week.</p>")
+    else:
+        out.append("<p class=\"small sub\">Nobody in the pool was a starter last season; "
+                   "this league's recent drops are UNKNOWN (below).</p>")
     for note in w.notes:
         out.append(f"<p class=\"small warn\">{_e(note)}</p>")
     out.append("<p class=\"small sub\">Research, not a move. A starter last season is "
@@ -2675,9 +2684,9 @@ def _watch_html(d: Dashboard) -> str:
                "number reaches your weakest eligible starter (an empty slot counts as 0), "
                "never when he is designated Out. NEW = entered the pool this build; ALERT "
                f"= a change of his waiver clock (dropped, free agent, locked until the run, "
-               f"freed by it) in the last {ALERT_HOURS} h, or, with no league drop behind "
-               "him, entering the pool (only those reach the top of the page; never your own "
-               "drop). The waiver clock is the league's settings and its history — on "
+               f"freed by it), or entering the pool (never a team defense), in the last "
+               f"{ALERT_HOURS} h (only those reach the top of the page; never your own drop). "
+               "The waiver clock is the league's settings and its history — on "
                "waivers for two days after a drop, then a free agent until his game kicks "
                "off (or the week's last game, if he has none), then on waivers until the "
                "weekly run; Sleeper's player card is the authority.</p>")

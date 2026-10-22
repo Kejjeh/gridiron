@@ -207,6 +207,31 @@ def test_an_unknown_kickoff_is_unsure_never_an_instant_add():
     assert N.waiver_clock(d, at(10, 17, 12, 0)).phase == "UNSURE"   # no schedule at all
 
 
+def test_a_clear_that_crosses_the_run_still_sees_the_thursday_game():
+    """Dropped early Wednesday (before the run), 2-day clear to Friday 03:00,
+    Thursday-night game inside it: on waivers to the NEXT run, not Friday."""
+    d = N.Drop("t", 5, at(10, 21, 3, 0), "free_agent")
+    tnf = at(10, 23, 0, 15)
+    c = N.waiver_clock(d, at(10, 21, 5, 0), kickoffs=(tnf,), slate_ends=(at(10, 27, 0, 15),))
+    assert c.phase == "WAIVERS" and c.until == at(10, 28, 7, 20)
+
+
+def test_week_one_has_no_run_to_be_freed_by():
+    d = N.Drop("w1", 5, at(9, 3, 12, 0), "free_agent")          # before week 1
+    c = N.waiver_clock(d, at(9, 9, 12, 0), kickoffs=(at(9, 13, 17, 0),),
+                       slate_ends=(at(9, 15, 0, 15), None))
+    assert c.phase == "FREE_AGENT" and c.since == at(9, 5, 12, 0)
+    assert at(9, 9, 7, 20) not in c.events, "no game locked him before that run"
+
+
+def test_an_untimed_last_game_makes_free_unsure_not_locked():
+    d = N.Drop("u", 5, at(9, 23, 12, 0), "free_agent")
+    # his Monday-night game has no time; the known Sunday games are NOT the slate end
+    c = N.waiver_clock(d, at(9, 28, 18, 0), kickoffs=(), slate_ends=(None, at(9, 22, 0, 15)),
+                       game_time_unknown=True, slate_unknown=True)
+    assert c.phase == "UNSURE" and "instant add" not in c.text
+
+
 # ---------------------------------------------------------------- 4/5/6. watch
 def watch(pool, *, market=None, drops=None, previous=None, ranks=None, prior=None, now=NOW,
           roster=(), sleeper=None, best=None, mine=None, after_kickoff=None, drops_note="",
@@ -379,7 +404,18 @@ def test_an_entry_while_the_drops_are_unknown_is_not_alerted():
     stash = P("a", "RB", gid="00-a")
     w = watch([stash], previous=prev(pool={"zz"}), drops_note="drops UNKNOWN")
     assert w.notable[0].new and not w.alerts, "it could be the owner's own drop"
-    assert "could not be read" in w.notable[0].waiver
+    assert "could not be read" in w.notable[0].waiver and not w.drops_known
+
+
+def test_an_unreadable_prior_season_is_a_note_not_unknown_drops():
+    x = P("x", "RB", gid="00-x")
+    d = N.Drop("x", 2, NOW - timedelta(days=7), "free_agent")
+    w = N.build_watch([x], sleeper_players={}, market_of=lambda p: 9.5, prior={},
+                      prior_season=2025, drops={"x": d}, drops_note="", now=NOW,
+                      best=lineup(), slots=SLOTS, previous=prev(pool={"zz"}),
+                      extra_notes=("last season's box scores unreadable (ValueError)",))
+    assert w.drops_known and w.alerts, "the entry still alerts"
+    assert any("unreadable" in n for n in w.notes)
 
 
 def test_a_dropped_player_who_only_now_enters_the_pool_is_alerted_but_a_defense_is_not():

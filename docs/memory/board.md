@@ -21,7 +21,7 @@ the week's last kickoff, with no game of his own — then locked until the
 Wednesday run, then free; "his Sleeper card is the
 authority"). The first-screen alert is a transition, 48 h each, read off
 this build's data: each change of that clock; the one carried comparison
-(`PreviousWatch`) is a pool entry with no league drop behind it, against a
+(`PreviousWatch`) is a pool entry (never a team defense), against a
 previous record under 24 h old with a pool, only while the drops are known.
 Never the owner's own drop. "Can't project — Sleeper's number" lists every
 ABSTAINED pool player Sleeper projects, labelled as Sleeper's; withheld or

@@ -731,6 +731,8 @@ def test_without_transactions_the_page_says_drops_are_unknown(tmp_path, no_netwo
     assert rec["watch"]["notable"] == []
     assert any("drops UNKNOWN" in x for x in rec["watch"]["notes"])
     assert "drops UNKNOWN" in html and "notable-alert\"" not in html
+    assert "recent drops are UNKNOWN" in html and "was dropped by a team in this league" \
+        not in html, "an empty list never claims nobody was dropped when drops are unknown"
 
 
 def _render_with_model_inputs(tmp_path, kind, *, age):
