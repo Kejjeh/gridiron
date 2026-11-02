@@ -466,3 +466,91 @@ def test_a_name_added_to_the_table_later_resolves_earlier_snapshots(tmp_path):
     assert (weeks, changed) == (1, True)
     assert after["unmatched"] == 1 and "00-0099003" in after["players"]
     assert after["taken_at"] == before["taken_at"]                  # the snapshot time stands
+
+
+# ------------------------------------------------------------------ the local names mode
+
+FRIDAY = datetime(2026, 11, 6, 12, 0, tzinfo=UTC)
+
+
+def td_payload(event_id, home, away, players):
+    return {"id": event_id, "commence_time": "2026-11-08T18:00:00Z", "home_team": home,
+            "away_team": away, "bookmakers": [{"key": "book_alpha", "markets": [
+                {"key": "player_anytime_td", "outcomes": [
+                    {"name": "Yes", "description": p, "price": 150} for p in players]}]}]}
+
+
+def names_api(**kw):
+    return FakeApi(odds={
+        "evtA": td_payload("evtA", "Kansas City Chiefs", "Buffalo Bills",
+                           ["Pat Fixture", "Wes Fixture"]),
+        "evtB": td_payload("evtB", "Miami Dolphins", "New York Jets", ["Ray Fixture"]),
+        "evtC": td_payload("evtC", "Seattle Seahawks", "San Francisco 49ers", ["Lee Fixture"])},
+        **kw)
+
+
+def run_names(tmp_path, api, now=FRIDAY, **kw):
+    return PP.collect_names(key=KEY, season=2026, now=now, schedule=schedule(),
+                            schedule_source="test", raw_root=tmp_path / "raw",
+                            derived_root=tmp_path / "derived", fetch=api,
+                            sleep=lambda s: None, clock=lambda: now, **kw)
+
+
+def test_the_names_mode_asks_one_cheap_market_per_game_of_the_next_week(tmp_path):
+    api = names_api(remaining=400)
+    rep = run_names(tmp_path, api)
+    assert rep.week == 9 and (rep.due, rep.snapshots) == (3, 3)     # the untimed game is never asked
+    odds = [u for u in api.calls if "/odds?" in u]
+    assert sum("/events?" in u for u in api.calls) == 1 and len(odds) == 3
+    for u in odds:
+        assert urllib.parse.parse_qs(urllib.parse.urlparse(u).query)["markets"] == \
+            ["player_anytime_td"]
+    assert api.remaining == 397                                      # 1 credit a game
+    stored = sorted((tmp_path / "raw" / "names" / "season2026" / "week09").glob("*__*.json"))
+    assert len(stored) == 3
+    # never a snapshot: nothing derived, nothing counted as snapped, nothing in raw/season2026
+    assert not (tmp_path / "raw" / "season2026").exists()
+    assert P.read_derived(tmp_path / "derived", 2026, 9) is None
+    assert PP.snapped_games(tmp_path / "derived", tmp_path / "raw", 2026, {9}) == set()
+    assert P.read_raw_snapshots(tmp_path / "raw", 2026) == {}
+    assert len(P.read_name_files(tmp_path / "raw", 2026)) == 3
+    lines = "\n".join(PP.names_lines(rep))
+    assert "3 name list(s) stored" in lines
+    for leak in ("Fixture", KEY, "book_alpha", "evtA"):
+        assert leak not in lines
+    again = run_names(tmp_path, api)                     # a game with a list is not asked again
+    assert again.due == 0 and len(api.calls) == 4
+
+
+def test_the_names_mode_keeps_the_months_core_reserve(tmp_path):
+    # four core snapshots still to come this month: a reserve of 24 credits
+    rep = run_names(tmp_path, names_api(remaining=25))
+    assert rep.reserve == 4 * PP.CORE_COST
+    assert rep.snapshots == 1
+    assert rep.refused == {"would leave less than the month's core reserve": 2}
+
+
+def test_the_names_mode_refuses_to_run_inside_github_actions(tmp_path, monkeypatch, capsys):
+    import gridiron.config as cfg
+
+    class Settings:
+        odds_api_key = KEY
+    monkeypatch.setattr(cfg, "get_settings", lambda: Settings())
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+    def no_call(url):
+        raise AssertionError("the names mode called the provider inside Actions")
+    monkeypatch.setattr(PP, "http_fetch", no_call)
+    assert PP.main(["names", "--raw-root", str(tmp_path / "r"),
+                    "--derived-root", str(tmp_path / "d")]) == 2
+    assert capsys.readouterr().out.strip() == PP.LOCAL_ONLY
+    assert not (tmp_path / "r").exists()
+
+
+def test_the_names_mode_asks_the_kickers_market_only_when_told(tmp_path):
+    api = names_api(remaining=400)
+    rep = run_names(tmp_path, api, markets=PP.KICKER_NAME_MARKETS)
+    odds = [u for u in api.calls if "/odds?" in u]
+    assert rep.snapshots == 3
+    assert {urllib.parse.parse_qs(urllib.parse.urlparse(u).query)["markets"][0] for u in odds} \
+        == {"player_anytime_td,player_kicking_points"}

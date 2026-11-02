@@ -4,6 +4,7 @@
     PYTHONPATH=src python scripts/ingest/pull_props.py --dry-run   # say what is due; no call
     PYTHONPATH=src python scripts/ingest/pull_props.py rederive    # rebuild derived/ from raw/
     PYTHONPATH=src python scripts/ingest/pull_props.py summary     # last run, counts only
+    PYTHONPATH=src python scripts/ingest/pull_props.py names       # LOCAL: seed the name table
 
 Provider: The Odds API (owner decision 4, 2026-11-02: a sanctioned free
 tier, never a sportsbook scrape). docs/research/PROPS_COLLECTOR.md has the
@@ -38,6 +39,10 @@ design, the credit math and what the owner sets up.
   derives (expected stat lines by gsis id, counts) goes to
   data/research/cache/props/derived/season<YYYY>/week<NN>.json.
 * Logs print counts and credits only: no player, no name, no line, no price.
+* `names` (local only, refused inside GitHub Actions): the provider's player
+  names for every game of one week, from one market at 1 credit a game,
+  stored under raw/names/ for `scripts/ingest/odds_names.py propose`. Never
+  a snapshot; the same ledger and core reserve apply.
 """
 from __future__ import annotations
 
@@ -522,6 +527,8 @@ class RunReport:
     ledger_changed: bool = False
     credits: Credits | None = None
     reserve: int | None = None
+    #: the week the names mode asked about
+    week: int | None = None
 
     def __post_init__(self):
         self.refused = self.refused or Counter()
@@ -745,6 +752,126 @@ def collect(*, key: str, season: int, now: datetime, schedule, schedule_source: 
     return report
 
 
+#: The names mode's one market: the anytime-TD market lists nearly every
+#: quarterback, back, receiver and tight end a book prices, at 1 credit a game.
+NAME_MARKETS: tuple[str, ...] = ("player_anytime_td",)
+#: `--kickers` adds the kickers' market (one more credit a game).
+KICKER_NAME_MARKETS: tuple[str, ...] = NAME_MARKETS + ("player_kicking_points",)
+LOCAL_ONLY = "[props] names: local only (it stores player names); nothing asked"
+
+
+def names_dir(raw_root: Path, season: int, week: int) -> Path:
+    return Path(raw_root) / P.NAMES_DIR / f"season{int(season)}" / f"week{int(week):02d}"
+
+
+def collect_names(*, key: str, season: int, now: datetime, schedule, schedule_source: str,
+                  raw_root: Path = P.RAW_ROOT, derived_root: Path = P.DERIVED_ROOT,
+                  week: int | None = None, fetch: Fetch | None = None,
+                  sleep: Callable[[float], None] = time.sleep,
+                  clock: Callable[[], datetime] = _wall_clock,
+                  reset_day: int | None = None,
+                  markets: Sequence[str] = NAME_MARKETS) -> RunReport:
+    """LOCAL seeding of the odds-name table: the provider's spellings for
+    every game of one week (default: the next week with a game to come), one
+    cheap market per game, stored under raw/names/ for `odds_names.py
+    propose`. Never a snapshot: nothing is derived from it and the collector
+    does not count it. A game that already has a name list is not asked
+    again. The same credit ledger and core reserve apply."""
+    fetch = fetch or http_fetch
+    markets = tuple(markets)
+    cost = len(markets) * len(P.REGIONS)
+    report = RunReport(now.isoformat(timespec="seconds"), True, schedule_source)
+    ledger_path = Path(derived_root) / LEDGER_NAME
+    credits = Credits.load(ledger_path)
+    if reset_day is not None:
+        credits.reset_day = int(reset_day)
+    report.credits = credits
+    games, report.games_untimed = season_games(schedule, season)
+    report.games_timed = len(games)
+    upcoming = [g for g in games if g.kickoff > now]
+    if week is None and upcoming:
+        week = upcoming[0].week
+    have = {gid for (_w, gid) in P.read_name_files(raw_root, season)}
+    targets = [g for g in upcoming if g.week == week and g.game_id not in have]
+    report.week, report.due = week, len(targets)
+    if not targets:
+        return report
+    report.ledger_changed = True
+    try:
+        events, headers = fetch(events_url(key))
+        credits.record(headers, now)
+    except OddsApiError as exc:
+        report.errors[f"events: {scrub(exc, key)}"] += 1
+        events = None
+    ids, report.kickoff_disagreements = match_events(events, targets)
+    snapped = snapped_games(derived_root, raw_root, season, {week})
+    for i, game in enumerate(targets):
+        event_id = ids.get(game.game_id)
+        if event_id is None:
+            report.unmatched_events += 1
+            continue
+        # every core snapshot the month still needs (the cloud takes them)
+        report.reserve = reserve = CORE_COST * len(
+            [g for g in games if now < g.kickoff < credits.next_reset(now)
+             and g.game_id not in snapped])
+        if credits.known(now):
+            if credits.remaining - cost < reserve:
+                report.refused["would leave less than the month's core reserve"] += 1
+                continue
+        elif report.first_readings:
+            report.refused[UNKNOWN_CREDITS] += 1
+            continue
+        else:
+            report.first_readings += 1
+        if i:
+            sleep(PAUSE_SECONDS)
+        try:
+            payload, headers = fetch(event_odds_url(key, event_id, markets))
+        except OddsApiError as exc:
+            credits.record(exc.headers, clock())
+            report.errors[f"event odds: {scrub(exc, key)}"] += 1
+            if exc.status in STOP_CODES:
+                break
+            continue
+        taken = clock()
+        if "x-requests-remaining" in headers:
+            credits.record(headers, taken)
+        elif credits.remaining is not None:
+            credits.remaining -= cost
+            credits.last = None
+        if not _has_odds(payload):
+            report.empty += 1                 # free; asked again on the next run
+            continue
+        _atomic_json(names_dir(raw_root, season, game.week)
+                     / f"{game.game_id}__{_stamp(taken)}.json",
+                     {"meta": {"game_id": game.game_id, "season": game.season,
+                               "week": game.week, "kickoff": game.kickoff.isoformat(),
+                               "taken_at": taken.isoformat(), "event_id": event_id,
+                               "markets_requested": list(markets),
+                               "regions": list(P.REGIONS), "purpose": "names only"},
+                      "payload": payload})
+        report.snapshots += 1
+        report.raw_changed = True
+    credits.save(ledger_path)
+    return report
+
+
+def names_lines(report: RunReport) -> list[str]:
+    """The names mode's counts (no name: they go to raw/names/ only)."""
+    c = report.credits or Credits()
+    week = report.week
+    out = [f"[props names] week {week if week is not None else '?'}: {report.due} game(s) "
+           f"to ask; {report.snapshots} name list(s) stored, {report.empty} empty "
+           f"response(s), {report.unmatched_events} game(s) with no provider event"]
+    for label, counts in (("refused", report.refused), ("errors", report.errors)):
+        if counts:
+            out.append(f"[props names] {label}: " + ", ".join(
+                f"{k} x{v}" for k, v in sorted(counts.items())))
+    out.append(f"[props names] credits remaining {c.remaining}, used {c.used}; core "
+               f"reserve {report.reserve}. Next: scripts/ingest/odds_names.py propose")
+    return out
+
+
 def write_outputs(report: RunReport, derived_root: Path) -> None:
     """The run's counts beside the derived files, and the two change flags
     for the workflow (GITHUB_OUTPUT), so an unchanged run saves no cache
@@ -789,12 +916,16 @@ def summary_lines(derived_root: Path) -> list[str]:
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("command", nargs="?", default="collect",
-                    choices=("collect", "rederive", "summary"))
+                    choices=("collect", "rederive", "summary", "names"))
     ap.add_argument("--season", type=int, default=SEASON_YEAR)
     ap.add_argument("--now", default=None, help="ISO-8601 instant to run AS OF (tests, replays)")
     ap.add_argument("--dry-run", action="store_true", help="say what is due; make no call")
     ap.add_argument("--max-games", type=int, default=None,
                     help="snapshot at most this many due games (a local seeding run)")
+    ap.add_argument("--week", type=int, default=None,
+                    help="names: the week to ask about (default: the next week with a game)")
+    ap.add_argument("--kickers", action="store_true",
+                    help="names: also ask the kicking-points market (2 credits a game)")
     ap.add_argument("--raw-root", type=Path, default=P.RAW_ROOT)
     ap.add_argument("--derived-root", type=Path, default=P.DERIVED_ROOT)
     ap.add_argument("--cache-root", type=Path, default=None)
@@ -816,6 +947,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[props] re-derived {weeks} week(s) from the raw archive; "
               f"{'changed' if changed else 'unchanged'}")
         return 0
+    if args.command == "names" and os.environ.get("GITHUB_ACTIONS") == "true":
+        print(LOCAL_ONLY)
+        return 2
 
     try:
         from gridiron.config import get_settings
@@ -834,6 +968,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                                         else os.environ.get(RESET_DAY_ENV))
     if why:
         print(f"[props] {why}")
+    if args.command == "names":
+        try:
+            schedule, source, _ = load_schedule(args.season, now, cache_root=args.cache_root,
+                                                derived_root=args.derived_root)
+            report = collect_names(key=key, season=args.season, now=now, schedule=schedule,
+                                   schedule_source=source, raw_root=args.raw_root,
+                                   derived_root=args.derived_root, week=args.week,
+                                   reset_day=reset_day,
+                                   markets=KICKER_NAME_MARKETS if args.kickers else NAME_MARKETS)
+        except Exception as exc:                                 # noqa: BLE001
+            if args.debug:
+                raise
+            print(f"[props] names failed: {type(exc).__name__} (rerun with --debug)")
+            return 1
+        for line in names_lines(report):
+            print(scrub(line, key))
+        return 0
     before = set(Path(args.raw_root).rglob("*.json"))
     try:
         schedule, source, rewrote = load_schedule(args.season, now, cache_root=args.cache_root,

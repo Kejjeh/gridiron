@@ -121,3 +121,29 @@ def test_check_counts_the_table_by_basis(tmp_path, capsys):
                      "Pat Fixture,KC,00-0099001,exact,2026-11-09\n", encoding="utf-8")
     assert ON.main(["check", "--table", str(table)]) == 0
     assert "1 row(s); exact 1, reviewed 0" in capsys.readouterr().out
+
+
+def test_propose_reads_the_local_name_lists_too(tmp_path):
+    """`pull_props.py names` stores one cheap market per game under
+    raw/names/; propose treats its names exactly like a snapshot's."""
+    raw = tmp_path / "raw"
+    folder = raw / "names" / "season2026" / "week09"
+    folder.mkdir(parents=True)
+    payload = {"id": "evtX", "commence_time": "2026-11-08T18:00:00Z",
+               "home_team": "Kansas City Chiefs", "away_team": "Buffalo Bills",
+               "bookmakers": [{"key": "book_alpha", "markets": [{"key": "player_anytime_td",
+                               "outcomes": [{"name": "Yes", "description": n, "price": 150}
+                                            for n in ("Pat Fixture", "Wes Fixture",
+                                                      "Sam Fixture Jr.")]}]}]}
+    (folder / "2026_09_BUF_KC__20261106T120000Z.json").write_text(json.dumps(
+        {"meta": {"game_id": "2026_09_BUF_KC", "week": 9, "season": 2026,
+                  "purpose": "names only"}, "payload": payload}), "utf-8")
+    table = tmp_path / "names.csv"
+    table.write_text("odds_name,team,gsis_id,basis,added\n", encoding="utf-8")
+    out = io.StringIO()
+    rows = ON.propose(season=2026, raw_root=raw, table_path=table, rosters=ROSTER, weeks=None,
+                      today="2026-11-06", dry_run=False, out=out)
+    assert {(r.odds_name, r.gsis_id) for r in rows} == {("Pat Fixture", "00-0099001"),
+                                                         ("Wes Fixture", "00-0099002")}
+    assert "'Sam Fixture Jr.'" in out.getvalue()          # still no suffix stripping
+    assert P.read_raw_snapshots(raw, 2026) == {}          # and still never a snapshot

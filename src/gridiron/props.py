@@ -789,6 +789,29 @@ def read_raw_snapshots(raw_root: Path, season: int) -> dict[tuple[int, str], tup
     return out
 
 
+#: Local-only name lists (`pull_props.py names`): one cheap market per game,
+#: read by `scripts/ingest/odds_names.py propose`, NEVER a snapshot (they
+#: sit outside season<YYYY>/ so no snapshot reader can see them).
+NAMES_DIR = "names"
+
+
+def read_name_files(raw_root: Path, season: int) -> dict[tuple[int, str], list[tuple[Path, dict]]]:
+    """(week, nflverse game_id) -> every local name-list response with odds
+    in it, oldest first."""
+    out: dict[tuple[int, str], list[tuple[Path, dict]]] = {}
+    base = Path(raw_root) / NAMES_DIR / f"season{int(season)}"
+    for path in sorted(base.glob("week*/*__*.json")):
+        try:
+            blob = json.loads(path.read_text(encoding="utf-8"))
+            meta = blob["meta"]
+            week, gid = int(meta["week"]), str(meta["game_id"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if has_odds(blob.get("payload")):
+            out.setdefault((week, gid), []).append((path, blob))
+    return out
+
+
 # ======================================================================
 # the derived week file (public: derived values only)
 # ======================================================================

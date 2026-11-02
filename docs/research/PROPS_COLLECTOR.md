@@ -157,15 +157,33 @@ Odds providers send names, not ids.
   kept) with the current table. A board already built keeps the numbers it
   froze.
 
-**Seeding the table.** The table starts empty, and the cloud archive can be
-read only inside a workflow run, so the names come from a local snapshot:
+**Seeding the table.** The table starts empty. The cloud archive can be
+read only inside a workflow run, and a workflow must not print names, so
+the provider's spellings come from your own machine:
 
-1. On your machine, inside a due window (for example 11 am ET on a Sunday),
-   run `PYTHONPATH=src python scripts/ingest/pull_props.py --max-games 2`.
-   This costs at most 6 credits a game, from the same monthly quota.
-2. Run `PYTHONPATH=src python scripts/ingest/odds_names.py propose`.
-3. Review the appended rows, mark the ones you checked `reviewed`, and
-   commit the table.
+1. Once props are posted for the coming week (Thursday to Saturday), run
+   `PYTHONPATH=src python scripts/ingest/pull_props.py names` on your
+   machine. For every game of the next week it asks one market, the
+   anytime TD, which lists nearly every quarterback, back, receiver and
+   tight end a book prices. That is 1 credit a game, about 15 a week, from
+   the same monthly quota. It keeps the core reserve, never asks a game
+   twice, and stores the lists under `data/research/cache/props/raw/names/`
+   (gitignored). A list is never a snapshot: nothing is derived from it.
+   It refuses to run inside GitHub Actions, whose logs are public.
+2. Run `PYTHONPATH=src python scripts/ingest/odds_names.py propose`. It
+   reads the name lists and any local snapshots. It appends the exact
+   matches and prints the candidates for every other name, on your
+   screen only.
+3. Review the appended rows, mark the ones you checked `reviewed`, add rows
+   by hand for the names it could not match, and commit the table.
+4. Repeat for a later week only for new names (a trade, a call-up). The
+   cloud re-derives every archived snapshot with the table as it is on
+   `main`.
+
+Kickers are not in the anytime-TD market. `pull_props.py names --kickers`
+also asks the kicking-points market, for 2 credits a game. Use it on the
+first run, because a game that already has a list is not asked again.
+Kickers matter only where the secondary markets were bought (see Credits).
 
 ## The projection math
 
@@ -389,7 +407,7 @@ derived values are kept either way.
 | `src/gridiron/props.py` | Parse, de-vig, consensus, distributions, identity table, derived entries, market projection |
 | `src/gridiron/props_params.json` | The fitted shapes and sizes, with their evidence |
 | `scripts/research/prop_distribution_fit.py` | The fit (`--save` rewrites the JSON) |
-| `scripts/ingest/pull_props.py` | The collector; subcommands `rederive` and `summary` |
+| `scripts/ingest/pull_props.py` | The collector; subcommands `rederive`, `summary` and the local `names` |
 | `scripts/ingest/odds_names.py` | `propose` and `check` for the name table (local only) |
 | `data/reference/odds_player_names.csv` | The committed name table (header only until seeded) |
 | `.github/workflows/props-collect.yml` | The hourly cloud collector |

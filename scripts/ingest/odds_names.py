@@ -9,10 +9,11 @@ NAME. It becomes a gsis id only through the committed table
 data/reference/odds_player_names.csv (`gridiron.props.IdentityTable`), and
 `propose` is the only machine that writes to it:
 
-* For every name in a local snapshot (data/research/cache/props/raw/) the
-  table does not resolve on that event's two teams, it lists the candidate
-  players on those two teams that week (nflverse weekly rosters), for a
-  person to check.
+* For every name in a local snapshot (data/research/cache/props/raw/) or a
+  local name list (raw/names/, written by `pull_props.py names` at 1 credit
+  a game) that the table does not resolve on that event's two teams, it
+  lists the candidate players on those two teams that week (nflverse
+  weekly rosters), for a person to check.
 * It APPENDS a row only when the match is 'exact': the name equals, string
   for string, the weekly-roster `full_name` of exactly one player on one of
   the event's two teams that week, and that player's position is consistent
@@ -100,14 +101,25 @@ def candidates(markets: set[str], roster: Sequence[Mapping[str, str]]) -> list[d
 def propose(*, season: int, raw_root: Path, table_path: Path, rosters, weeks: Sequence[int] | None,
             today: str, dry_run: bool, out=sys.stdout) -> list[P.IdentityRow]:
     table = P.IdentityTable.read(table_path)
-    snaps = P.read_raw_snapshots(raw_root, season)
+    # snapshots and the cheaper name lists alike: every payload of a game
+    sources: dict[tuple[int, str], list[object]] = {}
+    for game_key, (_path, blob) in P.read_raw_snapshots(raw_root, season).items():
+        sources.setdefault(game_key, []).append(blob.get("payload"))
+    for game_key, files in P.read_name_files(raw_root, season).items():
+        sources.setdefault(game_key, []).extend(blob.get("payload") for _p, blob in files)
     roster_weeks = set() if rosters is None or len(rosters) == 0 else \
         {int(w) for w in rosters["week"].dropna().unique()}
     new: dict[tuple[str, str], P.IdentityRow] = {}
-    for (week, gid), (_path, blob) in sorted(snaps.items()):
+    for (week, gid), payloads in sorted(sources.items()):
         if weeks and week not in weeks:
             continue
-        teams, priced = names_by_event(blob.get("payload"))
+        teams: tuple[str, ...] = ()
+        priced: dict[str, set[str]] = {}
+        for payload in payloads:
+            event_teams, event_names = names_by_event(payload)
+            teams = teams or event_teams
+            for name, markets in event_names.items():
+                priced.setdefault(name, set()).update(markets)
         open_names = {n: m for n, m in priced.items()
                       if table.resolve(n, teams).gsis_id is None}
         if not open_names:
