@@ -385,20 +385,37 @@ hand.
 5. Under **Variables**, add the repository variable
    `GRIDIRON_PROPS_ENABLED` = `true`. The workflow does nothing until then.
    Optionally add `GRIDIRON_PROPS_RESET_DAY` (see Credits).
-6. **Merge this change to `main`.** GitHub runs a scheduled workflow only
-   from the default branch, so the hourly collector does not exist until
-   `props-collect.yml` is on `main`. A manual dispatch can be started from
-   any branch, but its caches stay on that branch: the dashboard on `main`
-   would never see them.
+6. **Merge this change to `main` first.** GitHub runs a scheduled workflow
+   only from the default branch, so the hourly collector does not exist
+   until `props-collect.yml` is on `main`. A manual dispatch also needs
+   the file on the default branch before GitHub offers it. A run started
+   on another branch keeps its caches on that branch, where the dashboard
+   on `main` never sees them.
 7. Seed and review the name table (above). Commit only rows you are happy
    with. Mark a row `reviewed` only after you have checked it.
 
-**If the archive will not decrypt** (for example, the archive key was
-changed), the job fails at the decrypt step before it spends a credit. It
-keeps failing, and it never overwrites the archive it could not read. To
-recover, either put the old key back, or delete the `gridiron-props-vault-`
-caches (Actions → Caches) and accept the loss of the raw archive. The
-derived values are kept either way.
+## When something breaks
+
+Collecting is the time-critical part, and the board is the product, so
+every failure below stops as little as it can and says so in the step
+summary (by type and count, never by name):
+
+- **The archive will not decrypt** (for example, the archive key was
+  changed). The job fails at the decrypt step before it spends a credit.
+  It keeps failing, and it never overwrites the archive it could not read.
+  To recover, put the old key back. Otherwise delete the
+  `gridiron-props-vault-` caches (Actions → Caches) and accept the loss of
+  the raw archive. The derived values are kept either way.
+- **The name table is unreadable** (for example, a typo in a hand edit on
+  `main`). The run still collects, every name abstains, and nothing
+  archived is re-derived until the table reads again, because an empty
+  table would erase the derived values.
+- **A snapshot cannot be derived.** It gets a marker entry, so it is not
+  bought again. A later re-derivation keeps whatever entry the game has.
+- **The board meets a malformed derived file.** `market_v1` is empty or
+  records its error, and the page is built unchanged
+  (`tests/test_market_contender.py`).
+- **The book ranking fails.** It prints the error type only.
 
 ## Files
 
