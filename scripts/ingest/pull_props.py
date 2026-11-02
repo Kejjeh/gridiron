@@ -471,12 +471,41 @@ def _meta_time(meta: Mapping[str, object], key: str) -> datetime | None:
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
+def derive_or_none(payload: object, *, table: P.IdentityTable, params: P.PropParams,
+                   taken_at: datetime, kickoff: datetime | None,
+                   errors: Counter | None = None) -> dict | None:
+    """`gridiron.props.derive_game`, or None (its error TYPE counted) when it
+    fails: one odd payload in the archive must not stop every later run,
+    which re-derives the whole archive."""
+    try:
+        return P.derive_game(payload, table=table, params=params, taken_at=taken_at,
+                             kickoff=kickoff)
+    except Exception as exc:                                     # noqa: BLE001
+        if errors is not None:
+            errors[f"derive: {type(exc).__name__}"] += 1
+        return None
+
+
+def failed_entry(taken_at: datetime, kickoff: datetime | None) -> dict:
+    """The derived entry of a snapshot that could not be derived: it still
+    marks the game as snapped (so it is not bought again) and projects no one."""
+    return {"taken_at": taken_at.astimezone(timezone.utc).isoformat(timespec="seconds"),
+            "kickoff": None if kickoff is None
+            else kickoff.astimezone(timezone.utc).isoformat(timespec="seconds"),
+            "lead_minutes": None if kickoff is None
+            else round((kickoff - taken_at).total_seconds() / 60.0, 1),
+            "teams": [], "books": 0, "markets_returned": [], "players": {}, "unmatched": 0,
+            "ambiguous": 0, "abstained": {}, "skipped": {}, "params_fitted": "",
+            "derive_failed": True}
+
+
 def rederive(raw_root: Path, derived_root: Path, season: int, table: P.IdentityTable,
-             params: P.PropParams) -> tuple[int, bool]:
+             params: P.PropParams, errors: Counter | None = None) -> tuple[int, bool]:
     """Rebuild every week's derived entries from the raw archive with the
     CURRENT name table (a row added later resolves earlier snapshots too).
-    Games the archive no longer holds keep their derived entry. Returns
-    (weeks touched, whether any derived file changed)."""
+    Games the archive no longer holds, and games whose re-derivation fails,
+    keep their derived entry. Returns (weeks touched, whether any derived
+    file changed)."""
     snaps = raw_snapshots(raw_root, season)
     weeks = sorted({w for (w, _g) in snaps})
     changed = False
@@ -489,10 +518,17 @@ def rederive(raw_root: Path, derived_root: Path, season: int, table: P.IdentityT
             taken = _meta_time(meta, "taken_at")
             if taken is None:
                 continue
-            entries[gid] = P.derive_game(blob.get("payload"), table=table, params=params,
-                                         taken_at=taken, kickoff=_meta_time(meta, "kickoff"))
+            entry = derive_or_none(blob.get("payload"), table=table, params=params,
+                                   taken_at=taken, kickoff=_meta_time(meta, "kickoff"),
+                                   errors=errors)
+            if entry is not None:
+                entries[gid] = entry
         changed |= merge_derived(derived_root, season, week, entries)
-        write_book_table(raw_root, season, week, snaps, table)
+        try:
+            write_book_table(raw_root, season, week, snaps, table)
+        except Exception as exc:                                 # noqa: BLE001
+            if errors is not None:
+                errors[f"book table: {type(exc).__name__}"] += 1
     return len(weeks), changed
 
 
@@ -639,7 +675,17 @@ def collect(*, key: str, season: int, now: datetime, schedule, schedule_source: 
     over the assumed 1st and over one inferred from the headers."""
     fetch = fetch or http_fetch
     report = RunReport(now.isoformat(timespec="seconds"), True, schedule_source)
-    table = table if table is not None else P.IdentityTable.read()
+    table_ok = True
+    if table is None:
+        try:
+            table = P.IdentityTable.read()
+        except (OSError, ValueError) as exc:
+            # Collecting is the time-critical part; names can be fixed later.
+            # Every name abstains, and nothing archived is re-derived with an
+            # empty table (that would erase the derived values it holds).
+            report.errors[f"name table unreadable ({type(exc).__name__}): every name "
+                          f"unmatched, nothing re-derived"] += 1
+            table, table_ok = P.IdentityTable(), False
     params = params if params is not None else P.PropParams.load()
     ledger_path = Path(derived_root) / LEDGER_NAME
     credits = Credits.load(ledger_path)
@@ -731,8 +777,10 @@ def collect(*, key: str, season: int, now: datetime, schedule, schedule_source: 
             report.snapshots += 1
             report.with_secondary += int(len(markets) > len(P.CORE_MARKETS))
             snapped.add(game.game_id)
-            entry = P.derive_game(payload, table=table, params=params, taken_at=taken,
-                                  kickoff=game.kickoff)
+            entry = derive_or_none(payload, table=table, params=params, taken_at=taken,
+                                   kickoff=game.kickoff, errors=report.errors)
+            if entry is None:
+                entry = failed_entry(taken, game.kickoff)
             touched.setdefault(game.week, {})[game.game_id] = entry
             report.players += len(entry["players"])
             report.unmatched += entry["unmatched"]
@@ -740,8 +788,9 @@ def collect(*, key: str, season: int, now: datetime, schedule, schedule_source: 
         for week, entries in touched.items():
             report.derived_changed |= merge_derived(derived_root, season, week, entries)
         credits.save(ledger_path)
-    if not dry_run and any(Path(raw_root).glob(f"season{season}/week*/*__*.json")):
-        report.rederived_weeks, changed = rederive(raw_root, derived_root, season, table, params)
+    if table_ok and not dry_run and any(Path(raw_root).glob(f"season{season}/week*/*__*.json")):
+        report.rederived_weeks, changed = rederive(raw_root, derived_root, season, table, params,
+                                                   errors=report.errors)
         report.derived_changed |= changed
     if report.reserve is None and games:
         upcoming = [g for g in games if g.kickoff > now]

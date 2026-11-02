@@ -910,9 +910,11 @@ class MarketWeek:
         twice: set[str] = set()
         games = blob.get("games") or {}
         for gid_game, game in games.items():
-            if not isinstance(game, Mapping):
-                continue
+            if not isinstance(game, Mapping) or not isinstance(game.get("players") or {}, Mapping):
+                continue                    # a restored file is input, not truth
             for gid, entry in (game.get("players") or {}).items():
+                if not isinstance(entry, Mapping):
+                    continue
                 if gid in seen:
                     twice.add(gid)
                 seen[gid] = (game, entry)

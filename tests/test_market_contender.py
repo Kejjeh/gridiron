@@ -125,6 +125,46 @@ def test_a_derived_file_for_another_week_is_no_file(tmp_path):
     assert "market_v1" not in (rec["contenders"] or {})
 
 
+def test_a_malformed_derived_file_never_stops_the_board(tmp_path, capsys):
+    """A restored cache is input, not truth: whatever is in the week's file,
+    the record-only contender can fail but the board is built, unchanged."""
+    scn = _load("market_scn3", "scripts/weekly/dashboard_scenarios.py")
+    cli = _load("market_dash3", "scripts/weekly/dashboard.py")
+    root = tmp_path / "cache"
+    scn.build_scenario(root, "complete", now=scn.NOW)
+
+    def render(tag, blob=None):
+        if blob is not None:
+            path = P.derived_path(root / "props" / "derived", 2026, 3)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(blob), encoding="utf-8")
+        out = tmp_path / f"out_{tag}"
+        assert cli.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
+                         "--out-dir", str(out), "--now", scn.NOW.isoformat(),
+                         "--no-archive"]) == 0
+        return json.loads((out / "dashboard_latest.json").read_text("utf-8"))
+
+    plain = render("plain")
+    gid = next(p["gsis_id"] for p in plain["roster"] if p["gsis_id"] and p["position"] == "QB")
+    taken = (scn.NOW - timedelta(hours=1)).isoformat()
+    shapes = {
+        "players_a_list": {"g": {"taken_at": taken, "players": ["not", "a", "mapping"]}},
+        "entry_a_string": {"g": {"taken_at": taken, "players": {gid: "nonsense"}}},
+        "stat_not_a_number": {"g": {"taken_at": taken, "players": {gid: {
+            "basis": "exact", "abstained": {}, "books": {"passing_yards": 2},
+            "stats": {"passing_yards": "a lot"}}}}},
+    }
+    for tag, games in shapes.items():
+        blob = {**P.empty_week(2026, 3), "games": games}
+        capsys.readouterr()
+        rec = render(tag, blob)
+        log = capsys.readouterr().out
+        assert "market contender (record-only):" in log, tag
+        for key in ("roster", "best_lineup", "actions", "gate", "notes"):
+            assert rec[key] == plain[key], f"{tag} changed {key}"
+    assert "market contender failed (ValueError)" in log     # the last shape: said, not raised
+
+
 # ------------------------------------------------------------------ the grade
 
 def _p(sid, pos, proj, gid=None):

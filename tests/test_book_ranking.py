@@ -112,3 +112,15 @@ def test_under_four_weeks_it_says_so_and_still_runs(tmp_path, capsys):
 def test_an_empty_archive_grades_nothing(tmp_path, capsys):
     assert BR.main(["--raw", str(tmp_path / "none")]) == 0
     assert "nothing to grade" in capsys.readouterr().out
+
+
+def test_a_failure_prints_its_type_only(tmp_path, capsys):
+    raw, _table, _actuals = setup(tmp_path)
+    bad = tmp_path / "bad.csv"
+    bad.write_text("odds_name,team,gsis_id,basis,added\nWes Fixture,BUF,not-an-id,exact,2026-11-09\n",
+                   encoding="utf-8")
+    assert BR.main(["--raw", str(raw), "--table", str(bad), "--actuals",
+                    str(tmp_path / "none.csv")]) == 1
+    out = capsys.readouterr()
+    assert out.out.strip().endswith("book ranking failed: ValueError (rerun locally with --debug)")
+    assert "Fixture" not in out.out + out.err

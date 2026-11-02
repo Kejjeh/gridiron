@@ -163,7 +163,20 @@ def main(argv=None) -> int:
                     help="an nflverse weekly parquet/csv (default: fetch the season)")
     ap.add_argument("--markdown", action="store_true")
     ap.add_argument("--out", type=Path, default=None, help="write the aggregate grades as JSON")
+    ap.add_argument("--debug", action="store_true", help="re-raise a failure (local use only)")
     args = ap.parse_args(argv)
+    try:
+        return rank(args)
+    except Exception as exc:                                     # noqa: BLE001
+        if args.debug:
+            raise
+        # The type only: in the cloud this prints to a public summary and log,
+        # and an exception's text can quote a name or a line.
+        print(f"book ranking failed: {type(exc).__name__} (rerun locally with --debug)")
+        return 1
+
+
+def rank(args: argparse.Namespace) -> int:
     snaps = P.read_raw_snapshots(args.raw, args.season)
     weeks = len({w for (w, _g) in snaps})
     if weeks < MIN_WEEKS:

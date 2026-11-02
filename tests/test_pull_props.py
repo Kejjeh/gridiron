@@ -554,3 +554,47 @@ def test_the_names_mode_asks_the_kickers_market_only_when_told(tmp_path):
     assert rep.snapshots == 3
     assert {urllib.parse.parse_qs(urllib.parse.urlparse(u).query)["markets"][0] for u in odds} \
         == {"player_anytime_td,player_kicking_points"}
+
+
+# ------------------------------------------------------------------ nothing stops collection
+
+def test_an_unreadable_name_table_still_collects_and_erases_nothing(tmp_path, monkeypatch):
+    api = FakeApi()
+    api.odds["evtC"] = odds_payload("evtC", "Seattle Seahawks", "San Francisco 49ers")
+    first = run(tmp_path, api)                              # the 1 pm games, with the table
+    assert first.snapshots == 2
+    kept = P.read_derived(tmp_path / "derived", 2026, 9)["games"]["2026_09_BUF_KC"]
+    assert kept["players"]
+
+    def broken(cls, path=None):
+        raise ValueError("odds name table row: bad gsis id")
+    monkeypatch.setattr(PP.P.IdentityTable, "read", classmethod(broken))
+    late = datetime(2026, 11, 8, 19, 30, tzinfo=UTC)        # the 4:25 game is due
+    rep = PP.collect(key=KEY, season=2026, now=late, schedule=schedule(), schedule_source="t",
+                     raw_root=tmp_path / "raw", derived_root=tmp_path / "derived",
+                     fetch=api, sleep=lambda s: None, clock=lambda: late)
+    assert rep.snapshots == 1 and rep.rederived_weeks == 0
+    assert any(k.startswith("name table unreadable (ValueError)") for k in rep.errors)
+    games = P.read_derived(tmp_path / "derived", 2026, 9)["games"]
+    assert games["2026_09_BUF_KC"] == kept                  # not re-derived with an empty table
+    assert games["2026_09_SF_SEA"]["players"] == {} and games["2026_09_SF_SEA"]["unmatched"] > 0
+
+
+def test_a_payload_that_cannot_be_derived_is_marked_and_stops_nothing(tmp_path, monkeypatch):
+    real = P.derive_game
+
+    def flaky(payload, **kw):
+        if isinstance(payload, dict) and payload.get("id") == "evtA":
+            raise TypeError("an odd payload")
+        return real(payload, **kw)
+    monkeypatch.setattr(PP.P, "derive_game", flaky)
+    api = FakeApi()
+    rep = run(tmp_path, api)
+    assert rep.snapshots == 2 and rep.errors.get("derive: TypeError", 0) >= 1
+    games = P.read_derived(tmp_path / "derived", 2026, 9)["games"]
+    assert games["2026_09_BUF_KC"]["derive_failed"] is True
+    assert games["2026_09_BUF_KC"]["players"] == {}
+    other = games["2026_09_NYJ_MIA"]                        # the other game derived as usual
+    assert "derive_failed" not in other and other["books"] == 1 and other["unmatched"] == 4
+    again = run(tmp_path, api)                              # marked as snapped: not bought again
+    assert again.due == 0 and sum("/odds?" in u for u in api.calls) == 2

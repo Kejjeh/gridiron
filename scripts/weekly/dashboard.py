@@ -292,7 +292,12 @@ def main(argv: list[str] | None = None) -> int:
         props.DERIVED_ROOT if args.cache_root is None
         else Path(args.cache_root) / props.DERIVED_ROOT.relative_to(props.RESEARCH_CACHE))
     market_blob = props.read_derived(props_root, state_season, report_week)
-    market = props.MarketWeek(market_blob) if market_blob is not None else None
+    market, market_error = None, ""
+    if market_blob is not None:
+        try:
+            market = props.MarketWeek(market_blob)
+        except Exception as exc:  # noqa: BLE001 — record-only: never stops the board
+            market_error = type(exc).__name__
 
     dash = build_dashboard(
         context=ctx, sources=sources, snapshot=snapshot, sleeper_players=players,
@@ -326,9 +331,16 @@ def main(argv: list[str] | None = None) -> int:
     print("DEGRADED" if dash.degraded else "All inputs current.")
     print(f"projection model: {advanced.status}")
     detail = (dash.contenders or {}).get("market_v1_detail") or {}
-    print("market contender (record-only): " + (
-        f"{detail.get('projected', 0)} player(s) from {detail.get('snapshot_games', 0)} "
-        f"game snapshot(s)" if market is not None else f"no week-{report_week} prop file"))
+    if market_error:
+        said = f"week-{report_week} prop file unreadable ({market_error})"
+    elif market is None:
+        said = f"no week-{report_week} prop file"
+    elif detail.get("error"):
+        said = str(detail["error"])
+    else:
+        said = (f"{detail.get('projected', 0)} player(s) from "
+                f"{detail.get('snapshot_games', 0)} game snapshot(s)")
+    print(f"market contender (record-only): {said}")
     for n in dash.notes:
         print(f"  - {n}")
     print(f"projected roster rows: {sum(1 for p in dash.roster if p.projected)}/{len(dash.roster)}")

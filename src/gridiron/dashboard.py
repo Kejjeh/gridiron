@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import html
 import secrets
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from math import sqrt
@@ -445,11 +445,15 @@ def stack_serving_note(roster_and_pool: Sequence["Player"], shadow: Mapping[str,
             + (f"; {absent} skill player(s) not projected: {FEED_ABSENT}" if absent else ""))
 
 
+#: gsis id -> per-game rates, or a callable that computes them on demand.
+MarketRates = Mapping[str, Mapping[str, float]] | Callable[[], Mapping[str, Mapping[str, float]]]
+
+
 def contenders_block(advanced: AdvancedContext | None,
                      shadow: Mapping[str, object] | None,
                      players: Sequence[Player],
-                     market: "MarketWeek | None" = None,
-                     market_rates: Mapping[str, Mapping[str, float]] | None = None) -> dict | None:
+                     market: MarketWeek | None = None,
+                     market_rates: MarketRates | None = None) -> dict | None:
     """The numbers other systems give the same players, for the weekly
     shoot-out only: `baseline_v1` (the model before advanced stats),
     `adv_v1` (advanced_v1 alone, the number the page served before the stack
@@ -460,7 +464,10 @@ def contenders_block(advanced: AdvancedContext | None,
     player's kickoff; `gridiron.props.market_block`, with `market_v1_detail`
     saying which stats came from his own per-game rate). Nothing reads these
     to project, rank, gate or recommend; the page's own number comes from
-    `refine`."""
+    `refine`. `market_rates` may be a callable, so the per-game rates are
+    computed only when there is a market file. The market contender is
+    record-only, so a failure in it is recorded as its error and never stops
+    the board."""
     base: dict[str, float] = {}
     adv_only: dict[str, float] = {}
     stack: dict[str, float] = {}
@@ -497,7 +504,12 @@ def contenders_block(advanced: AdvancedContext | None,
     if adv_only:
         out["adv_v1"] = adv_only
     if market is not None:
-        numbers, detail = market_block(market, graded, market_rates or {})
+        try:
+            rates = market_rates() if callable(market_rates) else (market_rates or {})
+            numbers, detail = market_block(market, graded, rates)
+        except Exception as exc:  # noqa: BLE001 — record-only: never stops the board
+            numbers, detail = {}, {"error": f"market contender failed ({type(exc).__name__}); "
+                                            "the board is unaffected"}
         out["market_v1"] = numbers
         out["market_v1_detail"] = detail
     return out
@@ -889,8 +901,7 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                                                           if advanced is not None else "")),
                      contenders=contenders_block(
                          advanced, shadow, (*roster, *pool), market=market,
-                         market_rates=(season_rates(weeks, context.stats_through)
-                                       if market is not None else None)),
+                         market_rates=lambda: season_rates(weeks, context.stats_through)),
                      pwin_calibration=cal, league_matchups=tuple(league_matchups),
                      watch=watch(PreviousWatch()))
 
