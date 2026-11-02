@@ -84,12 +84,13 @@ class FakeApi:
     """The provider's two endpoints, charging what the real one charges:
     unique markets RETURNED x regions; the event list is free."""
 
-    def __init__(self, remaining=400, used=100, odds=None, fail=None):
+    def __init__(self, remaining=400, used=100, odds=None, fail=None, events=None):
         self.remaining, self.used = remaining, used
         self.calls: list[str] = []
         self.odds = odds or {"evtA": odds_payload("evtA", "Kansas City Chiefs", "Buffalo Bills"),
                              "evtB": odds_payload("evtB", "Miami Dolphins", "New York Jets")}
         self.fail = fail or {}
+        self.events = EVENTS if events is None else events
 
     def headers(self, last):
         return {"x-requests-remaining": str(self.remaining), "x-requests-used": str(self.used),
@@ -101,7 +102,7 @@ class FakeApi:
         q = urllib.parse.parse_qs(parts.query)
         assert q["apiKey"] == [KEY]
         if parts.path.endswith("/events"):
-            return EVENTS, self.headers(0)
+            return self.events, self.headers(0)
         event_id = parts.path.split("/")[-2]
         planned = self.fail.get(event_id)
         if isinstance(planned, list) and planned:      # fail these calls, then answer
@@ -371,6 +372,83 @@ def test_the_reserve_counts_the_months_later_core_snapshots():
     assert PP.core_reserve(games, first, datetime(2026, 11, 9, tzinfo=UTC), set()) == 2 * PP.CORE_COST
 
 
+# A month's last evening. Credits are spent when a snapshot is TAKEN, up to
+# 150 minutes before kickoff, so a Monday-night game at 01:15 UTC on the 1st
+# (2026's week 12 has one) is bought by the 23:41 run the evening before, on
+# the old month's quota. Counted by kickoff, that month reserved nothing for
+# it: the slack went on secondary markets and the game was refused, then
+# bought after the reset only if the provider's UNVERIFIED reset had come.
+RESET = datetime(2026, 12, 1, tzinfo=UTC)            # the assumed reset, the 1st
+
+
+def test_a_game_is_reserved_in_the_month_it_can_be_bought_in():
+    def game(gid, kickoff):
+        return PP.Game(gid, 2026, 12, "MIA", "NYJ", kickoff)
+    sunday = game("2026_12_BUF_KC", datetime(2026, 11, 29, 21, 25, tzinfo=UTC))
+    monday = game("2026_12_NYJ_MIA", RESET + timedelta(minutes=75))          # 01:15 UTC
+    last = game("2026_12_SF_SEA", RESET + timedelta(minutes=PP.DUE_MINUTES - 1))
+    edge = game("2026_13_DAL_NYG", RESET + timedelta(minutes=PP.DUE_MINUTES))  # opens AT the reset
+    games = [sunday, monday, last, edge]
+    assert [PP.bought_before(g, RESET) for g in games] == [True, True, True, False]
+    assert PP.core_reserve(games, sunday, RESET, set()) == 2 * PP.CORE_COST
+    assert PP.core_reserve(games, sunday, RESET, {"2026_12_NYJ_MIA"}) == PP.CORE_COST
+    before = sunday.kickoff - timedelta(hours=3)
+    assert PP.period_reserve(games, before, RESET, set()) == 3 * PP.CORE_COST
+    assert PP.period_reserve(games, monday.kickoff, RESET, set()) == PP.CORE_COST  # kicked off
+
+
+def month_end_schedule() -> pd.DataFrame:
+    rows = [("2026_12_BUF_KC", 12, "2026-11-29", "16:25", "BUF", "KC"),      # 21:25 UTC
+            ("2026_12_NYJ_MIA", 12, "2026-11-30", "20:15", "NYJ", "MIA"),    # 01:15 UTC Dec 1
+            ("2026_13_SF_SEA", 13, "2026-12-06", "13:00", "SF", "SEA")]      # December's own
+    return pd.DataFrame([{"game_id": g, "season": 2026, "game_type": "REG", "week": w,
+                          "gameday": d, "gametime": t, "away_team": a, "home_team": h}
+                         for g, w, d, t, a, h in rows])
+
+
+MONTH_END_EVENTS = [{"id": "evtS", "home_team": "Kansas City Chiefs", "away_team": "Buffalo Bills",
+                     "commence_time": "2026-11-29T21:25:00Z"},
+                    {"id": "evtM", "home_team": "Miami Dolphins", "away_team": "New York Jets",
+                     "commence_time": "2026-12-01T01:15:00Z"}]
+
+
+def full_payload(event: dict) -> dict:
+    """Every core and secondary market priced: a call costs what it asks."""
+    markets = [{"key": m, "outcomes": [{"name": "Yes", "description": "Pat Fixture",
+                                        "price": 150}] if m == "player_anytime_td"
+                else ou("Pat Fixture", -110, -110, 4.5)}
+               for m in P.CORE_MARKETS + P.SECONDARY_MARKETS]
+    return {**event, "bookmakers": [{"key": "book_alpha", "title": "Alpha", "markets": markets}]}
+
+
+def test_the_month_before_a_reset_keeps_the_credits_of_a_game_it_will_buy(tmp_path):
+    api = FakeApi(remaining=16, used=484, events=MONTH_END_EVENTS,
+                  odds={e["id"]: full_payload(e) for e in MONTH_END_EVENTS})
+    derived = tmp_path / "derived"
+    PP.Credits(remaining=16, used=484, at="2026-11-29T12:00:00+00:00").save(
+        derived / PP.LEDGER_NAME)
+
+    def at(now):
+        return PP.collect(key=KEY, season=2026, now=now, schedule=month_end_schedule(),
+                          schedule_source="test", raw_root=tmp_path / "raw",
+                          derived_root=derived, table=TABLE, fetch=api,
+                          sleep=lambda s: None, clock=lambda: now)
+
+    quiet = at(datetime(2026, 11, 29, 12, 41, tzinfo=UTC))           # nothing due yet
+    assert quiet.due == 0 and quiet.reserve == 2 * PP.CORE_COST     # both are November's
+    # 104 min before the Sunday game: 16 credits, 6 kept for the Monday game,
+    # so the slack (16 - 6 - 6 = 4) buys no secondary markets
+    sunday = at(datetime(2026, 11, 29, 19, 41, tzinfo=UTC))
+    assert (sunday.snapshots, sunday.with_secondary, sunday.reserve) == (1, 0, PP.CORE_COST)
+    assert api.remaining == 10
+    # 23:41 on the last evening, 94 min before 01:15 UTC: still November's quota
+    monday = at(datetime(2026, 11, 30, 23, 41, tzinfo=UTC))
+    assert (monday.due, monday.snapshots, dict(monday.refused)) == (1, 1, {})
+    assert api.remaining == 4
+    assert set(P.read_derived(derived, 2026, 12)["games"]) == {"2026_12_BUF_KC",
+                                                               "2026_12_NYJ_MIA"}
+
+
 # ------------------------------------------------------------------ collection
 
 def test_a_run_snapshots_each_due_game_once_and_derives_only_values(tmp_path):
@@ -528,6 +606,23 @@ def test_the_names_mode_keeps_the_months_core_reserve(tmp_path):
     assert rep.reserve == 4 * PP.CORE_COST
     assert rep.snapshots == 1
     assert rep.refused == {"would leave less than the month's core reserve": 2}
+
+
+def test_the_names_mode_reserves_a_game_the_cloud_buys_before_the_reset(tmp_path):
+    # Week 12's two games are both bought on November's quota (the Monday
+    # game kicks off at 01:15 UTC on Dec 1): 12 credits reserved, so 13
+    # credits ask one name list (1 credit) and refuse the second.
+    api = FakeApi(remaining=13, events=MONTH_END_EVENTS, odds={
+        e["id"]: td_payload(e["id"], e["home_team"], e["away_team"], ["Pat Fixture"])
+        for e in MONTH_END_EVENTS})
+    rep = PP.collect_names(key=KEY, season=2026, now=datetime(2026, 11, 27, 12, 0, tzinfo=UTC),
+                           schedule=month_end_schedule(), schedule_source="test",
+                           raw_root=tmp_path / "raw", derived_root=tmp_path / "derived",
+                           fetch=api, sleep=lambda s: None,
+                           clock=lambda: datetime(2026, 11, 27, 12, 0, tzinfo=UTC))
+    assert rep.week == 12 and rep.reserve == 2 * PP.CORE_COST
+    assert rep.snapshots == 1
+    assert rep.refused == {"would leave less than the month's core reserve": 1}
 
 
 def test_the_names_mode_refuses_to_run_inside_github_actions(tmp_path, monkeypatch, capsys):

@@ -23,8 +23,10 @@ design, the credit math and what the owner sets up.
   secondary markets only with slack.
 * Credit ledger. Every response's x-requests-remaining / -used / -last is
   recorded. A call that would leave fewer credits than the rest of the
-  month's core snapshots need (6 per game until the quota resets) is
-  refused. The reset day is UNVERIFIED (the provider does not publish it):
+  month's core snapshots need (6 per game that can be bought before the
+  quota resets: the credits go when the snapshot is taken, up to 150
+  minutes before kickoff, so a game that kicks off just after the reset
+  counts in the month before it) is refused. The reset day is UNVERIFIED (the provider does not publish it):
   the 1st of the month UTC until a reset is observed in the headers. With
   no reading of the current quota period (a lost ledger, a new month, an
   event list without the headers) one core call per run reads them, at
@@ -263,6 +265,18 @@ def due_games(games: Iterable[Game], now: datetime, snapped: set[str]) -> list[G
             if timedelta(0) < g.kickoff - now <= window and g.game_id not in snapped]
 
 
+def bought_before(game: Game, until: datetime) -> bool:
+    """Whether `game`'s snapshot can be paid for before `until` (a quota
+    reset). Credits are spent when the snapshot is TAKEN, as early as
+    DUE_MINUTES before kickoff, so a game that kicks off in the first
+    DUE_MINUTES after a reset (a Monday-night game at 01:15 UTC on the 1st,
+    bought by the 23:41 run the evening before) counts in the period before
+    it. When no run falls in that early part of its window, it is bought
+    after the reset instead and the earlier reserve held one core snapshot
+    too many: the safe side."""
+    return game.kickoff - timedelta(minutes=DUE_MINUTES) < until
+
+
 # ------------------------------------------------------------------ credits
 
 def _int(value: object) -> int | None:
@@ -351,10 +365,21 @@ class Credits:
 
 def core_reserve(games: Sequence[Game], after: Game, until: datetime,
                  snapped: set[str]) -> int:
-    """Credits the rest of the month's core snapshots need after `after`."""
+    """Credits the rest of the month's core snapshots need after `after`:
+    every later game without a snapshot that can be bought before the reset
+    `until` (`bought_before`: by when it is bought, not by its kickoff)."""
     later = [g for g in games if (g.kickoff, g.game_id) > (after.kickoff, after.game_id)
-             and g.kickoff < until and g.game_id not in snapped]
+             and bought_before(g, until) and g.game_id not in snapped]
     return CORE_COST * len(later)
+
+
+def period_reserve(games: Sequence[Game], now: datetime, until: datetime,
+                   snapped: set[str]) -> int:
+    """Credits every core snapshot still to come before the reset `until`
+    needs: the games not yet kicked off and not snapped that can be bought
+    before it (the reported reserve, and the names mode's)."""
+    return CORE_COST * len([g for g in games if g.kickoff > now and bought_before(g, until)
+                            and g.game_id not in snapped])
 
 
 UNKNOWN_CREDITS = "credits unknown (no provider headers this quota period)"
@@ -792,12 +817,8 @@ def collect(*, key: str, season: int, now: datetime, schedule, schedule_source: 
         report.rederived_weeks, changed = rederive(raw_root, derived_root, season, table, params,
                                                    errors=report.errors)
         report.derived_changed |= changed
-    if report.reserve is None and games:
-        upcoming = [g for g in games if g.kickoff > now]
-        if upcoming:
-            report.reserve = CORE_COST * len([g for g in upcoming
-                                              if g.kickoff < credits.next_reset(now)
-                                              and g.game_id not in snapped])
+    if report.reserve is None and any(g.kickoff > now for g in games):
+        report.reserve = period_reserve(games, now, credits.next_reset(now), snapped)
     return report
 
 
@@ -860,9 +881,7 @@ def collect_names(*, key: str, season: int, now: datetime, schedule, schedule_so
             report.unmatched_events += 1
             continue
         # every core snapshot the month still needs (the cloud takes them)
-        report.reserve = reserve = CORE_COST * len(
-            [g for g in games if now < g.kickoff < credits.next_reset(now)
-             and g.game_id not in snapped])
+        report.reserve = reserve = period_reserve(games, now, credits.next_reset(now), snapped)
         if credits.known(now):
             if credits.remaining - cost < reserve:
                 report.refused["would leave less than the month's core reserve"] += 1

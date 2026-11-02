@@ -46,25 +46,33 @@ snapshot costs at most 6 credits and a full snapshot at most 11. The free
 plan gives 500 credits a month.
 
 The months below are the ledger's: UTC, with the assumed reset on the 1st.
-A Monday-night or Thursday-night game at 01:15 UTC belongs to the next UTC
-day, so week 12's Monday game counts in December and week 17's Thursday
-game in January.
+A game's credits are spent when its snapshot is taken, which can be up to
+150 minutes before kickoff, so a game counts in the month in which its
+window opens, not the month of its kickoff. A Monday-night or
+Thursday-night game at 01:15 UTC on the 1st is bought by the 23:41 run the
+evening before. So week 12's Monday game counts in November, and week 17's
+Thursday game counts in December.
 
-| Period (2026 nflverse schedule, weeks ≤ 17, by UTC kickoff) | Games | Core credits (×6) | Slack of 500 | Secondary snapshots the slack buys (×5) |
+| Period (2026 nflverse schedule, weeks ≤ 17, by the UTC month the window opens) | Games | Core credits (×6) | Slack of 500 | Secondary snapshots the slack buys (×5) |
 |---|---|---|---|---|
-| Nov 6–30 UTC (week 9's Thursday game to week 12's Sunday) | 57 | 342 | 158 | 31 |
-| December (week 12's Monday game, weeks 13–16) | 62 | 372 | 128 | 25 |
-| January 1–5 (week 17) | 16 | 96 | 404 | all 16 |
+| Nov 5–30 UTC (week 9's Thursday game to week 12's Monday game) | 58 | 348 | 152 | 30 |
+| December (weeks 13–16 and week 17's Thursday game) | 62 | 372 | 128 | 25 |
+| January (week 17 after its Thursday game) | 15 | 90 | 410 | all 15 |
 | One week (weeks 9–17: 15, 14, 13, 16, 14, 15, 16, 16, 16 games) | 13–16 | 78–96 | — | — |
 
 The ledger (`data/research/cache/props/derived/credits.json`) records the
 provider's own `x-requests-remaining`, `x-requests-used` and
 `x-requests-last` headers after every call. Before each call:
 
-- **Reserve.** The rest of the month's core snapshots need 6 credits per
-  game until the quota resets. A call that would leave fewer credits than
-  that is refused and counted. In a shortfall this skips the earlier games
-  so the later ones stay funded.
+- **Reserve.** The rest of the month's core snapshots need 6 credits for
+  each game whose window opens before the quota resets
+  (`pull_props.bought_before`). A game that kicks off in the first 150
+  minutes after the reset counts in the month before it, because that is
+  when it is bought. If no run falls in that part of its window, it is
+  bought after the reset and the reserve was 6 credits too large, which is
+  the safe side. A call that would leave fewer credits than the reserve is
+  refused and counted. In a shortfall this skips the earlier games so the
+  later ones stay funded.
 - **Slack.** The five secondary markets are added only when the credits
   left after the core call and the reserve are at least 5. In practice the
   first games of each month get them.
