@@ -65,3 +65,23 @@ Record-only contender for two live weeks (ground rule 3), then a
 DECISIONS.md row. Nothing serves after the week-14 board.
 
 ## Result
+
+Run 2026-11-02T03:20:17+00:00 at `99c82dd` (one scored run; `runs/DEF-06.csv`).
+Pairwise (all defenses in a week) and MAE on the defense table:
+
+| fold | shipped | DEF-06 |
+|---|---|---|
+| 2019 | 60.23%, 5.248 | 60.34%, 5.242 |
+| 2020 | 60.30%, 4.638 | 60.51%, 4.637 |
+| 2021 | 60.28%, 4.801 | 60.31%, 4.804 |
+| 2022 | 59.26%, 4.335 | 59.21%, 4.331 |
+| 2023 | 60.72%, 4.835 | 60.37%, 4.843 |
+| 2024 | 64.66%, 4.461 | 64.64%, 4.459 |
+| 2025 | 62.01%, 4.588 | 61.91%, 4.586 |
+
+**Fails.** Better on both metrics in 2 of 7 folds (2019, 2020); 2021 is
+better on pairwise only, 2022, 2024 and 2025 on MAE only, and 2023 is worse
+on both. Mean change -0.02 points of pairwise, -0.0006 MAE. A missing
+lineman on the other side moves a defense's points too little, against the
+noise of a defense's week, for the count to order defenses. Not shipped,
+not a contender.
