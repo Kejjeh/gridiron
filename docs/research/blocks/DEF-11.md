@@ -66,3 +66,24 @@ Record-only contender for two live weeks (ground rule 3), then a
 DECISIONS.md row. Nothing serves after the week-14 board.
 
 ## Result
+
+Run 2026-11-02T03:20:42+00:00 at `f7a8b6a` (one scored run; `runs/DEF-11.csv`).
+Pairwise (all defenses in a week) and MAE on the defense table:
+
+| fold | shipped | DEF-11 |
+|---|---|---|
+| 2019 | 60.23%, 5.248 | 60.19%, 5.248 |
+| 2020 | 60.30%, 4.638 | 60.13%, 4.638 |
+| 2021 | 60.28%, 4.801 | 60.50%, 4.786 |
+| 2022 | 59.26%, 4.335 | 60.05%, 4.309 |
+| 2023 | 60.72%, 4.835 | 60.50%, 4.841 |
+| 2024 | 64.66%, 4.461 | 65.35%, 4.447 |
+| 2025 | 62.01%, 4.588 | 61.70%, 4.584 |
+
+**Fails.** Better on both metrics in 3 of 7 folds (2021, 2022, 2024); 2019,
+2020 and 2025 are better on MAE only (2019 and 2020 by under 0.001), and
+2023 is worse on both. Mean change +0.14 points of pairwise, -0.0074 MAE.
+The defense's own absences lower its error in six of seven folds and lift
+the order by 0.7-0.8 points in 2022 and 2024, but they order defenses worse
+in four folds, so by the pre-registered bar DEF-11 is not a contender and
+is not shipped.
