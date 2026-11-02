@@ -60,3 +60,16 @@ Run 2026-11-02T09:27:57+00:00 at `dbaa63e` (one scored run; `runs/RB-R2.csv`). S
 | 2025 | 66.91%, 4.122 | 67.09%, 4.104 |
 
 **Passes part 1** (the historical bar). Better on both metrics in all 7 folds; mean change +0.42 points of pairwise, -0.0357 MAE; pooled numbers not worse in any fold: True. The MAE gain holds in every fold (-0.016 to -0.058), but two folds win the ordering by a hair: 2019 by 2 of 11,726 pairs (+0.02 points) and 2022 by 3 of 14,913 (+0.02). Under `ROUND2.md` this is weak evidence on its own (a picked combination); part 2, the 2026 holdout, decides.
+
+**Part 2, the 2026 holdout: fails.** `holdout_2026.py` fit the shipped set
+and RB-R2 on all of 2019-2025 and scored both on 2026 weeks 4-7, RB rows,
+4,197 pairs: shipped 69.34%, 4.198; RB-R2 69.26%, 4.223. RB-R2 is worse on
+both metrics. Week 8 was left out before any 2026 number was seen: it is not
+complete (its Monday game is tonight, and the cached 2026 table was built
+during its Sunday-night game, so it holds 12 of the week's 14 games). Weeks
+4-7 are complete in the table (16, 15, 14 and 14 games). The record is in
+`holdout_2026.json`.
+
+So RB-R2 is not a contender, and nothing serves. Its seven-fold pass is
+what `ROUND2.md` warned about: a combination picked for looking good in
+round 1 can clear the historical bar and still not hold on new data.
