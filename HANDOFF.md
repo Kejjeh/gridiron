@@ -38,8 +38,15 @@ idea and result: `docs/research/blocks/RESULTS.md` (generated:
      and as the Actions secret `GRIDIRON_ODDS_API_KEY`, adds the secret
      `GRIDIRON_ODDS_ARCHIVE_KEY` and the variable `GRIDIRON_PROPS_ENABLED=true`,
      and this branch reaches `main` (a scheduled workflow runs only there).
-     Week 9 starts Thu 5 Nov (01:15 UTC Fri). After the first snapshot, seed
-     and review `data/reference/odds_player_names.csv`.
+     Week 9 starts Thu 5 Nov (01:15 UTC Fri). The owner's key works (checked
+     2026-11-02 on the free event list: 493 credits left after one name
+     call). It sits only in that session's gitignored `.env`; a later cloud
+     session has it only if the owner adds `GRIDIRON_ODDS_API_KEY` to the
+     environment's settings. Name table: 26 exact rows from week 8's Monday
+     game; one provider spelling (SEA WR, gsis `00-0037156`) awaits the
+     owner's manual row; team-defense entries stay unmatched. Week 9 seeds
+     once its weekly rosters are published: `pull_props.py names --week 9`
+     (1 credit a game), then `odds_names.py propose --week 9`, run locally.
   2. RB-13 and TE-10 live check: weeks 9 and 10 (`P7_LIVE.md`, pre-registered
      before week 9). Score it after week 10 is final; a serving decision is a
      DECISIONS row, compared against refitting the page's sd.
