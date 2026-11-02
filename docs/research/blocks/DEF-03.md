@@ -139,3 +139,11 @@ counts to the points allowed would be a new block with its own
 pre-registration. Not a contender. The run's JSON stores the fitted
 normal's scores but not its (a, b): a key clash in the harness's fold
 result, fixed after the runs (reporting only; the bar never read it).
+
+Added 2026-11-02 (review): scored by harness blob `76c30a13bf3b`
+(`harness_blob` in `results/DEF-03.json`). `distribution_backtest.py`
+changed after the run in `3ad83d1`, only to store the fitted normal's
+(a, b) under their own key (the fix named above), and in `39813d8`,
+which added the 2026 holdout mode behind a flag that is off by default.
+Every score and the bar are computed as before. DEF-03 failed history,
+so it has no 2026 holdout.
