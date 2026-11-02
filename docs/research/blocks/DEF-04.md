@@ -96,3 +96,24 @@ DECISIONS.md row. Nothing serves after the week-14 board. Every input is
 live in 2026.
 
 ## Result
+
+Run 2026-11-02T03:52:29+00:00 at `100d175` (one scored run; `runs/DEF-04.csv`).
+Pairwise (among all defenses in a week) and MAE on DEF rows:
+
+| fold | shipped | DEF-04 |
+|---|---|---|
+| 2019 | 60.23%, 5.248 | 60.42%, 5.247 |
+| 2020 | 60.30%, 4.638 | 60.11%, 4.646 |
+| 2021 | 60.28%, 4.801 | 60.20%, 4.803 |
+| 2022 | 59.26%, 4.335 | 59.59%, 4.337 |
+| 2023 | 60.72%, 4.835 | 60.92%, 4.825 |
+| 2024 | 64.66%, 4.461 | 64.64%, 4.473 |
+| 2025 | 62.01%, 4.588 | 62.06%, 4.596 |
+
+**Fails.** Better on both metrics in 2 of 7 folds (2019, 2023); mean change
++0.07 points of pairwise, +0.0028 MAE. (The defense folds have no pooled
+numbers; the JSON's `pooled_not_worse_every_fold: true` is vacuous.) The
+opposing starter's own sack rate and time to throw add nothing reliable to
+the per-game sack counts and the opponent's implied total already in the
+defense set: ordering is up in four folds and down in three, and error is
+up in five. Not shipped, not a contender.
