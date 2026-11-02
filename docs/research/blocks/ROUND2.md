@@ -30,6 +30,52 @@ Each round-2 block is the union of its parts' columns, built by the parts'
 own committed modules, unchanged (`scripts/research/blocks/_round2.py`). The
 runner adds the usual `__known` flags.
 
+## Correction 2026-11-02, before any round-2 score
+After this file was first committed (`6cd528a`) and before any round-2 block
+was scored, a bug hunt over the round-1 near misses found three bugs in
+shared helpers. Fixed in `fb26c4b`:
+
+- `_p2a_events_offense.roster_away`: from 2020 a released player whom no team
+  signed counted as available (the 2019 rosters keep his CUT row, later
+  seasons do not). Read by QB-06, QB-07, RB-06, TE-06, TE-07, WR-02, WR-03.
+- `_p2b_events_ramps_defense.hurt`: the COVID-19 list and suspensions counted
+  as injuries from 2020, against the pre-registrations. Read by RB-02,
+  WR-13, TE-12.
+- `_p5_schedule_weather.weather`: the observed reanalysis (a post-game
+  observation) stood in for the forecast at the five 2019 international
+  games. Read by QB-11, K-05, DEF-08, WR-11.
+
+Each of those 14 round-1 blocks was re-run once (`432deda`; each Result
+section says why). All 14 still fail. The selection rule above, unchanged,
+re-applied to the corrected results (folds better on both, mean Δpairwise in
+points, mean ΔMAE):
+
+| position | qualifying round-1 blocks, ranked | top two |
+|---|---|---|
+| QB | QB-11 (5/7, +0.13, -0.0248), QB-02 (4/7, +0.10, -0.0156) | QB-02 + QB-11, unchanged |
+| RB | RB-06 (4/7, +0.31, -0.0266), RB-02 (4/7, +0.11, -0.0103), RB-10 (3/7, +0.09, -0.0069) | RB-06 + RB-02, unchanged |
+| WR | WR-07 (5/7, +0.28, -0.0088), WR-11 (3/7, +0.100, -0.0047), WR-03 (3/7, +0.096, -0.0107) | **WR-07 + WR-11** (was WR-07 + WR-03) |
+| TE | TE-08 (3/7, +0.12, -0.0008) | none, unchanged |
+| K | K-05 (4/7, +0.86, -0.0073), K-06 (4/7, +0.14, -0.0003), K-02 (3/7, +0.09, -0.0028) | K-05 + K-06, unchanged |
+| DEF | DEF-10 (4/7, +0.17, -0.0130), DEF-11 (3/7, +0.14, -0.0074), DEF-08 (3/7, +0.11, -0.0015) | DEF-10 + DEF-11, unchanged |
+
+So WR-R2 is now WR-07 + WR-11. WR-11 and WR-03 are 0.004 points apart, close
+to a tie: which one is second says little, and the 2026 holdout (part 2 of
+the bar below) is the check on that. The parts the round-2 runs use (module
+blob unchanged; result blob after the re-runs, at `432deda`):
+
+| block | parts (round-1 module blob, result blob) |
+|---|---|
+| QB-R2 | QB-02 (`9328d0e477d0`, `a9edf25dbea4`) + QB-11 (`8bce0ad219f6`, `f6781aeacc4e`) |
+| RB-R2 | RB-06 (`44b814a87f7a`, `9d524eab26b3`) + RB-02 (`16f61772b497`, `47f4f19ddf58`) |
+| WR-R2 | WR-07 (`43f2c6df8833`, `906547a351da`) + WR-11 (`64e9a715610a`, `35614ef9ed65`) |
+| K-R2 | K-05 (`0c2a61da1f30`, `cc3ffe465a2f`) + K-06 (`1ee6f3dd3226`, `8e3ee3e3769a`) |
+| DEF-R2 | DEF-10 (`8a969a5381ce`, `ac46a95fa049`) + DEF-11 (`292174116e96`, `d1397c877231`) |
+
+Every round-2 block builds on the fixed helpers. Each one's doc carries a
+dated correction, and its coverage lines come from a coverage-only run on the
+fixed helpers (all five leak checks passed again).
+
 ## Bar
 Both parts must hold, per block:
 1. **Historical.** The runner's bar: better than the shipped set on that

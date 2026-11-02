@@ -5,6 +5,14 @@ before this was `--coverage-only` (coverage and the leak check, no score).
 The selection, the bar and the caveat are in `ROUND2.md`, which this block
 follows exactly.
 
+**Correction 2026-11-02, before any round-2 score** (`ROUND2.md`): the
+near-miss bug hunt found three bugs in shared helpers after this file was
+first committed. They were fixed (`fb26c4b`), every round-1 block that reads
+a fixed helper was re-run once (`432deda`), and the selection rule was
+re-applied to the corrected results. The parts are unchanged, and neither reads a fixed
+helper (DEF-11 uses `availability`, which the fixes do not touch).
+Re-measured, the coverage below is unchanged.
+
 ## Idea
 The union of two round-1 near misses for DEF: DEF-10 and DEF-11, each built by its
 own committed module, unchanged (`ROUND2.md` lists their blobs). Both
