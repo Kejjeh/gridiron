@@ -1,0 +1,204 @@
+{
+ "block": "DEF-06",
+ "title": "Opponent's offensive-line regulars out, and questionable, this week",
+ "columns": {
+  "DEF": [
+   "opp_ol_out",
+   "opp_ol_q"
+  ]
+ },
+ "model_columns": {
+  "DEF": [
+   "opp_ol_out",
+   "opp_ol_q"
+  ]
+ },
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "coverage": {
+  "DEF": {
+   "opp_ol_out": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "opp_ol_q": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   }
+  }
+ },
+ "folds": {
+  "2019": {
+   "DEF": {
+    "pairs": 5222,
+    "rows": 397,
+    "sleeper": {
+     "pairwise": 0.592493,
+     "mae": 5.3309
+    },
+    "shipped": {
+     "pairwise": 0.60226,
+     "mae": 5.2483
+    },
+    "block": {
+     "pairwise": 0.603409,
+     "mae": 5.2417
+    }
+   }
+  },
+  "2020": {
+   "DEF": {
+    "pairs": 5683,
+    "rows": 416,
+    "sleeper": {
+     "pairwise": 0.597572,
+     "mae": 4.7362
+    },
+    "shipped": {
+     "pairwise": 0.603027,
+     "mae": 4.6382
+    },
+    "block": {
+     "pairwise": 0.605138,
+     "mae": 4.6368
+    }
+   }
+  },
+  "2021": {
+   "DEF": {
+    "pairs": 6178,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.601651,
+     "mae": 4.8669
+    },
+    "shipped": {
+     "pairwise": 0.602784,
+     "mae": 4.8013
+    },
+    "block": {
+     "pairwise": 0.603108,
+     "mae": 4.8037
+    }
+   }
+  },
+  "2022": {
+   "DEF": {
+    "pairs": 6083,
+    "rows": 446,
+    "sleeper": {
+     "pairwise": 0.571922,
+     "mae": 4.3794
+    },
+    "shipped": {
+     "pairwise": 0.592635,
+     "mae": 4.3345
+    },
+    "block": {
+     "pairwise": 0.592142,
+     "mae": 4.331
+    }
+   }
+  },
+  "2023": {
+   "DEF": {
+    "pairs": 6179,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.589901,
+     "mae": 4.7938
+    },
+    "shipped": {
+     "pairwise": 0.607218,
+     "mae": 4.8348
+    },
+    "block": {
+     "pairwise": 0.603658,
+     "mae": 4.8425
+    }
+   }
+  },
+  "2024": {
+   "DEF": {
+    "pairs": 6168,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.642023,
+     "mae": 4.4408
+    },
+    "shipped": {
+     "pairwise": 0.646563,
+     "mae": 4.4608
+    },
+    "block": {
+     "pairwise": 0.646401,
+     "mae": 4.4593
+    }
+   }
+  },
+  "2025": {
+   "DEF": {
+    "pairs": 6138,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.610297,
+     "mae": 4.5081
+    },
+    "shipped": {
+     "pairwise": 0.620072,
+     "mae": 4.5878
+    },
+    "block": {
+     "pairwise": 0.619094,
+     "mae": 4.5863
+    }
+   }
+  }
+ },
+ "verdict": {
+  "positions": {
+   "DEF": {
+    "folds_better_on_both": 2,
+    "folds": 7,
+    "passes": false,
+    "mean_pairwise_delta": -0.00023,
+    "mean_mae_delta": -0.0006
+   }
+  },
+  "pooled_not_worse_every_fold": true
+ },
+ "passed": [],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "97ce7cb59f96",
+ "module_blob": "6373b480beab",
+ "helpers_blob": "a0e270efc56d",
+ "head": "99c82dd5731d",
+ "run_at": "2026-11-02T03:20:17+00:00"
+}
