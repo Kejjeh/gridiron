@@ -176,6 +176,17 @@ jobs:
       - name: Restore prior decision records and last-good inputs
         run: python scripts/cloud/carryover.py restore --store "$CARRY_DIR"
 
+      # Read-only: the prop collector's DERIVED values (props-collect.yml;
+      # expected stat lines by gsis id and counts, never a line, price or
+      # book), for the record-only market_v1 contender. Never saved here.
+      - name: Restore the prop market's derived consensus (read-only)
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: data/research/cache/props/derived
+          key: gridiron-props-derived-${{ github.run_id }}
+          restore-keys: |
+            gridiron-props-derived-
+
       # One list, pinned where it matters (pandas < 4), the same one
       # pyproject.toml mirrors: the build runs what the tests ran against.
       - name: Install the approved dependencies

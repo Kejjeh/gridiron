@@ -177,3 +177,147 @@ def test_a_refused_week_stops_the_run_rather_than_falling_back():
     a week nobody asked for, off an input that was already malformed."""
     with pytest.raises(SystemExit):
         CLI.week_from_env("3; rm -rf /")
+
+
+# ------------------------------------------------- the prop collector workflow
+#
+# props-collect.yml handles an API credential and data whose terms forbid
+# redistribution, in a repository whose logs, artifacts and caches are
+# public. Each property below is part of what keeps it inside those terms.
+
+PROPS = ROOT / ".github" / "workflows" / "props-collect.yml"
+DERIVED_PATH = "data/research/cache/props/derived"
+USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)")
+
+
+def _props() -> str:
+    return PROPS.read_text("utf-8")
+
+
+def _ancestors(lines: list[str], i: int) -> list[str]:
+    """The stripped lines that enclose line i, innermost first (YAML by
+    indentation: each is the nearest earlier line indented less)."""
+    out, depth = [], len(lines[i]) - len(lines[i].lstrip())
+    for j in range(i - 1, -1, -1):
+        line = lines[j]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        ind = len(line) - len(line.lstrip())
+        if ind < depth:
+            out.append(line.strip())
+            depth = ind
+    return out
+
+
+def _steps(text: str) -> list[str]:
+    """Each step of a workflow as its block of text."""
+    return [("- name:" + b) for b in text.split("- name:")[1:]]
+
+
+def test_the_collector_runs_only_on_a_schedule_or_by_hand_and_only_when_enabled():
+    text = _props()
+    on = text.split("\non:", 1)[1].split("\npermissions:", 1)[0]
+    assert "workflow_dispatch:" in on and "schedule:" in on
+    for trigger in ("pull_request", "pull_request_target", "push:", "workflow_run"):
+        assert trigger not in on, f"props-collect.yml must not run on {trigger}"
+    assert "if: vars.GRIDIRON_PROPS_ENABLED == 'true'" in text
+    assert "permissions:\n  contents: read" in text
+    cron = re.findall(r"cron: '([^']+)'", text)
+    assert len(cron) == 1
+    minute, *rest = cron[0].split()
+    assert rest == ["*", "*", "*", "*"], "hourly"
+    assert minute.isdigit() and int(minute) % 15 != 0, "off the quarter hours"
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda p: p.name)
+def test_every_action_is_pinned_to_a_full_commit_sha(workflow):
+    for line in workflow.read_text("utf-8").splitlines():
+        m = USES.match(line)
+        if m:
+            assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", m.group(1)), \
+                f"{workflow.name}: {m.group(1)} is not pinned to a commit SHA"
+
+
+def test_secrets_reach_only_step_level_env_and_the_key_one_step():
+    lines = _props().splitlines()
+    hits = [i for i, line in enumerate(lines) if "secrets." in line and "${{" in line]
+    assert hits, "the parser found no secret at all"
+    for i in hits:
+        chain = _ancestors(lines, i)
+        assert chain[0] == "env:", f"line {i + 1}: a secret outside an env: block"
+        assert chain[1].startswith("- "), f"line {i + 1}: a secret in a job- or workflow-level env"
+    key_steps = [s for s in _steps(_props()) if "secrets.GRIDIRON_ODDS_API_KEY" in s]
+    assert len(key_steps) == 1, "exactly one step holds the API key"
+    assert "run: python scripts/ingest/pull_props.py\n" in key_steps[0]
+    for s in _steps(_props()):
+        if "secrets." in s:
+            assert "uses:" not in s, "a secret handed to an action's inputs"
+
+
+def test_raw_odds_never_leave_the_runner_unencrypted():
+    text = _props()
+    actions = [m.group(1) for m in map(USES.match, text.splitlines()) if m]
+    assert actions, "the parser found no action at all"
+    assert not [a for a in actions if "upload" in a], \
+        "no artifact of any kind: raw odds may not be redistributed"
+    enc = [line for line in text.splitlines() if "openssl enc" in line]
+    assert len(enc) == 2, "one decrypt and one encrypt"
+    for line in enc:
+        for flag in ("-aes-256-cbc", "-pbkdf2", "-iter 200000",
+                     "-pass env:GRIDIRON_ODDS_ARCHIVE_KEY"):
+            assert flag in line, f"openssl without {flag}"
+        assert "-pass pass:" not in line and " -k " not in line and " -K " not in line
+    # every cache path is the encrypted vault or the derived folder, never raw/
+    paths = re.findall(r"^\s*path:\s*(\S+)\s*$", text, flags=re.M)
+    assert set(paths) == {".props-vault", DERIVED_PATH}
+    assert "gridiron-props-vault-" in text and "gridiron-props-derived-" in text
+    # the plaintext goes, whatever happened above
+    rm = next(s for s in _steps(text) if "rm -rf" in s)
+    assert "if: always()" in rm and '"$PROPS_DIR/raw"' in rm
+
+
+def test_the_summary_says_when_nothing_raw_is_kept():
+    summary = next(b for _n, b in _run_blocks(_props()) if "GITHUB_STEP_SUMMARY" in b
+                   and "Prop market collector" in b)
+    assert "nothing raw is kept between runs" in summary
+    assert "VAULT_KEY_PRESENT: ${{ steps.vaultkey.outputs.present }}" in _props()
+
+
+def test_the_dashboard_restores_the_derived_cache_once_and_never_saves_it():
+    text = (ROOT / ".github" / "workflows" / "dashboard-artifact.yml").read_text("utf-8")
+    steps = [s for s in _steps(text) if DERIVED_PATH in s]
+    assert len(steps) == 1, "exactly one step touches the derived prop cache"
+    step = steps[0]
+    assert "actions/cache/restore@" in step and "actions/cache/save" not in step
+    assert "restore-keys: |\n            gridiron-props-derived-" in step
+    # the same path string as the collector's save: a cache's version is
+    # computed from its paths, so any other spelling would never restore
+    save = next(s for s in _steps(_props()) if "actions/cache/save@" in s and DERIVED_PATH in s)
+    assert f"path: {DERIVED_PATH}\n" in save and f"path: {DERIVED_PATH}\n" in step
+    assert "secrets." not in step
+
+
+def test_every_openssl_pipeline_runs_under_pipefail():
+    """Without pipefail a pipeline's status is its LAST command's: a tar
+    that fails half-way would leave openssl encrypting a truncated stream
+    that then replaces the good archive, and a failed decrypt could hide
+    behind a tar that exited cleanly."""
+    steps = [s for s in _steps(_props()) if "openssl enc" in s]
+    assert len(steps) == 2
+    for s in steps:
+        run = s.split("run: |", 1)[1]
+        assert run.lstrip().startswith("set -euo pipefail"), s.splitlines()[0]
+
+
+def test_the_summary_reports_every_step_that_can_fail_quietly():
+    """A continue-on-error step fails in silence unless the summary names
+    its outcome (the dashboard's rule, extended to the collector), and the
+    archive's save is reported beside its encryption."""
+    text = _props()
+    quiet = [s for s in _steps(text) if "continue-on-error: true" in s]
+    assert quiet, "the parser found no continue-on-error step"
+    for s in quiet + [next(s for s in _steps(text) if "actions/cache/save@" in s
+                           and ".props-vault" in s)]:
+        m = re.search(r"^\s*id:\s*(\S+)\s*$", s, flags=re.M)
+        assert m, f"{s.splitlines()[0]}: a step the summary must quote needs an id"
+        assert f"${{{{ steps.{m.group(1)}.outcome }}}}" in text, m.group(1)
