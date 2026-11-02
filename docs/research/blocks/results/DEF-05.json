@@ -1,0 +1,226 @@
+{
+ "block": "DEF-05",
+ "title": "Pass rush generated vs the opponent's pressure allowed",
+ "columns": {
+  "DEF": [
+   "press_gen_prior",
+   "sackhit_gen_std",
+   "opp_press_allowed_prior",
+   "opp_sackhit_allowed_std"
+  ]
+ },
+ "model_columns": {
+  "DEF": [
+   "press_gen_prior",
+   "sackhit_gen_std",
+   "opp_press_allowed_prior",
+   "opp_sackhit_allowed_std"
+  ]
+ },
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "coverage": {
+  "DEF": {
+   "press_gen_prior": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "sackhit_gen_std": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "opp_press_allowed_prior": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "opp_sackhit_allowed_std": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   }
+  }
+ },
+ "folds": {
+  "2019": {
+   "DEF": {
+    "pairs": 5222,
+    "rows": 397,
+    "sleeper": {
+     "pairwise": 0.592493,
+     "mae": 5.3309
+    },
+    "shipped": {
+     "pairwise": 0.60226,
+     "mae": 5.2483
+    },
+    "block": {
+     "pairwise": 0.59977,
+     "mae": 5.2464
+    }
+   }
+  },
+  "2020": {
+   "DEF": {
+    "pairs": 5683,
+    "rows": 416,
+    "sleeper": {
+     "pairwise": 0.597572,
+     "mae": 4.7362
+    },
+    "shipped": {
+     "pairwise": 0.603027,
+     "mae": 4.6382
+    },
+    "block": {
+     "pairwise": 0.60813,
+     "mae": 4.643
+    }
+   }
+  },
+  "2021": {
+   "DEF": {
+    "pairs": 6178,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.601651,
+     "mae": 4.8669
+    },
+    "shipped": {
+     "pairwise": 0.602784,
+     "mae": 4.8013
+    },
+    "block": {
+     "pairwise": 0.600518,
+     "mae": 4.841
+    }
+   }
+  },
+  "2022": {
+   "DEF": {
+    "pairs": 6083,
+    "rows": 446,
+    "sleeper": {
+     "pairwise": 0.571922,
+     "mae": 4.3794
+    },
+    "shipped": {
+     "pairwise": 0.592635,
+     "mae": 4.3345
+    },
+    "block": {
+     "pairwise": 0.596909,
+     "mae": 4.3193
+    }
+   }
+  },
+  "2023": {
+   "DEF": {
+    "pairs": 6179,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.589901,
+     "mae": 4.7938
+    },
+    "shipped": {
+     "pairwise": 0.607218,
+     "mae": 4.8348
+    },
+    "block": {
+     "pairwise": 0.604629,
+     "mae": 4.7918
+    }
+   }
+  },
+  "2024": {
+   "DEF": {
+    "pairs": 6168,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.642023,
+     "mae": 4.4408
+    },
+    "shipped": {
+     "pairwise": 0.646563,
+     "mae": 4.4608
+    },
+    "block": {
+     "pairwise": 0.654507,
+     "mae": 4.4384
+    }
+   }
+  },
+  "2025": {
+   "DEF": {
+    "pairs": 6138,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.610297,
+     "mae": 4.5081
+    },
+    "shipped": {
+     "pairwise": 0.620072,
+     "mae": 4.5878
+    },
+    "block": {
+     "pairwise": 0.616325,
+     "mae": 4.5923
+    }
+   }
+  }
+ },
+ "verdict": {
+  "positions": {
+   "DEF": {
+    "folds_better_on_both": 2,
+    "folds": 7,
+    "passes": false,
+    "mean_pairwise_delta": 0.00089,
+    "mean_mae_delta": -0.0048
+   }
+  },
+  "pooled_not_worse_every_fold": true
+ },
+ "passed": [],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "ca0fb7048ff5",
+ "module_blob": "640f10089c59",
+ "helpers_blob": "a283395c400e",
+ "head": "eeaf832b983e",
+ "run_at": "2026-11-02T03:53:01+00:00"
+}
