@@ -1,0 +1,171 @@
+{
+ "block": "DEF-07",
+ "title": "Opponent's quarterback: interception-worthy throws over the league and against his interceptions (FTN, shrunk); the opponent's fumbles and fumbles lost over expected",
+ "columns": {
+  "DEF": [
+   "oqb_intworthy_oe",
+   "oqb_worthy_minus_int",
+   "opp_fumbles_pg",
+   "opp_fumbles_lost_oe_pg"
+  ]
+ },
+ "model_columns": {
+  "DEF": [
+   "oqb_intworthy_oe",
+   "oqb_intworthy_oe__known",
+   "oqb_worthy_minus_int",
+   "oqb_worthy_minus_int__known",
+   "opp_fumbles_pg",
+   "opp_fumbles_lost_oe_pg"
+  ]
+ },
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "coverage": {
+  "DEF": {
+   "oqb_intworthy_oe": {
+    "2019": 0.0,
+    "2020": 0.0,
+    "2021": 0.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "oqb_worthy_minus_int": {
+    "2019": 0.0,
+    "2020": 0.0,
+    "2021": 0.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "opp_fumbles_pg": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "opp_fumbles_lost_oe_pg": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   }
+  }
+ },
+ "folds": {
+  "2022": {
+   "DEF": {
+    "pairs": 6083,
+    "rows": 446,
+    "sleeper": {
+     "pairwise": 0.571922,
+     "mae": 4.3794
+    },
+    "shipped": {
+     "pairwise": 0.592635,
+     "mae": 4.3345
+    },
+    "block": {
+     "pairwise": 0.590169,
+     "mae": 4.3173
+    }
+   }
+  },
+  "2023": {
+   "DEF": {
+    "pairs": 6179,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.589901,
+     "mae": 4.7938
+    },
+    "shipped": {
+     "pairwise": 0.607218,
+     "mae": 4.8348
+    },
+    "block": {
+     "pairwise": 0.60479,
+     "mae": 4.8042
+    }
+   }
+  },
+  "2024": {
+   "DEF": {
+    "pairs": 6168,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.642023,
+     "mae": 4.4408
+    },
+    "shipped": {
+     "pairwise": 0.646563,
+     "mae": 4.4608
+    },
+    "block": {
+     "pairwise": 0.644617,
+     "mae": 4.4338
+    }
+   }
+  },
+  "2025": {
+   "DEF": {
+    "pairs": 6138,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.610297,
+     "mae": 4.5081
+    },
+    "shipped": {
+     "pairwise": 0.620072,
+     "mae": 4.5878
+    },
+    "block": {
+     "pairwise": 0.617302,
+     "mae": 4.577
+    }
+   }
+  }
+ },
+ "verdict": {
+  "positions": {
+   "DEF": {
+    "folds_better_on_both": 0,
+    "folds": 4,
+    "passes": false,
+    "mean_pairwise_delta": -0.002402,
+    "mean_mae_delta": -0.0214
+   }
+  },
+  "pooled_not_worse_every_fold": true
+ },
+ "passed": [],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "c2f73460084a",
+ "module_blob": "09e2da622505",
+ "helpers_blob": "bddbdc05d170",
+ "head": "f36724162f2e",
+ "run_at": "2026-11-02T04:22:17+00:00"
+}
