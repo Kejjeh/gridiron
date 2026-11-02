@@ -4,6 +4,16 @@ Current state and next step only. The running log through the Game Day,
 Radar, Action Desk and publication releases moved to
 `docs/memory/handoff_history.md` on 2026-10-01 (provenance, not current).
 
+## Model roadmap planned (2026-11-02)
+
+- `docs/research/MODEL_ROADMAP.md`: 78 position ideas plus four workstreams
+  (prop market, play-caller table, injury and roster events,
+  distributions), on free sources only, phased to the week-14 serving
+  freeze.
+- **Next:** phase 0 (data inventory, block runner, odds free-tier trial,
+  prop collector live before week 9's Sunday games). That waits on owner
+  decisions 1–4 in the roadmap.
+
 ## Free agents the radar cannot rank are named (2026-10-21)
 
 Week 7's miss: a 2025 RB8 with no 2026 game (exempt list) was dropped by
