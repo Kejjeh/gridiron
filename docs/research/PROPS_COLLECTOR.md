@@ -409,11 +409,19 @@ every failure below stops as little as it can and says so in the step
 summary (by type and count, never by name):
 
 - **The archive will not decrypt** (for example, the archive key was
-  changed). The job fails at the decrypt step before it spends a credit.
-  It keeps failing, and it never overwrites the archive it could not read.
-  To recover, put the old key back. Otherwise delete the
-  `gridiron-props-vault-` caches (Actions → Caches) and accept the loss of
-  the raw archive. The derived values are kept either way.
+  re-created, or the cached file is damaged). Collecting goes on, because
+  a snapshot missed now can never be bought back. The run works as with no
+  archive key: the decrypt step removes anything it half-extracted, the
+  run collects and saves the derived values, and nothing raw from it is
+  kept. It never overwrites or reads the archive it could not decrypt
+  (the encrypt and rank steps need the decrypt step's outcome to be
+  `success`). The summary says **did not decrypt**, and the run then fails
+  at its last step. Every run fails there until the archive is fixed, so
+  the problem stays in sight. To recover, put the old key back.
+  Otherwise delete the `gridiron-props-vault-` caches (Actions → Caches)
+  and accept the loss of the raw archive. The derived values are kept
+  either way. Snapshots taken while the archive was unreadable keep their
+  derived values only.
 - **The name table is unreadable** (for example, a typo in a hand edit on
   `main`). The run still collects, every name abstains, and nothing
   archived is re-derived until the table reads again, because an empty

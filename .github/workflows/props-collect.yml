@@ -114,23 +114,34 @@ jobs:
 
       # The key reaches openssl as the NAME of an environment variable
       # (-pass env:...), never as an argument a process listing could show.
-      # A file that does not decrypt fails the job here, before any credit
-      # is spent; nothing overwrites the archive it could not read
-      # (docs/research/PROPS_COLLECTOR.md says how to recover). pipefail: a
-      # failing openssl must fail the step even when tar exits cleanly.
+      # pipefail: a failing openssl must fail the pipeline even when tar
+      # exits cleanly. A file that does not decrypt (a re-created key, a
+      # damaged blob) must not stop collecting, because a snapshot missed
+      # now can never be bought back. So the step removes whatever it
+      # half-extracted and fails with state=unreadable, and
+      # continue-on-error lets the run collect and save the derived values
+      # exactly as with no key. The step's OUTCOME stays 'failure' (only its
+      # conclusion turns 'success'), so the encrypt and rank steps, gated on
+      # outcome == 'success', never replace or read the archive it could not
+      # read. The last step then fails the run, so the problem stays in
+      # sight (docs/research/PROPS_COLLECTOR.md says how to recover).
       - name: Decrypt the raw archive
         id: decrypt
         if: steps.vaultkey.outputs.present == 'true'
+        continue-on-error: true
         env:
           GRIDIRON_ODDS_ARCHIVE_KEY: ${{ secrets.GRIDIRON_ODDS_ARCHIVE_KEY }}
         run: |
           set -euo pipefail
           mkdir -p "$PROPS_DIR"
-          if [ -f "$VAULT_DIR/raw.tar.gz.enc" ]; then
-            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:GRIDIRON_ODDS_ARCHIVE_KEY -in "$VAULT_DIR/raw.tar.gz.enc" | tar -xzf - -C "$PROPS_DIR" --no-same-owner
+          if [ ! -f "$VAULT_DIR/raw.tar.gz.enc" ]; then
+            echo "state=empty" >> "$GITHUB_OUTPUT"
+          elif openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:GRIDIRON_ODDS_ARCHIVE_KEY -in "$VAULT_DIR/raw.tar.gz.enc" | tar -xzf - -C "$PROPS_DIR" --no-same-owner; then
             echo "state=restored" >> "$GITHUB_OUTPUT"
           else
-            echo "state=empty" >> "$GITHUB_OUTPUT"
+            rm -rf "$PROPS_DIR/raw"
+            echo "state=unreadable" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
 
       - name: Install the approved dependencies
@@ -194,6 +205,7 @@ jobs:
         env:
           COLLECT_OUTCOME: ${{ steps.collect.outcome }}
           VAULT_KEY_PRESENT: ${{ steps.vaultkey.outputs.present }}
+          DECRYPT_OUTCOME: ${{ steps.decrypt.outcome }}
           DECRYPT_STATE: ${{ steps.decrypt.outputs.state }}
           ENCRYPT_OUTCOME: ${{ steps.encrypt.outcome }}
           SAVE_VAULT_OUTCOME: ${{ steps.savevault.outcome }}
@@ -202,7 +214,9 @@ jobs:
           {
             echo '### Prop market collector'
             echo "- collect step: **${COLLECT_OUTCOME}**"
-            if [ "${VAULT_KEY_PRESENT}" = "true" ]; then
+            if [ "${VAULT_KEY_PRESENT}" = "true" ] && [ "${DECRYPT_OUTCOME}" = "failure" ]; then
+              echo '- raw archive: **did not decrypt** (a changed GRIDIRON_ODDS_ARCHIVE_KEY or a damaged file), so it was left in the cache as it was and nothing raw from this run is kept. This run still collected and saved the derived values, as with no key. It fails at its last step, and so will every run until the archive is fixed (docs/research/PROPS_COLLECTOR.md, When something breaks)'
+            elif [ "${VAULT_KEY_PRESENT}" = "true" ]; then
               echo "- raw archive: encrypted in the Actions cache (restored: ${DECRYPT_STATE:-not attempted}; re-encrypted this run: ${ENCRYPT_OUTCOME}; saved: ${SAVE_VAULT_OUTCOME})"
             else
               echo '- raw archive: **no GRIDIRON_ODDS_ARCHIVE_KEY secret, so nothing raw is kept between runs**; only the derived values are'
@@ -214,3 +228,13 @@ jobs:
             echo ''
           } >> "$GITHUB_STEP_SUMMARY"
           python scripts/ingest/pull_props.py summary >> "$GITHUB_STEP_SUMMARY"
+
+      # Last, after everything above has run and the summary is written.
+      # Collecting went on without the archive. This failure is what keeps
+      # it in sight: every run fails here until the old key is back or the
+      # vault caches are deleted.
+      - name: Fail the run if the raw archive did not decrypt
+        if: always() && steps.decrypt.outcome == 'failure'
+        run: |
+          echo "::error title=Prop archive::The encrypted raw archive did not decrypt. This run still collected and saved the derived values and left the archive as it was. See docs/research/PROPS_COLLECTOR.md, When something breaks."
+          exit 1

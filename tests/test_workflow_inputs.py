@@ -21,7 +21,12 @@ not a declared dependency of this project.
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
+import random
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -271,9 +276,10 @@ def test_raw_odds_never_leave_the_runner_unencrypted():
     paths = re.findall(r"^\s*path:\s*(\S+)\s*$", text, flags=re.M)
     assert set(paths) == {".props-vault", DERIVED_PATH}
     assert "gridiron-props-vault-" in text and "gridiron-props-derived-" in text
-    # the plaintext goes, whatever happened above
-    rm = next(s for s in _steps(text) if "rm -rf" in s)
-    assert "if: always()" in rm and '"$PROPS_DIR/raw"' in rm
+    # the plaintext goes, whatever happened above (the decrypt step's own
+    # cleanup of a half-extracted archive is not this: it runs only there)
+    always = [s for s in _steps(text) if "\n        if: always()\n" in s and "rm -rf" in s]
+    assert any('"$PROPS_DIR/raw"' in s for s in always)
 
 
 def test_the_summary_says_when_nothing_raw_is_kept():
@@ -321,3 +327,105 @@ def test_the_summary_reports_every_step_that_can_fail_quietly():
         m = re.search(r"^\s*id:\s*(\S+)\s*$", s, flags=re.M)
         assert m, f"{s.splitlines()[0]}: a step the summary must quote needs an id"
         assert f"${{{{ steps.{m.group(1)}.outcome }}}}" in text, m.group(1)
+
+
+def _step(text: str, step_id: str) -> str:
+    """The one step whose `id:` is `step_id`."""
+    found = [s for s in _steps(text)
+             if re.search(rf"^\s*id:\s*{re.escape(step_id)}\s*$", s, flags=re.M)]
+    assert len(found) == 1, f"one step with id {step_id}"
+    return found[0]
+
+
+def test_an_archive_that_will_not_decrypt_stops_no_collecting_and_is_never_replaced():
+    """A snapshot missed while the archive is unreadable can never be bought
+    back (the free tier has no history). So a decrypt failure must not stop
+    the run. It must only keep the archive it could not read from being read
+    or replaced, and it must stay in sight. Under continue-on-error a failed
+    step's CONCLUSION is 'success' and only its OUTCOME stays 'failure', so
+    every gate on the archive must read the outcome."""
+    text = _props()
+    steps = _steps(text)
+    decrypt, collect = _step(text, "decrypt"), _step(text, "collect")
+    install = next(s for s in steps if "pip install" in s)
+    assert "continue-on-error: true" in decrypt
+    assert steps.index(decrypt) < steps.index(install) < steps.index(collect)
+    for s in (install, collect):
+        assert "steps.decrypt" not in s and "\n        if:" not in s, s.splitlines()[0]
+    for sid in ("encrypt", "rank"):
+        assert "steps.decrypt.outcome == 'success'" in _step(text, sid), sid
+    assert "steps.encrypt.outcome == 'success'" in _step(text, "savevault")
+    assert "steps.decrypt.conclusion" not in text
+    # the summary names the failure, and the run still fails, last
+    summary = next(b for _n, b in _run_blocks(text) if "Prop market collector" in b)
+    assert '"${DECRYPT_OUTCOME}" = "failure"' in summary and "did not decrypt" in summary
+    last = steps[-1]
+    assert "if: always() && steps.decrypt.outcome == 'failure'" in last
+    assert re.search(r"^\s*exit 1\s*$", last, flags=re.M)
+    assert "continue-on-error" not in last
+
+
+def _script(step: str) -> str:
+    blocks = _run_blocks(step)
+    assert len(blocks) == 1, step.splitlines()[0]
+    return blocks[0][1]
+
+
+@pytest.mark.skipif(not all(shutil.which(t) for t in ("bash", "openssl", "tar")),
+                    reason="needs bash, openssl and tar")
+def test_the_decrypt_step_restores_refuses_and_never_leaves_a_half_archive(tmp_path):
+    """The workflow's own encrypt and decrypt scripts, run with a fictional
+    key on fictional files. A good archive round-trips. A wrong key or a
+    damaged file fails the step with state=unreadable, leaves no plaintext
+    behind, and leaves the archive byte for byte as it was. A damaged file
+    does half-extract before tar stops, so the cleanup is what removes it
+    (shown by running the step without that line)."""
+    text = _props()
+    dirs = dict(re.findall(r"^\s+(PROPS_DIR|VAULT_DIR):\s*(\S+)\s*$", text, flags=re.M))
+    assert set(dirs) == {"PROPS_DIR", "VAULT_DIR"}
+    decrypt_sh, encrypt_sh = _script(_step(text, "decrypt")), _script(_step(text, "encrypt"))
+    cleanup = 'rm -rf "$PROPS_DIR/raw"'
+    assert cleanup in decrypt_sh
+    props, vault = tmp_path / dirs["PROPS_DIR"], tmp_path / dirs["VAULT_DIR"] / "raw.tar.gz.enc"
+    week = props / "raw" / "season2026" / "week09"
+    week.mkdir(parents=True)
+    rng = random.Random(7)
+    for i in range(40):      # incompressible padding: a cut file still holds whole members
+        (week / f"2026_09_G{i:02d}__20261108T163000Z.json").write_text(
+            json.dumps({"pad": rng.randbytes(2048).hex()}), encoding="utf-8")
+
+    def files():
+        return sorted(p.relative_to(props) for p in props.rglob("*") if p.is_file())
+
+    def step(script, key):
+        out = tmp_path / "github_output"
+        out.write_text("", encoding="utf-8")
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
+               "GITHUB_OUTPUT": str(out), "GRIDIRON_ODDS_ARCHIVE_KEY": key, **dirs}
+        done = subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path, env=env,
+                              capture_output=True, text=True, timeout=120)
+        return done.returncode, out.read_text(encoding="utf-8").strip()
+
+    written = files()
+    assert step(encrypt_sh, "fictional-key-one") == (0, "")
+    shutil.rmtree(props / "raw")
+    assert step(decrypt_sh, "fictional-key-one") == (0, "state=restored")
+    assert files() == written
+    sealed = vault.read_bytes()
+
+    shutil.rmtree(props / "raw")
+    code, state = step(decrypt_sh, "fictional-key-two")          # a re-created key
+    assert code != 0 and state == "state=unreadable"
+    assert not (props / "raw").exists() and vault.read_bytes() == sealed
+
+    damaged = sealed[: len(sealed) // 2]                           # a damaged file
+    vault.write_bytes(damaged)
+    step(decrypt_sh.replace(cleanup, ":"), "fictional-key-one")
+    assert files(), "the damaged file half-extracts, or this case proves nothing"
+    shutil.rmtree(props / "raw")
+    code, state = step(decrypt_sh, "fictional-key-one")
+    assert code != 0 and state == "state=unreadable"
+    assert not (props / "raw").exists() and vault.read_bytes() == damaged
+
+    vault.unlink()                                                 # nothing cached yet
+    assert step(decrypt_sh, "fictional-key-one") == (0, "state=empty")
