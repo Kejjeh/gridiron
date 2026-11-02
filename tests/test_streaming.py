@@ -2,11 +2,13 @@
 and their section in scripts/weekly/ros_rankings.py. Synthetic data only:
 fictional names, ids and teams (the DEF rows use the ROS table's own
 `DEF:<team>` keys). Pins: a proven bye is a bye and an unknown week never
-is; an OUT week gives nothing; a free agent can matter only in my bye week;
-hold vs stream adds up and counts a move each time the name changes; an
-empty pool and an empty position are said, not hidden; team defenses keep
-the table's ids; a free agent's flags stay with him; every number is the
-ROS table's own; and the wording keeps the plan a plan."""
+is; an OUT week gives nothing; a defense below zero is shown, never called
+out; a known game covers a week before an unknown one; a free agent can
+matter only in my bye week; hold vs stream adds up and counts a move each
+time the name changes; an empty pool, an empty position and an unresolved
+row are said, not hidden; team defenses keep the table's ids; a free
+agent's flags stay with him; every number is the ROS table's own; and the
+wording keeps the plan a plan."""
 from __future__ import annotations
 
 import argparse
@@ -170,6 +172,49 @@ def test_an_out_week_gives_nothing_and_lists_no_free_agent_for_it():
         S.build(table, positions=("TE",)))
 
 
+def test_a_defense_below_zero_is_shown_as_is_and_never_called_out():
+    """A team defense's line is not clipped: a week under zero is his own
+    number, shown as the table has it; it gives nothing, so it is a NEED."""
+    table = [
+        _row("DEF:AAA", "DEF", "MINE", {9: ("BBB", 6.0), 10: ("CCC", -1.5), 11: ("DDD", 0.0)},
+             team="AAA", name="AAA DST"),
+        _row("DEF:EEE", "DEF", "FA", {9: ("FFF", 5.0), 10: ("GGG", 4.0), 11: ("HHH", 3.0)},
+             team="EEE", name="EEE DST", rank=2)]
+    d = S.build(table, positions=("DEF",)).positions[0]
+    w9, w10, w11 = d.weeks
+    assert (w9.status, w10.status, w11.status) == (S.GAME, S.BELOW, S.OUT)
+    assert d.needs == (10, 11) and w10.best.points == -1.5 and w10.mine_points == 0.0
+    assert w10.margin(w10.free_agents[0]) == 4.0
+    t = d.totals
+    assert (t.mine, t.cover, t.cover_adds) == (6.0, 13.0, 1)
+    md = _md(S.build(table, positions=("DEF",)))
+    assert "| 10 **NEED** | AAA DST -1.5 v CCC (BELOW 0) | **EEE DST 4.0 v GGG** (+4.0) |" in md
+    assert "| 11 **NEED** | AAA DST OUT (v DDD) |" in md
+    assert "mine 6.0 (wk 10 BELOW 0; wk 11 OUT)" in md
+
+
+def test_a_known_game_is_my_best_before_an_unknown_week():
+    """A `?` week may yet be his bye: a known game covers the week first,
+    and a week no line covers shows no number."""
+    table = [
+        _row("te_k", "TE", "MINE", {9: ("BBB", 6.0), 10: ("CCC", 6.0), 11: ("DDD", 6.0)},
+             rank=2),
+        _row("te_q", "TE", "MINE", {9: ("?", 9.0), 10: ("DDD", 9.0), 11: ("BBB", 9.0)},
+             team="EEE", rank=1),
+        _row("te_n", "TE", "MINE", {10: ("AAA", 4.0), 11: ("AAA", 4.0)}, team="FFF", rank=3)]
+    te = S.build(table, positions=("TE",)).positions[0]
+    w9, w10 = te.weeks[0], te.weeks[1]
+    assert _ids(w9.mine) == ["te_k", "te_q", "te_n"] and not w9.need
+    assert w9.mine_points == 6.0 and _ids(w10.mine)[0] == "te_q"     # known, more points
+    assert te.needs == () and te.totals.mine == 24.0
+    md = _md(S.build(table, positions=("TE",)))
+    assert ("| 9 | Fixture te_k (AAA) 6.0 v BBB; Fixture te_q (EEE) 9.0 v ? (UNKNOWN); "
+            "Fixture te_n (FFF) UNKNOWN (no number that week) |") in md
+    # alone, the unknown week is my best and a NEED, counted at his plain rate
+    alone = S.build(table[1:2], positions=("TE",)).positions[0]
+    assert alone.needs == (9,) and alone.weeks[0].mine_points == 9.0
+
+
 def test_a_free_agent_can_beat_mine_only_in_my_bye_week():
     table = [
         _row("te_m", "TE", "MINE", {9: ("BBB", 9.0), 10: ("CCC", 9.0)}, byes="11",
@@ -233,6 +278,10 @@ def test_an_empty_free_agent_pool_is_said_not_hidden():
     md = _md(plan)
     assert "No free-agent K in this table." in md
     assert "nothing to hold or stream" in md and "Rival" not in md
+    # a row with no Sleeper id could be anyone's, mine included: said, never listed
+    assert k.unresolved == 1 and "Fixture k_u" not in md
+    assert "1 row at K with no holder known (no Sleeper id): NOT KNOWN, so in neither list." \
+        in md
 
 
 def _defenses_for_hire():
@@ -252,8 +301,11 @@ def test_no_rostered_player_at_the_position_makes_every_week_a_need():
     assert d.totals.cover_adds == d.totals.stream_adds == 3
     assert d.later == ()
     md = _md(plan)
-    assert "No rostered DEF: every week is a NEED." in md
-    assert "mine 0.0 (no rostered DEF)" in md
+    # the table holds only the players it can project: "none of mine in it",
+    # never "I hold none"
+    assert ("No DEF of mine in this table (it holds only the players it can project): "
+            "every week is a NEED.") in md
+    assert "mine 0.0 (no DEF of mine in the table)" in md
     # with nobody of mine to beat, every free agent beats a week of nothing
     assert "| 9 **NEED** | — | **KC DST 7.0 v LV** (+7.0) | **SF DST 6.0 v SEA** (+6.0) |" in md
     assert "NOT KNOWN" not in md
@@ -267,7 +319,7 @@ def test_a_table_with_no_mine_row_at_all_says_not_known_never_empty():
     md = _md(plan)
     assert "**No row in this table is MINE**" in md and "never empty" in md
     assert "What I hold at DEF is NOT KNOWN" in md and "mine NOT KNOWN" in md
-    assert "every week is a NEED" not in md and "no rostered DEF" not in md
+    assert "every week is a NEED" not in md and "DEF of mine" not in md
     assert "KC DST 7.0 v LV" in md                       # the free-agent lists stand
 
 
@@ -299,7 +351,9 @@ def test_team_defenses_keep_the_ros_tables_def_ids():
     listed = {o.line.gsis_id for wp in d.weeks for o in wp.free_agents}
     assert listed == {"DEF:KC"}                          # NYJ is another manager's
     w10 = d.weeks[1]
-    assert w10.free_agents == ()                         # KC's unclipped -1.0 week is no option
+    kc = S.Line.from_row(owned.loc[owned["gsis_id"] == "DEF:KC"].iloc[0].to_dict())
+    assert kc.option(10).status == S.BELOW               # KC's unclipped -1.0 week...
+    assert w10.free_agents == ()                         # ...is no option
     assert d.totals.hold_total == 17.0                   # ...and counts 0, as an empty slot
     md = _md(plan)
     assert "| 9 | LA DST 6.0 v KC | **KC DST 8.0 v LA** (+2.0) |" in md   # the table's names
@@ -365,7 +419,7 @@ def test_a_need_after_the_window_is_named():
     te = S.build([_row("te_m", "TE", "MINE", games, byes="14")],
                  positions=("TE",)).positions[0]
     assert te.weeks[-1].week == 11 and te.needs == () and te.later == ((14, S.BYE),)
-    assert "Later weeks where my best TE is not a known game: BYE 14." in _md(
+    assert "Later weeks where my best TE is not a known game: week 14 BYE." in _md(
         S.build([_row("te_m", "TE", "MINE", games, byes="14")], positions=("TE",)))
     planned = S.build([_row("te_m", "TE", "MINE", games, byes="14")], weeks=(14,))
     assert planned.positions[0].needs == (14,) and planned.positions[0].later == ()
@@ -375,7 +429,7 @@ def test_the_wording_keeps_the_plan_a_plan():
     md = _md(S.build([_row("te_m", "TE", "MINE", {9: ("BBB", 9.0)})]))
     for phrase in ("Points, not ΔP(win); planning, not a move.",
                    "A pickup is a move only if it improves THIS week's lineup, and the board "
-                   "decides that",
+                   "decides that (`gridiron.waivers`",
                    "\"FA\" means on no roster in the league snapshot, which may still be on "
                    "waivers (claims only) — check the board's waiver clock before acting",
                    "UNKNOWN = no game row and no proven bye", "never a bye"):

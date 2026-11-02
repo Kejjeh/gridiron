@@ -12,22 +12,27 @@ this slot for me that week, and who is out there":
     opponent, or why there is none:
       BYE      a week the schedule PROVES off (the line's `byes`, from
                `gridiron.lineup.proven_byes`);
-      OUT      his line credits nothing that week: 0 for an Out on the
-               first week's injury report or the NFL minimum of a
-               reserve-list stint; 0 or less for a team defense, whose line
-               is not clipped;
+      OUT      his line is 0 that week: an Out on the first week's injury
+               report, the NFL minimum of a reserve-list stint, or no
+               projected points;
       UNKNOWN  opponent `?`: no game row and no proven bye. Counted at his
                plain rate, as the line counts it, and NEVER a bye;
-      NONE     no rostered player at the position.
-    A week whose best is anything but a known game is a NEED.
+      BELOW 0  a team defense's line under zero (it is not clipped): shown
+               as is, and it gives nothing;
+      NONE     none of mine at the position in the table (it holds only the
+               players it can project).
+    A known game comes before an UNKNOWN week, whatever that week's number;
+    a week whose best is anything but a known game with points is a NEED.
   * the top free agents (`held_by == "FA"`) by that week's points, with
     opponents and the table's own flags (injury tag, `depth N`, `IR since
     wkN`). A flag goes to the reader; it never filters anyone (rule #11).
+    A row with no Sleeper id (`unresolved`) is in neither list, and said.
   * hold vs stream over the window: my total; the best single free agent
     held for the whole window (hold); each week's best free agent, summed
     (stream: a move every week the name changes); and mine, with the week's
     best free agent only in the weeks mine gives nothing (cover). A week
-    that gives nothing counts 0, as an empty slot does.
+    that gives nothing (a bye, an OUT, a defense below 0) counts 0, as an
+    empty slot does.
 
 What it is not (rules #7 and #11): points, not ΔP(win); planning, not a
 move. A pickup is a move only if it improves THIS week's lineup, and the
@@ -61,32 +66,35 @@ SPAN = 3
 TOP = 5
 
 MINE, FA = "MINE", "FA"
-GAME, BYE, OUT, UNKNOWN, NONE = "GAME", "BYE", "OUT", "UNKNOWN", "NONE"
+#: `ros.ownership`'s word for a row with no Sleeper id: who holds him is not known.
+UNRESOLVED = "unresolved"
+GAME, BYE, OUT, UNKNOWN, BELOW, NONE = "GAME", "BYE", "OUT", "UNKNOWN", "BELOW 0", "NONE"
 _NO_RANK = 10 ** 6
 
 #: The section's standing words (rules #7 and #11), shown above every plan.
 WORDING = (
     "Points, not ΔP(win); planning, not a move. A pickup is a move only if it "
-    "improves THIS week's lineup, and the board decides that (its Free Agent Radar), "
-    "not this list. \"FA\" means on no roster in the league snapshot, which may still "
-    "be on waivers (claims only) — check the board's waiver clock before acting (his "
-    "Sleeper card is the authority)."
+    "improves THIS week's lineup, and the board decides that (`gridiron.waivers`, its "
+    "Free Agent Radar), not this list. \"FA\" means on no roster in the league snapshot, "
+    "which may still be on waivers (claims only) — check the board's waiver clock "
+    "before acting (his Sleeper card is the authority)."
 )
 LEGEND = (
-    "Each week: my best rostered option, then the top free agents by that week's "
-    "points on the ROS lines. BYE = a week the schedule proves off; UNKNOWN = no game "
-    "row and no proven bye (opponent ?, counted at his plain rate, never a bye); OUT = "
-    "his ROS line credits nothing that week (0; 0 or less for a defense). **NEED** = "
-    "my best that week is not a known game. **Bold** = beats my best that week, by "
-    "the amount shown. Flags are the ROS table's own (injury tag, depth N, IR since "
-    "wkN)."
+    "Each week: my best rostered option (a known game first), then the top free agents "
+    "by that week's points on the ROS lines. BYE = a week the schedule proves off; "
+    "UNKNOWN = no game row and no proven bye (opponent ?, counted at his plain rate, "
+    "never a bye); OUT = his ROS line is 0 that week; BELOW 0 = a defense's line under "
+    "zero, shown as is. **NEED** = my best that week is not a known game with points. "
+    "**Bold** = beats my best that week, by the amount shown; a week that gives nothing "
+    "counts 0, as an empty slot does. Flags are the ROS table's own (injury tag, depth "
+    "N, IR since wkN)."
 )
 
 
 def _missing(v: object) -> bool:
     if v is None or v is pd.NA:
         return True
-    return isinstance(v, float) and math.isnan(v)
+    return isinstance(v, numbers.Real) and math.isnan(v)      # any float NaN, numpy's too
 
 
 def _position(value: object) -> str:
@@ -180,9 +188,9 @@ class Line:
             return Option(self, week, BYE, "", 0.0)
         for w, opp, pts in self.games:
             if w == week:
-                if pts <= 0:
-                    return Option(self, week, OUT, opp, pts)
-                return Option(self, week, UNKNOWN if opp == "?" else GAME, opp, pts)
+                status = (OUT if pts == 0 else UNKNOWN if opp == "?" else
+                          BELOW if pts < 0 else GAME)
+                return Option(self, week, status, opp, pts)
         # the line says nothing about the week (outside it): no number
         return Option(self, week, UNKNOWN, "?", 0.0)
 
@@ -193,9 +201,9 @@ class Option:
 
     line: Line
     week: int
-    status: str          # GAME | BYE | OUT | UNKNOWN
+    status: str          # GAME | BYE | OUT | UNKNOWN | BELOW 0
     opponent: str        # "" on a bye; "?" when the schedule has no game row
-    points: float        # the line's number that week; 0 on a bye
+    points: float        # the line's number that week; 0 on a bye or with no line
 
     @property
     def counts(self) -> bool:
@@ -214,9 +222,16 @@ def _rank(line: Line) -> int:
     return line.pos_rank if line.pos_rank is not None else _NO_RANK
 
 
-def _order(o: Option) -> tuple:
-    """Best first: a number to start, then more points, a known game before
-    an unknown one, the better ROS rank, the id (a stable tie-break)."""
+def _mine_order(o: Option) -> tuple:
+    """My best first: a number to start, a KNOWN game before an unknown
+    week whatever its number (a `?` week may yet be his bye), more points,
+    the better ROS rank, the id (a stable tie-break)."""
+    return (not o.counts, o.status != GAME, -o.points, _rank(o.line), o.line.gsis_id)
+
+
+def _fa_order(o: Option) -> tuple:
+    """Free agents by that week's points; then a known game first, the
+    better ROS rank, the id."""
     return (not o.counts, -o.points, o.status != GAME, _rank(o.line), o.line.gsis_id)
 
 
@@ -240,8 +255,9 @@ class WeekPlan:
 
     @property
     def need(self) -> bool:
-        """My best is not a known game: he gives nothing (BYE, OUT), nobody
-        is rostered (NONE), or his week is UNKNOWN."""
+        """My best is not a known game with points: he gives nothing (BYE,
+        OUT, BELOW 0), none of mine is in the table (NONE), or his week is
+        UNKNOWN."""
         return self.status != GAME
 
     @property
@@ -303,6 +319,9 @@ class PositionPlan:
     rows: int                                  # table rows at the position
     #: weeks after the window where my best is not a known game: (week, status)
     later: tuple[tuple[int, str], ...] = ()
+    #: rows with no Sleeper id (or no holder): in neither list, since who
+    #: holds them is not known (one could be mine)
+    unresolved: int = 0
 
     @property
     def needs(self) -> tuple[int, ...]:
@@ -360,8 +379,8 @@ def _plan(position: str, lines: Sequence[Line], weeks: Sequence[int],
     plans: list[WeekPlan] = []
     best_fa: list[Option | None] = []
     for w in weeks:
-        fas = sorted((o for o in (ln.option(w) for ln in pool) if o.counts), key=_order)
-        plans.append(WeekPlan(w, tuple(sorted((ln.option(w) for ln in mine), key=_order)),
+        fas = sorted((o for o in (ln.option(w) for ln in pool) if o.counts), key=_fa_order)
+        plans.append(WeekPlan(w, tuple(sorted((ln.option(w) for ln in mine), key=_mine_order)),
                               tuple(fas[:top])))
         best_fa.append(fas[0] if fas else None)
     held = sorted(((sum(ln.option(w).credit for w in weeks), ln) for ln in pool),
@@ -379,12 +398,13 @@ def _plan(position: str, lines: Sequence[Line], weeks: Sequence[int],
     if mine and weeks:
         for w in covered:
             if w > weeks[-1]:
-                status = min((ln.option(w) for ln in mine), key=_order).status
+                status = min((ln.option(w) for ln in mine), key=_mine_order).status
                 if status != GAME:
                     later.append((w, status))
     return PositionPlan(position, tuple(plans), totals,
                         tuple(sorted(mine, key=lambda ln: (_rank(ln), ln.gsis_id))),
-                        len(pool), len(lines), tuple(later))
+                        len(pool), len(lines), tuple(later),
+                        sum(1 for ln in lines if ln.held_by in ("", UNRESOLVED)))
 
 
 # ---------------------------------------------------------------- markdown
@@ -422,7 +442,10 @@ def _cell(o: Option) -> str:
         return f"{who} BYE"
     if o.status == OUT:
         return f"{who} OUT" + (f" (v {o.opponent})" if o.opponent not in ("", "?") else "")
-    return f"{who} {o.points:.1f} v {o.opponent}" + (" (UNKNOWN)" if o.status == UNKNOWN else "")
+    if o.status == UNKNOWN and o.points == 0:      # a 0 on a line is OUT: no line here
+        return f"{who} UNKNOWN (no number that week)"
+    tail = {UNKNOWN: " (UNKNOWN)", BELOW: " (BELOW 0)"}.get(o.status, "")
+    return f"{who} {o.points:.1f} v {o.opponent}{tail}"
 
 
 def _fa_cell(wp: WeekPlan, o: Option) -> str:
@@ -434,7 +457,7 @@ def _totals_line(p: PositionPlan, owner_known: bool) -> str:
     t = p.totals
     gaps = "; ".join(f"wk {wp.week} {wp.status}" for wp in p.weeks if wp.need)
     mine = (f"mine {t.mine:.1f}" + (f" ({gaps})" if gaps else "") if p.rostered
-            else f"mine 0.0 (no rostered {p.position})" if owner_known
+            else f"mine 0.0 (no {p.position} of mine in the table)" if owner_known
             else "mine NOT KNOWN")
     head = f"Hold vs stream, {_weeks_text(t.weeks)} (points): "
     if t.hold is None:              # no free agent has a number in any of these weeks
@@ -451,10 +474,14 @@ def _position_lines(p: PositionPlan, top: int, owner_known: bool) -> list[str]:
     out = [f"### {p.position}", ""]
     if p.rows == 0:
         return out + [f"No {p.position} in this table: nothing to plan.", ""]
-    nobody = (f"No rostered {p.position}: every week is a NEED." if owner_known else
+    nobody = (f"No {p.position} of mine in this table (it holds only the players it can "
+              f"project): every week is a NEED." if owner_known else
               f"What I hold at {p.position} is NOT KNOWN (no MINE row in this table).")
+    unresolved = (f"{_plural(p.unresolved, 'row')} at {p.position} with no holder known "
+                  f"(no Sleeper id): NOT KNOWN, so in neither list.")
     notes = ([nobody] if not p.rostered else []) \
-        + ([f"No free-agent {p.position} in this table."] if p.pool == 0 else [])
+        + ([f"No free-agent {p.position} in this table."] if p.pool == 0 else []) \
+        + ([unresolved] if p.unresolved else [])
     if notes:
         out += [" ".join(notes), ""]
     out += ["| week | mine (best first) | " + " | ".join(f"FA {i}" for i in range(1, top + 1))
@@ -469,7 +496,7 @@ def _position_lines(p: PositionPlan, top: int, owner_known: bool) -> list[str]:
         for w, st in p.later:
             by.setdefault(st, []).append(w)
         out += [f"Later weeks where my best {p.position} is not a known game: "
-                + "; ".join(f"{st} {_span(ws)}" for st, ws in by.items()) + ".", ""]
+                + "; ".join(f"{_weeks_text(ws)} {st}" for st, ws in by.items()) + ".", ""]
     return out
 
 
