@@ -99,7 +99,8 @@ def test_pass_and_fail_read_the_start_of_a_summary_or_verdict():
 def test_the_header_counts_a_harness_fail_and_a_pass_that_fails_its_holdout(tree, capsys):
     assert S.main([]) == 0
     text = capsys.readouterr().out
-    assert ("7 ideas: 2 pass the historical bar, 1 passes history and fails its 2026 holdout, "
+    assert ("7 ideas: 2 pass the historical bar (1 of them also passes a 2026 holdout: a "
+            "record-only contender), 1 passes history and fails its 2026 holdout, "
             "2 fail, 2 have no result (see the last column).") in text
     assert _line(text, "WR-91").endswith("| PASS WR; 2026 holdout (WR-91-2026): fail |")
     assert _line(text, "QB-91").endswith(

@@ -222,7 +222,12 @@ def render(rows: list[dict], round2: list[dict] = (), others: list[dict] = ()) -
     unscored = [r for r in rows if not r.get("shows")]
     neither = n - len(passed) - len(held_out) - len(failed) - len(unscored)
     # a zero pass count beside "passes history and fails its holdout" reads as a contradiction
-    counts = [] if held_out and not passed else [_v(len(passed), "passes", "pass") + " the historical bar"]
+    held = [r for r in passed if r.get("holdout") and is_pass(r["holdout"]["verdict"])]
+    pass_text = _v(len(passed), "passes", "pass") + " the historical bar"
+    if held:
+        pass_text += (f" ({_v(len(held), 'of them also passes', 'of them also pass')} a 2026 holdout: "
+                      + ("a record-only contender)" if len(held) == 1 else "record-only contenders)"))
+    counts = [] if held_out and not passed else [pass_text]
     if held_out:
         counts.append(_v(len(held_out), "passes history and fails its 2026 holdout",
                          "pass history and fail their 2026 holdout"))
