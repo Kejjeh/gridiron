@@ -1,0 +1,2 @@
+when,block,prereg_blob,module_blob,helpers_blob,tables_digest,head,verdict,positions,folds,folds_passed
+2026-11-02T01:28:15+00:00,RB-03,b1abbb175188,894d9a94249a,not recorded (runner before helper hashing),42693a4a57591b37,d601a28a4b31,FAIL,RB,2019 2020 2021 2022 2023 2024 2025,RB:0/7

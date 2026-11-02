@@ -40,7 +40,10 @@ never a score, so a block can be developed without seeing its result.
 The bar (ground rule 2), per position the block touches: better than the
 shipped set on that position's rows on start/sit pairwise AND MAE in EVERY
 one of the seven season folds; the pooled numbers (all positions, the block
-applied only where it touches) must not be worse in any fold. K and DEF use
+applied only where it touches) must not be worse in any fold. A block whose
+source starts later (FTN charting: 2022) may declare FOLDS, the seasons it
+is scored on, in its pre-registration; every other season still trains (as
+unknown where the source is missing). K and DEF use
 the same folds on the kicker and defense tables of k_def_backtest.py
 (pairwise among all kickers or defenses in a week, as that harness does).
 Passing here is necessary, not sufficient: a block that passes runs
@@ -82,8 +85,8 @@ LEAK_CHECKS = ((2021, 9), (2024, 14))
 K_ADV = ["baseline", "k_ppg_season", "k_ppg_l3", "team_fga_pg", "team_xpa_pg",
          "implied", "spread", "dome"]
 DEF_ADV = list(A.DEFENSE_FEATURES)
-RUN_FIELDS = ("when", "block", "prereg_blob", "module_blob", "tables_digest", "head",
-              "verdict", "positions", "folds_passed")
+RUN_FIELDS = ("when", "block", "prereg_blob", "module_blob", "helpers_blob", "tables_digest",
+              "head", "verdict", "positions", "folds", "folds_passed")
 
 # Frames whose rows describe what happened in a game (cut at week < w for the
 # leak check) and frames published before the week's games (cut at week <= w).
@@ -463,11 +466,12 @@ def prepare(block_frame: pd.DataFrame | None, tables: dict[int, pd.DataFrame],
 
 
 def cv_skill(tables: dict[int, pd.DataFrame], base: dict[str, list[str]],
-             extra: dict[str, list[str]]) -> dict:
-    """Seven season folds; `shipped` and `block` on identical rows. Per fold:
-    pooled metrics and per-position metrics for every skill position."""
+             extra: dict[str, list[str]], folds_for=SEASONS) -> dict:
+    """Season folds (all seven unless a block declares FOLDS); every other
+    season trains. `shipped` and `block` on identical rows. Per fold: pooled
+    metrics and per-position metrics for every skill position."""
     folds = {}
-    for test_s in SEASONS:
+    for test_s in folds_for:
         train = pd.concat([tables[s] for s in SEASONS if s != test_s])
         test = tables[test_s].copy()
         test["shipped"], test["block"] = np.nan, np.nan
@@ -490,9 +494,10 @@ def cv_skill(tables: dict[int, pd.DataFrame], base: dict[str, list[str]],
     return folds
 
 
-def cv_special(tables: dict[str, dict[int, pd.DataFrame]], extra: dict[str, list[str]]) -> dict:
+def cv_special(tables: dict[str, dict[int, pd.DataFrame]], extra: dict[str, list[str]],
+               folds_for=SEASONS) -> dict:
     folds = {}
-    for test_s in SEASONS:
+    for test_s in folds_for:
         res = {}
         for pos, cols in (("K", K_ADV), ("DEF", DEF_ADV)):
             if pos not in extra:
@@ -549,6 +554,16 @@ def committed_blob(path: Path) -> str:
     if _git("status", "--porcelain", "--", rel):
         raise SystemExit(f"refused: {rel} has uncommitted changes")
     return _git("rev-parse", f"HEAD:{rel}")[:12]
+
+
+def helpers_blob() -> str:
+    """One hash over every shared helper module (scripts/research/blocks/_*.py),
+    each committed and unmodified: a helper change after a run is visible."""
+    h = hashlib.sha256()
+    for p in sorted(BLOCKS_DIR.glob("_*.py")):
+        h.update(p.name.encode())
+        h.update(committed_blob(p).encode())
+    return h.hexdigest()[:12]
 
 
 def load_block(block_id: str):
@@ -628,9 +643,13 @@ def coverage(df: pd.DataFrame, tables: dict, mod, key) -> dict:
 def run_block(block_id: str, args, crosswalk, skill, special, base) -> dict:
     mod, path = load_block(block_id)
     prereg = PREREG_DIR / f"{block_id}.md"
+    folds_for = tuple(int(x) for x in getattr(mod, "FOLDS", SEASONS))
+    if not set(folds_for) <= set(SEASONS) or not folds_for:
+        raise SystemExit(f"{block_id}: FOLDS must be a non-empty subset of {SEASONS}")
     blobs = None
     if not args.coverage_only:
-        blobs = {"prereg_blob": committed_blob(prereg), "module_blob": committed_blob(path)}
+        blobs = {"prereg_blob": committed_blob(prereg), "module_blob": committed_blob(path),
+                 "helpers_blob": helpers_blob()}
     cols = ["season", "week", "gsis_id", "position", "team", "opponent", "game_id", "home"]
     keys = pd.concat([t[cols] for t in skill.values()], ignore_index=True)
     special_keys = {
@@ -661,10 +680,10 @@ def run_block(block_id: str, args, crosswalk, skill, special, base) -> dict:
         for pos in mod.COLUMNS:
             m, cols = prepare(frame, special[pos], {pos: mod.COLUMNS[pos]}, key)
             merged[pos], extra[pos] = m, cols[pos]
-        folds = cv_special({**special, **merged}, extra)
+        folds = cv_special({**special, **merged}, extra, folds_for)
     else:
         merged, extra = prepare(frame, skill, mod.COLUMNS, key)
-        folds = cv_skill(merged, base, extra)
+        folds = cv_skill(merged, base, extra, folds_for)
     v = verdict(folds, list(mod.COLUMNS))
     passed = [p for p, r in v["positions"].items() if r["passes"]]
     print(f"\n  {'fold':<6}" + "".join(f"{p + ' shipped':>18}{p + ' block':>18}" for p in mod.COLUMNS))
@@ -677,7 +696,8 @@ def run_block(block_id: str, args, crosswalk, skill, special, base) -> dict:
               f"(mean Δpairwise {r['mean_pairwise_delta']:+.4f}, ΔMAE {r['mean_mae_delta']:+.4f})"
               f" -> {'PASSES' if r['passes'] else 'fails'}")
     result = {"block": block_id, "title": mod.TITLE, "columns": mod.COLUMNS, "model_columns": extra,
-              "seasons": list(SEASONS), "min_week": MIN_WEEK, "coverage": cov,
+              "seasons": list(SEASONS), "folds_tested": list(folds_for), "min_week": MIN_WEEK,
+              "coverage": cov,
               "folds": {str(s): f for s, f in folds.items()}, "verdict": v, "passed": passed,
               "tables_digest": args.digest, **blobs, "head": _git("rev-parse", "HEAD")[:12],
               "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
@@ -695,6 +715,7 @@ def run_block(block_id: str, args, crosswalk, skill, special, base) -> dict:
                     "tables_digest": args.digest, "head": result["head"],
                     "verdict": "PASS " + "+".join(passed) if passed else "FAIL",
                     "positions": "+".join(mod.COLUMNS),
+                    "folds": " ".join(str(f) for f in folds_for),
                     "folds_passed": " ".join(f"{p}:{r['folds_better_on_both']}/{r['folds']}"
                                              for p, r in v["positions"].items())})
     print(f"  wrote {(RESULTS_DIR / f'{block_id}.json').relative_to(REPO_ROOT)} and "
