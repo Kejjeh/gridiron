@@ -44,3 +44,17 @@ Record-only contender for two live weeks after its result is committed
 board.
 
 ## Result
+
+Run 2026-11-02T09:27:49+00:00 at `dbaa63e` (one scored run; `runs/K-R2.csv`). Start/sit pairwise and MAE on K rows:
+
+| fold | shipped | K-R2 |
+|---|---|---|
+| 2019 | 55.32%, 3.331 | 55.19%, 3.351 |
+| 2020 | 58.03%, 3.571 | 57.93%, 3.570 |
+| 2021 | 56.64%, 3.548 | 56.31%, 3.591 |
+| 2022 | 53.66%, 3.507 | 56.48%, 3.476 |
+| 2023 | 55.33%, 3.644 | 56.66%, 3.616 |
+| 2024 | 58.24%, 3.721 | 59.62%, 3.687 |
+| 2025 | 57.31%, 3.810 | 57.55%, 3.804 |
+
+**Fails** part 1, so part 2 (the 2026 holdout) does not run. Better on both metrics in 4 of 7 folds; not in 2019 (pairwise -0.13 points, MAE +0.0201); 2020 (pairwise -0.10 points); 2021 (pairwise -0.33 points, MAE +0.0425). Mean change +0.75 points of pairwise, -0.0054 MAE. Not a contender.

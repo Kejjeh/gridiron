@@ -1,0 +1,260 @@
+{
+ "block": "DEF-R2",
+ "title": "Round 2: DEF-10 + DEF-11 on DEF (declared post-hoc combination)",
+ "columns": {
+  "DEF": [
+   "rest_days",
+   "opp_rest_days",
+   "opp_tz_crossed",
+   "thursday",
+   "own_front_out",
+   "own_back_out",
+   "own_def_q"
+  ]
+ },
+ "model_columns": {
+  "DEF": [
+   "rest_days",
+   "opp_rest_days",
+   "opp_tz_crossed",
+   "opp_tz_crossed__known",
+   "thursday",
+   "own_front_out",
+   "own_back_out",
+   "own_def_q"
+  ]
+ },
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "coverage": {
+  "DEF": {
+   "rest_days": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "opp_rest_days": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "opp_tz_crossed": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 0.973
+   },
+   "thursday": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "own_front_out": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "own_back_out": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "own_def_q": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   }
+  }
+ },
+ "folds": {
+  "2019": {
+   "DEF": {
+    "pairs": 5222,
+    "rows": 397,
+    "sleeper": {
+     "pairwise": 0.592493,
+     "mae": 5.3309
+    },
+    "shipped": {
+     "pairwise": 0.60226,
+     "mae": 5.2483
+    },
+    "block": {
+     "pairwise": 0.603217,
+     "mae": 5.2304
+    }
+   }
+  },
+  "2020": {
+   "DEF": {
+    "pairs": 5683,
+    "rows": 416,
+    "sleeper": {
+     "pairwise": 0.597572,
+     "mae": 4.7362
+    },
+    "shipped": {
+     "pairwise": 0.603027,
+     "mae": 4.6382
+    },
+    "block": {
+     "pairwise": 0.604962,
+     "mae": 4.6144
+    }
+   }
+  },
+  "2021": {
+   "DEF": {
+    "pairs": 6178,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.601651,
+     "mae": 4.8669
+    },
+    "shipped": {
+     "pairwise": 0.602784,
+     "mae": 4.8013
+    },
+    "block": {
+     "pairwise": 0.609744,
+     "mae": 4.7543
+    }
+   }
+  },
+  "2022": {
+   "DEF": {
+    "pairs": 6083,
+    "rows": 446,
+    "sleeper": {
+     "pairwise": 0.571922,
+     "mae": 4.3794
+    },
+    "shipped": {
+     "pairwise": 0.592635,
+     "mae": 4.3345
+    },
+    "block": {
+     "pairwise": 0.598718,
+     "mae": 4.2902
+    }
+   }
+  },
+  "2023": {
+   "DEF": {
+    "pairs": 6179,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.589901,
+     "mae": 4.7938
+    },
+    "shipped": {
+     "pairwise": 0.607218,
+     "mae": 4.8348
+    },
+    "block": {
+     "pairwise": 0.606571,
+     "mae": 4.825
+    }
+   }
+  },
+  "2024": {
+   "DEF": {
+    "pairs": 6168,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.642023,
+     "mae": 4.4408
+    },
+    "shipped": {
+     "pairwise": 0.646563,
+     "mae": 4.4608
+    },
+    "block": {
+     "pairwise": 0.650454,
+     "mae": 4.4421
+    }
+   }
+  },
+  "2025": {
+   "DEF": {
+    "pairs": 6138,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.610297,
+     "mae": 4.5081
+    },
+    "shipped": {
+     "pairwise": 0.620072,
+     "mae": 4.5878
+    },
+    "block": {
+     "pairwise": 0.618605,
+     "mae": 4.6049
+    }
+   }
+  }
+ },
+ "verdict": {
+  "positions": {
+   "DEF": {
+    "folds_better_on_both": 5,
+    "folds": 7,
+    "passes": false,
+    "mean_pairwise_delta": 0.00253,
+    "mean_mae_delta": -0.0206
+   }
+  },
+  "pooled_not_worse_every_fold": true
+ },
+ "passed": [],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "5ded3e7c34fe",
+ "module_blob": "0dce2baae4c0",
+ "helpers_blob": "8bb29e1d71b7",
+ "head": "dbaa63ed58eb",
+ "run_at": "2026-11-02T09:28:01+00:00"
+}

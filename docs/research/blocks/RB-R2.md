@@ -46,3 +46,17 @@ Record-only contender for two live weeks after its result is committed
 board.
 
 ## Result
+
+Run 2026-11-02T09:27:57+00:00 at `dbaa63e` (one scored run; `runs/RB-R2.csv`). Start/sit pairwise and MAE on RB rows:
+
+| fold | shipped | RB-R2 |
+|---|---|---|
+| 2019 | 65.54%, 4.349 | 65.56%, 4.298 |
+| 2020 | 64.79%, 4.365 | 65.47%, 4.349 |
+| 2021 | 63.83%, 4.521 | 64.84%, 4.484 |
+| 2022 | 64.62%, 4.190 | 64.64%, 4.165 |
+| 2023 | 64.75%, 4.071 | 65.01%, 4.027 |
+| 2024 | 65.80%, 4.131 | 66.55%, 4.074 |
+| 2025 | 66.91%, 4.122 | 67.09%, 4.104 |
+
+**Passes part 1** (the historical bar). Better on both metrics in all 7 folds; mean change +0.42 points of pairwise, -0.0357 MAE; pooled numbers not worse in any fold: True. The MAE gain holds in every fold (-0.016 to -0.058), but two folds win the ordering by a hair: 2019 by 2 of 11,726 pairs (+0.02 points) and 2022 by 3 of 14,913 (+0.02). Under `ROUND2.md` this is weak evidence on its own (a picked combination); part 2, the 2026 holdout, decides.
