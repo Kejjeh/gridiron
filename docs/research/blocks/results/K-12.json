@@ -1,0 +1,206 @@
+{
+ "block": "K-12",
+ "title": "Artificial turf, and an outdoor game in December or January",
+ "columns": {
+  "K": [
+   "turf",
+   "outdoor_dec"
+  ]
+ },
+ "model_columns": {
+  "K": [
+   "turf",
+   "turf__known",
+   "outdoor_dec",
+   "outdoor_dec__known"
+  ]
+ },
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "coverage": {
+  "K": {
+   "turf": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 0.972,
+    "2023": 0.986,
+    "2024": 0.995,
+    "2025": 0.977
+   },
+   "outdoor_dec": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 0.977
+   }
+  }
+ },
+ "folds": {
+  "2019": {
+   "K": {
+    "pairs": 3941,
+    "rows": 349,
+    "sleeper": {
+     "pairwise": 0.551129,
+     "mae": 3.3419
+    },
+    "shipped": {
+     "pairwise": 0.553159,
+     "mae": 3.3312
+    },
+    "block": {
+     "pairwise": 0.546054,
+     "mae": 3.3399
+    }
+   }
+  },
+  "2020": {
+   "K": {
+    "pairs": 5011,
+    "rows": 393,
+    "sleeper": {
+     "pairwise": 0.512073,
+     "mae": 3.6825
+    },
+    "shipped": {
+     "pairwise": 0.580323,
+     "mae": 3.5705
+    },
+    "block": {
+     "pairwise": 0.580523,
+     "mae": 3.5735
+    }
+   }
+  },
+  "2021": {
+   "K": {
+    "pairs": 5487,
+    "rows": 424,
+    "sleeper": {
+     "pairwise": 0.551485,
+     "mae": 3.5946
+    },
+    "shipped": {
+     "pairwise": 0.56643,
+     "mae": 3.5481
+    },
+    "block": {
+     "pairwise": 0.564425,
+     "mae": 3.5531
+    }
+   }
+  },
+  "2022": {
+   "K": {
+    "pairs": 5602,
+    "rows": 430,
+    "sleeper": {
+     "pairwise": 0.540521,
+     "mae": 3.4999
+    },
+    "shipped": {
+     "pairwise": 0.536594,
+     "mae": 3.5074
+    },
+    "block": {
+     "pairwise": 0.538915,
+     "mae": 3.5134
+    }
+   }
+  },
+  "2023": {
+   "K": {
+    "pairs": 5764,
+    "rows": 435,
+    "sleeper": {
+     "pairwise": 0.540597,
+     "mae": 3.6101
+    },
+    "shipped": {
+     "pairwise": 0.553262,
+     "mae": 3.6442
+    },
+    "block": {
+     "pairwise": 0.553782,
+     "mae": 3.6467
+    }
+   }
+  },
+  "2024": {
+   "K": {
+    "pairs": 5706,
+    "rows": 433,
+    "sleeper": {
+     "pairwise": 0.532597,
+     "mae": 3.8065
+    },
+    "shipped": {
+     "pairwise": 0.582369,
+     "mae": 3.7214
+    },
+    "block": {
+     "pairwise": 0.582019,
+     "mae": 3.7216
+    }
+   }
+  },
+  "2025": {
+   "K": {
+    "pairs": 5526,
+    "rows": 427,
+    "sleeper": {
+     "pairwise": 0.541621,
+     "mae": 3.8593
+    },
+    "shipped": {
+     "pairwise": 0.573109,
+     "mae": 3.8102
+    },
+    "block": {
+     "pairwise": 0.57148,
+     "mae": 3.8137
+    }
+   }
+  }
+ },
+ "verdict": {
+  "positions": {
+   "K": {
+    "folds_better_on_both": 0,
+    "folds": 7,
+    "passes": false,
+    "mean_pairwise_delta": -0.00115,
+    "mean_mae_delta": 0.0041
+   }
+  },
+  "pooled_not_worse_every_fold": true
+ },
+ "passed": [],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "976f0c3c7f5a",
+ "module_blob": "7495deee8409",
+ "helpers_blob": "4b6bb64fd76b",
+ "head": "2c47403533b7",
+ "run_at": "2026-11-02T04:15:22+00:00"
+}
