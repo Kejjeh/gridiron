@@ -26,11 +26,12 @@ design, the credit math and what the owner sets up.
   month's core snapshots need (6 per game that can be bought before the
   quota resets: the credits go when the snapshot is taken, up to 150
   minutes before kickoff, so a game that kicks off just after the reset
-  counts in the month before it) is refused. The reset day is UNVERIFIED (the provider does not publish it):
-  the 1st of the month UTC until a reset is observed in the headers. With
-  no reading of the current quota period (a lost ledger, a new month, an
-  event list without the headers) one core call per run reads them, at
-  most 6 credits unguarded; refusing instead would never learn the count.
+  counts in the month before it) is refused. The reset day is UNVERIFIED
+  (the provider does not publish it): the 1st of the month UTC until a
+  reset is observed in the headers. With no reading of the current quota
+  period (a lost ledger, a new month, an event list without the headers)
+  one core call per run reads them, at most 6 credits unguarded; refusing
+  instead would never learn the count.
 * The key (rule #9) comes from `gridiron.config` (GRIDIRON_ODDS_API_KEY)
   and is never printed: no URL is ever printed, an exception's text never
   reaches the log, and every message passes `scrub` (the apiKey parameter
