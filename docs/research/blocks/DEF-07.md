@@ -85,3 +85,23 @@ Record-only contender for two live weeks (ground rule 3), then a
 DECISIONS.md row. Nothing serves after the week-14 board.
 
 ## Result
+
+Run 2026-11-02T04:22:17+00:00 at `f367241` (one scored run; `runs/DEF-07.csv`).
+Pairwise (all defenses in a week) and MAE on the defense table, the four
+FTN folds:
+
+| fold | shipped | DEF-07 |
+|---|---|---|
+| 2022 | 59.26%, 4.335 | 59.02%, 4.317 |
+| 2023 | 60.72%, 4.835 | 60.48%, 4.804 |
+| 2024 | 64.66%, 4.461 | 64.46%, 4.434 |
+| 2025 | 62.01%, 4.588 | 61.73%, 4.577 |
+
+**Fails.** Better on both metrics in 0 of 4 folds: MAE is better in every
+fold (-0.011 to -0.031) and pairwise worse in every fold (-0.19 to -0.28
+points); mean change -0.24 points of pairwise, -0.0214 MAE. The columns do
+not order defenses better within a week. Part or all of the MAE gain may be
+the two `__known` indicators, which are 1 on every row of 2022-2025 and 0
+before, so they can move a whole season's level without changing any order
+within a week; this run cannot separate the two. Not shipped, not a
+contender.
