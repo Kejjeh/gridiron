@@ -48,6 +48,12 @@ the same folds on the kicker and defense tables of k_def_backtest.py
 (pairwise among all kickers or defenses in a week, as that harness does).
 Passing here is necessary, not sufficient: a block that passes runs
 record-only for two live weeks before it may serve (ground rule 3).
+
+Known gap, kept on purpose: the frozen 2019 kicker and defense tables have
+no Raiders rows (31 teams). The schedule wrote OAK and the box scores LV
+when k_def_backtest.py built them for the shipped K/DEF evidence, and
+rebuilding them would stop this harness reproducing that evidence. The
+2019 K and DEF folds are 31 teams; every block faces the same rows.
 """
 from __future__ import annotations
 
@@ -106,8 +112,10 @@ TEAM_COLUMNS = ("team", "recent_team", "posteam", "defteam", "home_team", "away_
 
 
 def normalize_teams(df: pd.DataFrame) -> pd.DataFrame:
+    # pandas 3 reads text as the `str` dtype, not `object`: test for both,
+    # or the mapping silently never runs (it did not, until 2026-11-02)
     for c in TEAM_COLUMNS:
-        if c in df.columns and df[c].dtype == object:
+        if c in df.columns and (df[c].dtype == object or pd.api.types.is_string_dtype(df[c])):
             df[c] = df[c].replace(TEAM_CODES)
     return df
 

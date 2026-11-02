@@ -151,3 +151,11 @@ def test_the_bar_needs_every_fold_on_both_metrics():
     one_tie[2022] = fold(0.6, 4.0, 0.61, 4.0)              # MAE equal is not better
     v = R.verdict(one_tie, ["RB"])["positions"]["RB"]
     assert not v["passes"] and v["folds_better_on_both"] == 6
+
+
+def test_team_codes_are_mapped_for_pandas_string_columns():
+    df = pd.DataFrame({"home_team": pd.array(["OAK", "KC"], dtype="string"),
+                       "away_team": ["SD", "STL"], "week": [1, 1]})
+    out = R.normalize_teams(df.copy())
+    assert out["home_team"].tolist() == ["LV", "KC"]
+    assert out["away_team"].tolist() == ["LAC", "LA"]
