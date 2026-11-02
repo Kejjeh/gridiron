@@ -99,3 +99,43 @@ separate decision. Then a DECISIONS.md row. Nothing serves after the week-14
 board.
 
 ## Result
+
+Run 2026-11-02T07:59:20+00:00 at `cc61a0c` (one scored run;
+`runs/DEF-03.csv`). The module, helpers, harness and this
+pre-registration are those of `6d588e2`; the one commit between added
+K-03's results. Mean CRPS on the defense rows (lower is better) for the
+page's normal, DEF-03 and the two references, and the P(win) Brier of
+each fold's synthetic leagues (defenses carry DEF-03, every other starter
+the page's normal):
+
+| fold | rows | page | DEF-03 | fitted normal | whole-point normal | Brier page | Brier DEF-03 |
+|---|---|---|---|---|---|---|---|
+| 2019 | 397 | 3.7250 | 3.6999 | 3.7298 | 3.7212 | 0.23927 | 0.23927 |
+| 2020 | 416 | 3.3442 | 3.2980 | 3.3386 | 3.3402 | 0.23879 | 0.23879 |
+| 2021 | 448 | 3.3891 | 3.3589 | 3.3891 | 3.3852 | 0.23891 | 0.23891 |
+| 2022 | 446 | 3.1094 | 3.0813 | 3.1029 | 3.1053 | 0.23932 | 0.23933 |
+| 2023 | 448 | 3.4030 | 3.3704 | 3.4010 | 3.3990 | 0.23953 | 0.23953 |
+| 2024 | 448 | 3.1437 | 3.0961 | 3.1387 | 3.1397 | 0.23503 | 0.23503 |
+| 2025 | 448 | 3.2567 | 3.2085 | 3.2546 | 3.2527 | 0.23599 | 0.23600 |
+
+**Fails** on the bar's second half. CRPS is lower than the page's normal
+in all 7 folds, by 0.025 to 0.048 points (mean -0.037; pooled 3.295
+against 3.332), and below the fitted normal and the page's normal on
+whole points in every fold; pooled pinball loss at 10/50/90% is 0.834 /
+2.308 / 1.247 against the page's 0.859 / 2.346 / 1.253. But the pooled
+P(win) Brier is worse: 0.238121 against 0.238118 over 18,811 matchups,
++0.0000031 unrounded (week-clustered 95% interval -0.0000015 to
++0.0000077; 9% of the bootstrap draws not worse). The bar says not worse,
+so it fails. The change is tiny either way: one defense a side barely
+moves a matchup.
+
+The fitted σ_PA was 16.5 to 17.5 points in every fold, inside the grid
+but nearly twice the 9.2 points a team's score scatters around its
+implied total (weeks 4-18, 2019-2025, from the schedules). So the
+"opponent's points" part is not describing the opponent's points: the
+spread is absorbing what the independent counts and tiers leave out.
+That is a reading after the result, not evidence; a model that ties the
+counts to the points allowed would be a new block with its own
+pre-registration. Not a contender. The run's JSON stores the fitted
+normal's scores but not its (a, b): a key clash in the harness's fold
+result, fixed after the runs (reporting only; the bar never read it).
