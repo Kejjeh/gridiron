@@ -319,22 +319,27 @@ def load_skill_tables(crosswalk: Crosswalk) -> dict[int, pd.DataFrame]:
         TABLES.mkdir(parents=True, exist_ok=True)
         for s in missing:
             ab.season_table(s, crosswalk, bt).to_parquet(TABLES / f"season_{s}.parquet", index=False)
-    nfl = _nfl()
     for s in SEASONS:
-        t = _keep(pd.read_parquet(TABLES / f"season_{s}.parquet"))
-        wk = nfl.load_player_stats([s], summary_level="week").to_pandas()
-        wk = wk.loc[wk["season_type"] == "REG", ["player_id", "week", "team", "opponent_team",
-                                                 "game_id"]]
-        wk = wk.rename(columns={"player_id": "gsis_id", "opponent_team": "opponent"})
-        wk["gsis_id"] = wk["gsis_id"].map(normalize_id)
-        wk = wk.drop_duplicates(["gsis_id", "week"])
-        t = t.merge(wk, on=["gsis_id", "week"], how="left")
-        sched = normalize_teams(nfl.load_schedules([s]).to_pandas())
-        home = sched.loc[sched["game_type"] == "REG", ["game_id", "home_team"]]
-        t = t.merge(home, on="game_id", how="left")
-        t["home"] = (t["team"] == t["home_team"]).astype(float)
-        out[s] = t.drop(columns=["home_team"])
+        out[s] = attach_keys(_keep(pd.read_parquet(TABLES / f"season_{s}.parquet")), s)
     return out
+
+
+def attach_keys(t: pd.DataFrame, season: int) -> pd.DataFrame:
+    """The pre-game keys of a season table's rows: team, opponent, game, home."""
+    nfl = _nfl()
+    wk = nfl.load_player_stats([season], summary_level="week").to_pandas()
+    wk = wk.loc[wk["season_type"] == "REG", ["player_id", "week", "team", "opponent_team",
+                                             "game_id"]]
+    wk = wk.rename(columns={"player_id": "gsis_id", "opponent_team": "opponent"})
+    wk["gsis_id"] = wk["gsis_id"].map(normalize_id)
+    wk = normalize_teams(wk.drop_duplicates(["gsis_id", "week"]))
+    t = t.merge(wk, on=["gsis_id", "week"], how="left")
+    sched = normalize_teams(nfl.load_schedules([season]).to_pandas())
+    home = sched.loc[sched["game_type"] == "REG", ["game_id", "home_team"]]
+    t = t.merge(home, on="game_id", how="left")
+    t["home"] = (t["team"] == t["home_team"]).astype(float)
+    t["season"] = season
+    return t.drop(columns=["home_team"])
 
 
 def load_kdef_tables(crosswalk: Crosswalk) -> dict[str, dict[int, pd.DataFrame]]:
@@ -349,33 +354,35 @@ def load_kdef_tables(crosswalk: Crosswalk) -> dict[str, dict[int, pd.DataFrame]]
             K, D = kd.season_tables(s, crosswalk, bt)
             K.to_parquet(kp, index=False)
             D.to_parquet(dp, index=False)
-        nfl = _nfl()
-        sched = normalize_teams(nfl.load_schedules([s]).to_pandas())
-        sched = sched.loc[sched["game_type"] == "REG"]
-        sides = pd.concat([
-            sched[["game_id", "week", "home_team", "away_team"]].rename(
-                columns={"home_team": "team", "away_team": "opponent"}).assign(home=1.0),
-            sched[["game_id", "week", "away_team", "home_team"]].rename(
-                columns={"away_team": "team", "home_team": "opponent"}).assign(home=0.0)])
-        wk = nfl.load_player_stats([s], summary_level="week").to_pandas()
+        for pos, path in (("K", kp), ("DEF", dp)):
+            t = pd.read_parquet(path)
+            t = t.loc[(t["week"] >= MIN_WEEK) & t["sleeper"].notna() & t["actual"].notna()].copy()
+            out[pos][s] = attach_special_keys(t, pos, s)
+    return out
+
+
+def attach_special_keys(t: pd.DataFrame, pos: str, season: int) -> pd.DataFrame:
+    """Pre-game keys for a K or DEF table: team (K: from his box score),
+    opponent, game, home."""
+    nfl = _nfl()
+    sched = normalize_teams(nfl.load_schedules([season]).to_pandas())
+    sched = sched.loc[sched["game_type"] == "REG"]
+    sides = pd.concat([
+        sched[["game_id", "week", "home_team", "away_team"]].rename(
+            columns={"home_team": "team", "away_team": "opponent"}).assign(home=1.0),
+        sched[["game_id", "week", "away_team", "home_team"]].rename(
+            columns={"away_team": "team", "home_team": "opponent"}).assign(home=0.0)])
+    t = t.copy()
+    t["season"] = season
+    if pos == "K":
+        wk = nfl.load_player_stats([season], summary_level="week").to_pandas()
         wk = wk.loc[wk["season_type"] == "REG", ["player_id", "week", "team"]].rename(
             columns={"player_id": "gsis_id"})
         wk["gsis_id"] = wk["gsis_id"].map(normalize_id)
         wk = normalize_teams(wk.drop_duplicates(["gsis_id", "week"]))
-        for pos, path in (("K", kp), ("DEF", dp)):
-            t = pd.read_parquet(path)
-            t = t.loc[(t["week"] >= MIN_WEEK) & t["sleeper"].notna() & t["actual"].notna()].copy()
-            t["season"] = s
-            if pos == "K":
-                t = t.merge(wk, on=["gsis_id", "week"], how="left")
-                t = t.merge(sides.drop(columns=["home"]).rename(columns={"opponent": "opponent"}),
-                            on=["week", "team"], how="left")
-                t = t.merge(sides[["week", "team", "home"]], on=["week", "team"], how="left",
-                            suffixes=("", "_sched"))
-            else:
-                t = t.merge(sides.drop(columns=["home"]), on=["week", "team"], how="left")
-            out[pos][s] = t
-    return out
+        t = t.merge(wk, on=["gsis_id", "week"], how="left")
+        return t.merge(sides, on=["week", "team"], how="left")
+    return t.merge(sides.drop(columns=["home"]), on=["week", "team"], how="left")
 
 
 def tables_digest(paths) -> str:
@@ -613,7 +620,8 @@ def leak_check(mod, ctx: Context, full: pd.DataFrame, key: list[str]) -> list[st
         cut, _ = build_block(mod, ctx.truncated(s, w))
         a = full.loc[(full["season"] == s) & (full["week"] == w)].set_index(key)[wanted]
         b = cut.loc[(cut["season"] == s) & (cut["week"] == w)].set_index(key)[wanted]
-        a, b = a.sort_index(), b.reindex(a.index)
+        a = a.sort_index()
+        b = b.reindex(a.index)            # align to a's SORTED order
         diff = ~np.isclose(a.to_numpy(), b.to_numpy(), equal_nan=True, rtol=0, atol=1e-9)
         if diff.any():
             cols = [wanted[i] for i in sorted(set(np.where(diff)[1]))]
