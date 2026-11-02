@@ -78,6 +78,7 @@ Sleeper's player map, or submits anything to the league.
   games (NFL minimum) and flagged `IR since wkN`, never guessed beyond
   (docs/research/ROLE_CHANGE_BACKTEST.md); ROS is
   points, not ΔP(win) — holds, drops and trades, never a lineup call.
+- **Streaming plan** (`gridiron.streaming`, TE-09/K-13/DEF-13): `ros_rankings.py`'s `## Streaming plan` — TE, K, DEF week by week (`--stream 12-14`), planning, not a move.
 
 ## First real grade (2026-09-30, week 3, board of 09-27 13:06Z)
 
