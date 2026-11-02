@@ -16,9 +16,10 @@ role, person, week range), 2019-2026:
   DC   the defensive coordinator title.
 
 Research rows come from the sourced-research workflows: each row carries the
-URL a researcher opened and a verbatim quote, and a second, independent
-checker re-opened every source. ONLY rows the checker confirmed enter the
-table (with the checker's replacement source when it found a better one).
+URL a researcher opened and a verbatim quote. A row enters the table only
+when it is confirmed: scripts/research/check_sources.py found the quote on
+the page with the role's words and the person's name, or a second agent
+re-read the source, or a person read it (`--manual`); `basis` says which.
 Rows nobody could source are absent; a consumer treats absence as unknown,
 never as "the OC called plays". `basis` says which kind each row is.
 """
@@ -68,8 +69,32 @@ def nflverse_hc() -> list[dict]:
     return out
 
 
-def checked_rows(paths) -> tuple[list[dict], list[dict]]:
-    """(confirmed rows, dropped rows with the reason) from workflow outputs."""
+def _checks(paths) -> dict:
+    """(season, index) -> the mechanical check (scripts/research/check_sources.py)."""
+    out = {}
+    for p in paths or []:
+        for r in json.loads(Path(p).read_text(encoding="utf-8")):
+            out[(int(r["season"]), int(r["index"]))] = r
+    return out
+
+
+def _manual(path) -> dict:
+    """(season, team, role, name) -> {"accept": bool, "why": str}: a person read
+    the cited page (rows the mechanical check could not confirm)."""
+    if not path:
+        return {}
+    rows = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {(int(r["season"]), r["team"], r["role"], r["name"]): r for r in rows}
+
+
+def checked_rows(paths, checks=None, manual=None) -> tuple[list[dict], list[dict]]:
+    """(accepted rows, dropped rows with the reason) from workflow outputs.
+
+    A row is accepted when a second reader confirmed it (`verdicts`, with no
+    contradiction), or the mechanical check found its verbatim quote on the
+    page with the role's words and the person's name, or a person read the
+    page (`manual`). A contradiction from any reader drops it."""
+    checks, manual = _checks(checks), _manual(manual)
     keep, dropped = [], []
     for p in paths:
         blob = json.loads(Path(p).read_text(encoding="utf-8"))
@@ -79,49 +104,72 @@ def checked_rows(paths) -> tuple[list[dict], list[dict]]:
             season = int(item.get("season") or res.get("season"))
             by_index = {v["index"]: v for v in (verdicts or [])}
             for i, r in enumerate(res.get("rows") or []):
-                v = by_index.get(i)
                 row = {"season": season, "team": r["team"], "role": r["role"], "name": r["name"].strip(),
                        "week_from": int(r["week_from"]), "week_to": int(r["week_to"])}
-                if v is None or not v.get("supported"):
-                    dropped.append({**row, "why": "not confirmed by the checker"
-                                    + (f": {v.get('contradiction')}" if v and v.get("contradiction") else "")})
+                v, c = by_index.get(i), checks.get((season, i))
+                m = manual.get((season, r["team"], r["role"], row["name"]))
+                if v and v.get("contradiction"):
+                    dropped.append({**row, "why": f"a reader found a contradiction: {v['contradiction']}"})
                     continue
-                if v.get("contradiction"):
-                    dropped.append({**row, "why": f"checker found a contradiction: {v['contradiction']}"})
+                if m is not None and not m.get("accept"):
+                    dropped.append({**row, "why": f"read by hand: {m.get('why')}"})
                     continue
-                url = v.get("new_source_url") or r["source_url"]
-                quote = v.get("new_quote") or r["quote"]
-                keep.append({**row, "basis": "sourced, re-checked", "source": url, "quote": quote})
+                url = (v or {}).get("new_source_url") or r["source_url"]
+                quote = (v or {}).get("new_quote") or r["quote"]
+                basis = []
+                if c and c.get("passes"):
+                    basis.append("quote checked on the page")
+                if v and v.get("supported"):
+                    basis.append("re-read by a second agent")
+                if m is not None and m.get("accept"):
+                    basis.append(f"read by hand ({m.get('why')})")
+                if not basis:
+                    dropped.append({**row, "why": "not confirmed (" + (
+                        "page not fetched" if c and not c.get("fetched") else
+                        "quote not on the page" if c and not c.get("quote_found") else
+                        "role words missing from the quote" if c and not c.get("role_words") else
+                        "name not on the page" if c else "no check") + ")"})
+                    continue
+                keep.append({**row, "basis": "sourced; " + "; ".join(basis), "source": url,
+                             "quote": quote})
     return keep, dropped
 
 
-def apply_hc_changes(hc: list[dict], path: str | None) -> tuple[list[dict], list[dict]]:
+def apply_hc_changes(hc: list[dict], path: str | None,
+                     checks: str | None = None) -> tuple[list[dict], list[dict]]:
     if not path:
         return hc, []
     blob = json.loads(Path(path).read_text(encoding="utf-8"))
     blob = blob.get("result", blob)
     changes = (blob.get("research") or {}).get("changes") or []
     verdicts = {v["index"]: v for v in ((blob.get("verify") or {}).get("verdicts") or [])}
+    mech = {int(r["index"]): r for r in json.loads(Path(checks).read_text(encoding="utf-8"))} \
+        if checks else {}
     applied, dropped = [], []
     out = list(hc)
     for i, c in enumerate(changes):
-        v = verdicts.get(i)
-        if v is None or not v.get("supported") or v.get("correction"):
-            dropped.append({**c, "why": "not confirmed" if not v or not v.get("supported")
+        v, m = verdicts.get(i), mech.get(i)
+        if v is not None and (not v.get("supported") or v.get("correction")):
+            dropped.append({**c, "why": "not confirmed" if not v.get("supported")
                             else f"checker correction: {v['correction']}"})
             continue
+        if v is None and not (m and m.get("passes")):
+            dropped.append({**c, "why": "not confirmed (no reader, mechanical check failed)"})
+            continue
         season, team, first = int(c["season"]), c["team"], int(c["first_week_incoming"])
-        url, quote = v.get("new_source_url") or c["source_url"], v.get("new_quote") or c["quote"]
+        url = (v or {}).get("new_source_url") or c["source_url"]
+        quote = (v or {}).get("new_quote") or c["quote"]
         # the outgoing coach's rows end the week before; the incoming coach's begin
         kept = [r for r in out if not (r["season"] == season and r["team"] == team and r["role"] == "HC")]
         prior = [r for r in out if r["season"] == season and r["team"] == team and r["role"] == "HC"]
         start = min((r["week_from"] for r in prior), default=1)
         end = max((r["week_to"] for r in prior), default=last_week(season))
+        basis = "sourced; " + ("re-read by a second agent" if v else "quote checked on the page")
         kept.append({"season": season, "team": team, "role": "HC", "name": c["outgoing"].strip(),
-                     "week_from": start, "week_to": first - 1, "basis": "sourced, re-checked",
+                     "week_from": start, "week_to": first - 1, "basis": basis,
                      "source": url, "quote": quote})
         kept.append({"season": season, "team": team, "role": "HC", "name": c["incoming"].strip(),
-                     "week_from": first, "week_to": end, "basis": "sourced, re-checked",
+                     "week_from": first, "week_to": end, "basis": basis,
                      "source": url, "quote": quote})
         out = kept
         applied.append(c)
@@ -143,7 +191,9 @@ def validate(rows: list[dict]) -> list[str]:
         weeks = []
         for a, b in zip(g["week_from"], g["week_to"]):
             weeks += list(range(int(a), int(b) + 1))
-        if len(weeks) != len(set(weeks)):
+        # one head coach and one play-caller at a time; coordinator TITLES can
+        # be shared (co-coordinators), so overlapping OC/DC rows are allowed
+        if role in ("HC", "OPC") and len(weeks) != len(set(weeks)):
             problems.append(f"overlapping {role} rows for {t} {s}: {sorted(g['name'])}")
     return problems
 
@@ -152,10 +202,13 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--research", nargs="*", default=[])
     ap.add_argument("--hc-changes", default=None)
+    ap.add_argument("--hc-checks", default=None, help="check_sources.py --kind hc output")
+    ap.add_argument("--checks", nargs="*", default=[], help="check_sources.py outputs")
+    ap.add_argument("--manual", default=None, help="rows a person read: accept or reject")
     ap.add_argument("--check", action="store_true", help="validate and report; write nothing")
     args = ap.parse_args(argv)
-    hc, hc_dropped = apply_hc_changes(nflverse_hc(), args.hc_changes)
-    research, dropped = checked_rows(args.research)
+    hc, hc_dropped = apply_hc_changes(nflverse_hc(), args.hc_changes, args.hc_checks)
+    research, dropped = checked_rows(args.research, args.checks, args.manual)
     rows = sorted(hc + research, key=lambda r: (r["season"], r["team"], r["role"], r["week_from"]))
     problems = validate(rows)
     for p in problems:
