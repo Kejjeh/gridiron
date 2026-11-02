@@ -42,13 +42,17 @@ def result(idea_id: str) -> dict | None:
 def row(i: dict) -> dict:
     r = result(i["id"])
     base = {"id": i["id"], "idea": i["idea"], "kind": i["kind"]}
+    doc = RESULTS.parent / f"{i['id']}.md"
+    if r is None and doc.exists() and "NOT TESTABLE" in doc.read_text(encoding="utf-8")[:600]:
+        return {**base, "scored": "", "folds": "", "d_pw": "", "d_mae": "",
+                "verdict": "not testable with free data (see its doc)"}
     if r is None:
         if i["kind"] == "—":
             why = "deferred: no free data"
         elif i["kind"] == "M":
             why = "waiting on collected props (workstream A)"
         elif i["kind"] == "P":
-            why = "product list, not a model test"
+            why = "product list, shipped (`gridiron.streaming`)"
         else:
             why = "not run yet"
         return {**base, "scored": "", "folds": "", "d_pw": "", "d_mae": "", "verdict": why}
