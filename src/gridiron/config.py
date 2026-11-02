@@ -30,7 +30,8 @@ class Settings(BaseSettings):
     # Sleeper needs no auth; just the league id if the league lives there.
     sleeper_league_id: str | None = None
 
-    # Betting lines provider (pick one early — see bootstrap doc §3)
+    # The Odds API (free plan): read only by the prop collector,
+    # scripts/ingest/pull_props.py, which never prints it.
     odds_api_key: str | None = None
 
 
