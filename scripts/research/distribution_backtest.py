@@ -392,7 +392,9 @@ def run_folds(mod, frame, key, frames, cols, def_sd: float, folds_for, reps: int
             lx, lp = lattice_normal(mu, page_sd)
             sc["lattice_normal"] = scores_lattice(lx, lp, 1.0, y)
         res = {"rows": int(len(test)), "params": params,
-               "fitted_normal": {"a": round(fa, 4), "b": round(fb, 4)},
+               # its own key: under "fitted_normal" the scores below overwrote
+               # these in the first P7 runs (2026-11-02; reporting only)
+               "fitted_normal_ab": {"a": round(fa, 4), "b": round(fb, 4)},
                "train_rows": int(len(train)),
                **{k: summarize(v) for k, v in sc.items()},
                "candidate_sd_mean": round(float(np.mean(np.sqrt(np.maximum(
