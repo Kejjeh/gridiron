@@ -1,0 +1,97 @@
+{
+ "season": 2026,
+ "through_week": 7,
+ "built": "2026-11-02T10:05:36+00:00",
+ "blocks": {
+  "RB-R2": {
+   "block": "RB-R2",
+   "positions": [
+    "RB"
+   ],
+   "weeks": {
+    "RB": {
+     "4": {
+      "pairs": 1128,
+      "rows": 87,
+      "shipped": {
+       "pairwise": 0.719858,
+       "mae": 4.351
+      },
+      "block": {
+       "pairwise": 0.714539,
+       "mae": 4.3666
+      }
+     },
+     "5": {
+      "pairs": 1267,
+      "rows": 80,
+      "shipped": {
+       "pairwise": 0.713496,
+       "mae": 4.2315
+      },
+      "block": {
+       "pairwise": 0.711918,
+       "mae": 4.3172
+      }
+     },
+     "6": {
+      "pairs": 943,
+      "rows": 73,
+      "shipped": {
+       "pairwise": 0.69141,
+       "mae": 3.7864
+      },
+      "block": {
+       "pairwise": 0.68929,
+       "mae": 3.829
+      }
+     },
+     "7": {
+      "pairs": 859,
+      "rows": 71,
+      "shipped": {
+       "pairwise": 0.630966,
+       "mae": 4.3977
+      },
+      "block": {
+       "pairwise": 0.639115,
+       "mae": 4.3478
+      }
+     }
+    }
+   },
+   "pooled": {
+    "RB": {
+     "pairs": 4197,
+     "rows": 311,
+     "sleeper": {
+      "pairwise": 0.68263,
+      "mae": 4.0857
+     },
+     "shipped": {
+      "pairwise": 0.693352,
+      "mae": 4.1984
+     },
+     "block": {
+      "pairwise": 0.692638,
+      "mae": 4.2234
+     }
+    }
+   },
+   "result_committed": "2026-11-02T09:28:58+00:00",
+   "live_weeks": [],
+   "verdict": {
+    "RB": {
+     "better_on_both": false,
+     "eligible": false
+    }
+   }
+  }
+ },
+ "skipped": {
+  "K-03": "scored by another harness (harness_blob 76c30a13bf3b, kind distribution), not block_runner.py",
+  "RB-13": "scored by another harness (harness_blob 76c30a13bf3b, kind distribution), not block_runner.py",
+  "TE-10": "scored by another harness (harness_blob 76c30a13bf3b, kind distribution), not block_runner.py",
+  "WR-10": "scored by scripts/research/early_season_backtest.py, not block_runner.py"
+ }
+}
