@@ -105,5 +105,5 @@ and sack-or-hit rates per dropback, for this rush and for the line it faces,
 move the defense numbers by -0.37 to +0.79 points of pairwise and -0.043 to
 +0.040 of MAE, but in no consistent direction: ordering is better in three
 folds and worse in four, error better in four and worse in three. Over the
-per-game sack counts already in the set, they read as noise on about 450
+per-game sack counts already in the set, they read as noise on 397 to 448
 defense-weeks a fold. Not shipped, not a contender.
