@@ -67,6 +67,22 @@ rows name the team's head coach.
 The 2026 rows are as of 2026-11-02, through week 8. A change after that
 appears only when the table is rebuilt.
 
+**Hindsight rows.** A few in-season play-calling changes were reported only
+after the game, so for those weeks the table knows more than a pre-game
+reader could. For a backtest that flatters a block (the P3 blocks failed
+regardless); for live use it does not matter, since the board reads only
+the current week. Known cases, from the rows' own quotes:
+
+- 2021 PHI: Shane Steichen from week 8. Reported in 2022 as "about midway
+  through last season", so the week-8 boundary is an estimate.
+- 2021 CHI: Bill Lazor in week 4. Admitted after that game.
+- 2020 NYJ: Dowell Loggains in week 7. Disclosed after the game. Only the
+  week-8 handoff was announced in advance.
+- 2022 LA: Liam Coen in week 12. From a retrospective article.
+
+A follow-up that reuses `_tendencies.in_charge` should first give each
+in-season OPC row a public-from date, the source's publication date.
+
 ## Rebuild
 
 ```
