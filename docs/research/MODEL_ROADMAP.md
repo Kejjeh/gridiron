@@ -1,6 +1,37 @@
 # Model roadmap: 78 ideas, free sources only (plan, 2026-11-02)
 
-**Status: PLAN.** Nothing here is tested or shipped. It schedules the 13
+**Status: EXECUTED through phase 2 on 2026-11-02; the rest is time-gated.**
+The owner said "execute all phases now", read as approval of the four
+decisions below as written. Every idea with free data was pre-registered
+and tested; where each stands is in `docs/research/blocks/RESULTS.md`
+(generated, one row per idea and per result). In short:
+
+- **Feature blocks** (the block runner, `scripts/research/block_runner.py`,
+  which reproduces the shipped seven-fold numbers): 58 scored, none beats
+  the shipped set in every fold. A bug hunt over the near misses fixed
+  three shared helpers; the 14 blocks that read them were re-run once and
+  still fail. Round 2 (`blocks/ROUND2.md`, five declared post-hoc
+  combinations): RB-R2 cleared all seven folds, then was worse on both
+  metrics on 2026 weeks 4-7. Nothing serves.
+- **Distributions** (workstream D, `distribution_backtest.py`): RB-13,
+  TE-10 and K-03 pass their historical bars, DEF-03 fails. Their 2026
+  holdouts: `blocks/<ID>-2026.md`.
+- **Week 1-3 priors** (`early_season_backtest.py`): WR-10 passes history but
+  fails its frozen 2026 test; QB-12 and TE-13 fail. 2027 work.
+- **Built:** the play-caller table (workstream B, `PLAY_CALLERS.md`), the
+  prop collector, record-only (workstream A, `PROPS_COLLECTOR.md`), the
+  TE/K/DEF streaming lists (`gridiron.streaming`), the data inventory.
+- **Not testable or deferred:** TE-02 (no per-player route data); RB-12,
+  WR-06, WR-12 (no free data). The six market ideas (QB-01 ... DEF-01) wait
+  on collected props.
+
+Time-gated, in order: the collector runs only once it is on `main` with the
+owner's free Odds API key (secret and `.env`) and `GRIDIRON_PROPS_ENABLED`;
+the book ranking needs 4+ collected weeks; any contender needs two live
+weeks record-only before a serving decision; nothing changes after the
+week-14 board; the offseason re-tests everything on the full 2026 season.
+
+The plan as written on 2026-11-02 follows, unchanged. It schedules the 13
 ideas per position brainstormed on 2026-11-01, plus the four cross-cutting
 workstreams they lean on, using **free sources only**. Paid sources (FTN
 Data API, PFF, SIS, paid odds plans) are deferred. Each deferred idea says
