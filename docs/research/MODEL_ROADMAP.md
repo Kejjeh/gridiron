@@ -14,8 +14,10 @@ and tested; where each stands is in `docs/research/blocks/RESULTS.md`
   combinations): RB-R2 cleared all seven folds, then was worse on both
   metrics on 2026 weeks 4-7. Nothing serves.
 - **Distributions** (workstream D, `distribution_backtest.py`): RB-13,
-  TE-10 and K-03 pass their historical bars, DEF-03 fails. Their 2026
-  holdouts: `blocks/<ID>-2026.md`.
+  TE-10 and K-03 pass their historical bars, DEF-03 fails. On frozen 2026
+  weeks 4-7 (`blocks/<ID>-2026.md`) RB-13 and TE-10 pass and K-03 fails.
+  RB-13 and TE-10 are record-only contenders; their live check on weeks 9
+  and 10 is pre-registered (`blocks/P7_LIVE.md`).
 - **Week 1-3 priors** (`early_season_backtest.py`): WR-10 passes history but
   fails its frozen 2026 test; QB-12 and TE-13 fail. 2027 work.
 - **Built:** the play-caller table (workstream B, `PLAY_CALLERS.md`), the
