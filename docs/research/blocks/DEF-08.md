@@ -74,3 +74,17 @@ need a live forecast for the week's games, which the board does not pull
 today.
 
 ## Result
+
+Run 2026-11-02T04:16:38+00:00 (one scored run; `runs/DEF-08.csv`). Pairwise (all defenses in a week) and MAE on DEF rows:
+
+| fold | shipped | DEF-08 |
+|---|---|---|
+| 2019 | 60.23%, 5.248 | 60.47%, 5.242 |
+| 2020 | 60.30%, 4.638 | 60.16%, 4.664 |
+| 2021 | 60.28%, 4.801 | 60.44%, 4.798 |
+| 2022 | 59.26%, 4.335 | 59.26%, 4.326 |
+| 2023 | 60.72%, 4.835 | 61.03%, 4.824 |
+| 2024 | 64.66%, 4.461 | 64.54%, 4.455 |
+| 2025 | 62.01%, 4.588 | 62.22%, 4.588 |
+
+**Fails.** Better on both metrics in 4 of 7 folds (2019, 2021, 2023, 2025; 2025's error is lower in the fourth decimal, 4.5877 vs 4.5878); 2022 ties on ordering (the same pairs) with lower error; 2024 has lower error but worse ordering; 2020 is worse on both (+0.026 error). Mean change +0.10 points of pairwise, -0.0011 MAE. Wind and rain move the defense ordering by -8 to +19 pairs a fold (of 5,222 to 6,179): what weather does to a defense's points is mostly already in the opponent's implied total. Not shipped, not a contender.
