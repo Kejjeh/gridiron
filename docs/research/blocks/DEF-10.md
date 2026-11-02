@@ -77,4 +77,4 @@ Run 2026-11-02T04:15:36+00:00 (one scored run; `runs/DEF-10.csv`). Pairwise (all
 | 2024 | 64.66%, 4.461 | 64.56%, 4.457 |
 | 2025 | 62.01%, 4.588 | 61.75%, 4.610 |
 
-**Fails.** Better on both metrics in 4 of 7 folds (2019, 2020, 2021, 2023); 2022 and 2024 have lower error but worse ordering; 2025 is worse on both. Mean change +0.17 points of pairwise, -0.0130 MAE, the largest gain of the package. Rest and the opponent's travel lower the defense error in six folds and lift the ordering by 10 to 46 pairs (of 5,222 to 6,179) in four, but the gain fades after 2021 and turns into a loss in 2025: a small, unsteady edge the every-fold bar does not admit. Not shipped, not a contender.
+**Fails.** Better on both metrics in 4 of 7 folds (2019, 2020, 2021, 2023); 2022 and 2024 have lower error but worse ordering; 2025 is worse on both. Mean change +0.17 points of pairwise, -0.0130 MAE. Rest and the opponent's travel lower the defense error in six folds and lift the ordering by 10 to 46 pairs (of 5,222 to 6,179) in four, but the gain fades after 2021 and turns into a loss in 2025: a small, unsteady edge the every-fold bar does not admit. Not shipped, not a contender.
