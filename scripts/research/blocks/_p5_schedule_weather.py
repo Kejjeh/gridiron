@@ -28,9 +28,11 @@ non-commercial use: "Weather data by Open-Meteo.com". The archived forecast
 elsewhere) at the venue's coordinates is preferred. Open-Meteo assembles it
 from the first hours of each model run, so it is a short-range forecast,
 close to the observation, not the multi-day forecast a lineup decision sees.
-Where it has no values (the international venues before 2021) the observed
-reanalysis (archive-api, ERA5) stands in; the source is recorded per game
-(`wx_source`). Indoors (roof dome or closed) there is no weather: wind 0,
+Where it has no values (the international venues before 2021) the game's
+weather is UNKNOWN. (Until the 2026-11-02 correction the observed
+reanalysis, archive-api ERA5, stood in there: a post-game observation, so a
+leak. It is still pulled and counted by `--summary`, never used.) The source
+is recorded per game (`wx_source`). Indoors (roof dome or closed) there is no weather: wind 0,
 precipitation 0. Window: wind is the mean of the hourly 10 m wind speed (mph)
 at the kickoff hour (UTC, floored) and the two hours after it; precipitation
 is the sum of the three hourly totals after the kickoff hour (mm, the
@@ -291,8 +293,15 @@ def _values(kind: str, venue: str, season: int,
 
 def weather(g: pd.DataFrame) -> pd.DataFrame:
     """Per game: wind_kick (mph), precip_kick (mm), wx_source. Indoors 0 and
-    0 ('indoors'); outdoors the archived forecast, else the observed
-    reanalysis; missing when the venue or roof is unknown or nothing is cached."""
+    0 ('indoors'); outdoors the archived forecast; missing when the venue or
+    roof is unknown, nothing is cached, or only the observed reanalysis has
+    the game (wx_source 'observed, not used').
+
+    Correction 2026-11-02 (the near-miss bug hunt): the observed reanalysis
+    used to stand in where the archived forecast has no values (the five
+    2019 international games). It is an observation made after kickoff, so it
+    is a leak whatever the pre-registrations disclosed; such a game is now
+    unknown and enters the model as 0 plus its `__known` flag."""
     rows = []
     for r in g.itertuples(index=False):
         wind = rain = np.nan
@@ -300,12 +309,12 @@ def weather(g: pd.DataFrame) -> pd.DataFrame:
         if r.indoor == 1.0:
             wind, rain, src = 0.0, 0.0, "indoors"
         elif r.indoor == 0.0 and isinstance(r.venue, str) and not pd.isna(r.kick_utc):
-            for kind, label in (("forecast", "forecast"), ("archive", "observed")):
-                got = _values(kind, r.venue, r.season, r.kick_utc)
-                if got is not None:
-                    wind, rain = got
-                    src = label
-                    break
+            got = _values("forecast", r.venue, r.season, r.kick_utc)
+            if got is not None:
+                wind, rain = got
+                src = "forecast"
+            elif _values("archive", r.venue, r.season, r.kick_utc) is not None:
+                src = "observed, not used"
             else:
                 src = "not cached"
         rows.append({"game_id": r.game_id, "wind_kick": wind, "precip_kick": rain,

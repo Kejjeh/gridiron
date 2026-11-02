@@ -7,11 +7,14 @@ Availability in week w (pre-game facts only)
     * the week's final injury report lists him Out or Doubtful (the rule of
       the shipped `vacated_pickup`), or
     * the week's weekly roster lists him on T with a reserve or departure
-      status (`RESERVE`, `GONE`), or lists him on another team only (traded,
-      signed away).
+      status (`RESERVE`, `GONE`), or does not list him on T at all while T
+      has a roster that week (released, traded, signed away), or lists him
+      on another team only.
   INA (the game-day inactive list, 90 minutes before kickoff) and DEV (the
-  practice squad) never count, and Questionable is not Out (rule #11). A
-  player with no roster row that week is not flagged.
+  practice squad) never count, and Questionable is not Out (rule #11). When T
+  has no roster that week and nobody lists him, he is not flagged.
+  (Corrected 2026-11-02, see `roster_away`: until then a player missing from
+  T's roster was flagged only when another team listed him.)
 
   The reserve codes differ by era. The 2019-2020 rosters carry PUP, SUS, NWT,
   RSN, RSR and EXE as statuses of their own; from 2021 they are all RES with
@@ -126,16 +129,28 @@ def rosters(ctx, seasons) -> pd.DataFrame:
 
 def roster_away(ctx, rows: pd.DataFrame) -> np.ndarray:
     """For rows (season, week, team, gsis_id): the weekly roster of that week
-    lists him on the team with a `RESERVE` or `GONE` status, or lists him on
-    another team only."""
+    lists him on the team with a `RESERVE` or `GONE` status (and no available
+    row), or does not list him on the team at all while the team has a
+    roster that week, or lists him on another team only.
+
+    Correction 2026-11-02 (the near-miss bug hunt): a player missing from his
+    team's roster used to be flagged only when another team listed him. The
+    rosters keep a released player differently by season: in 2019 a CUT row
+    stays on the releasing team for the rest of the season, from 2020 it
+    appears about once and a player nobody signs then has no row anywhere.
+    So from 2020 a released, unsigned player counted as available, and his
+    old share stayed in the teammates' denominators. Off his team's roster
+    now means away in every season."""
     ro = rosters(ctx, sorted(rows["season"].unique()))
     own = (ro.assign(away=ro["status"].isin(RESERVE + GONE))
            .groupby(MATE, as_index=False)["away"].min())      # one available row on T: available
     listed = ro[KEY].drop_duplicates().assign(listed=True)
+    have = ro[TEAM_WEEK].drop_duplicates().assign(have=True)
     m = (rows[MATE].reset_index(drop=True).merge(own, on=MATE, how="left")
-         .merge(listed, on=KEY, how="left"))
-    moved = m["away"].isna() & m["listed"].fillna(False).astype(bool)
-    return (m["away"].fillna(False).astype(bool) | moved).to_numpy()
+         .merge(listed, on=KEY, how="left").merge(have, on=TEAM_WEEK, how="left"))
+    off = m["away"].isna() & (m["listed"].fillna(False).astype(bool)
+                              | m["have"].fillna(False).astype(bool))
+    return (m["away"].fillna(False).astype(bool) | off).to_numpy()
 
 
 def unavailable(ctx, rows: pd.DataFrame) -> np.ndarray:

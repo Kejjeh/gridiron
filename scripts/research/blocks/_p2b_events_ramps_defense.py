@@ -67,9 +67,24 @@ NON_INJURY = ("not injury related", "personal", "coach", "suspension", "decision
               "inactive", "load management", "covid", "discipline", "illness")
 NON_INJURY_WORDS = frozenset({"rest", "resting"})
 NON_INJURY_TEXTS = frozenset({"other", "nir"})
-#: Weekly-roster statuses that are an injury list: reserve (injured reserve,
-#: non-football injury), physically unable to perform.
-HURT_STATUSES = ("RES", "PUP", "NFI")
+#: Weekly-roster entries that are an injury list: injured reserve (with or
+#: without a return designation), physically unable to perform, non-football
+#: injury. From 2021 every reserve list is status RES with a description
+#: code, so the code decides (`INJURY_CODES`); 2019 and most of 2020 carry no
+#: code and separate statuses, so the status decides (`HURT_STATUSES`: RES,
+#: PUP, and RSN, the old non-football-injury list). PUP and RSN count with any
+#: code. Not injury lists, whatever the era: COVID-19 (R59), the 2020 RSR
+#: status (it maps to both R59 and R48, so it stays uncounted as before),
+#: the 2020 opt-outs (R62, NWT), suspensions (R30, R33, R40, SUS),
+#: non-football illness (R27), retired (R02), did not report (R03), left
+#: squad (R06) and every other code. Mapped on the 2020 rosters, which carry
+#: both forms: a player's old status two weeks either side of his coded one
+#: (RES -> R01/R48, PUP -> R04, RSN -> R05/R27, NWT -> R62, SUS -> R30).
+#: Corrected 2026-11-02 (the near-miss bug hunt): every RES row used to count,
+#: so from 2020 the COVID list and suspensions counted as injuries, against the
+#: pre-registrations of RB-02, WR-13 and TE-12; and RSN never counted.
+HURT_STATUSES = ("RES", "PUP", "RSN", "NFI")
+INJURY_CODES = ("R01", "R04", "R05", "R47", "R48")
 #: ret_missed is capped here (a long reserve stint counts as this many games).
 MAX_MISSED = 8
 BOX_COLUMNS = ("player_id", "team", "position", "carries", "targets", "fg_att", "pat_att")
@@ -211,17 +226,30 @@ def report(ctx, seasons) -> pd.DataFrame:
 
 def roster(ctx, seasons) -> pd.DataFrame:
     """Week w's rosters, one row per team-week-player (pre-game): season, week,
-    team, gsis_id, status, position (the roster's position group)."""
+    team, gsis_id, status, code (the status description code, "" when the
+    row has none), position (the roster's position group)."""
     def build():
         r = ctx.rosters_weekly(seasons)
         r = r.loc[r["gsis_id"].notna()]
+        code = (r["status_description_abbr"] if "status_description_abbr" in r.columns
+                else pd.Series("", index=r.index))
         out = pd.DataFrame({"season": r["season"].astype(int), "week": r["week"].astype(int),
                             "team": r["team"].astype(str),
                             "gsis_id": C.ids(r["gsis_id"]).astype(str),
                             "status": r["status"].fillna("").astype(str),
+                            "code": code.fillna("").astype(str),
                             "position": r["position"].fillna("").astype(str)})
         return out.drop_duplicates(["season", "week", "team", "gsis_id"]).reset_index(drop=True)
     return _memo(ctx, "roster", seasons, build)
+
+
+def injury_list(status: pd.Series, code: pd.Series) -> pd.Series:
+    """True where a weekly-roster row is an injury list (`HURT_STATUSES`,
+    `INJURY_CODES`): RES with an injury code, or with no code (2019-2020);
+    PUP, RSN or NFI with any code."""
+    status, code = status.astype(str), code.astype(str)
+    res = status.eq("RES") & (code.isin(INJURY_CODES) | code.eq(""))
+    return res | status.isin([s for s in HURT_STATUSES if s != "RES"])
 
 
 # ------------------------------------------------------------------ builders
@@ -267,13 +295,14 @@ def real_injury(text) -> bool:
 def hurt(ctx, seasons) -> pd.DataFrame:
     """Player-weeks known to be injured from that week's own pre-game sources:
     on the week's report with an injury (`real_injury`, any designation), or
-    on an injury list (HURT_STATUSES) on the week's roster. (season, week,
+    on an injury list (`injury_list`) on the week's roster. (season, week,
     gsis_id, injury: the report's text, "" when only the roster says so)."""
     def build():
         rep = report(ctx, seasons)
         rep = rep.loc[[real_injury(x) for x in rep["injury"]], ["season", "week", "gsis_id", "injury"]]
         ros = roster(ctx, seasons)
-        ros = ros.loc[ros["status"].isin(HURT_STATUSES), ["season", "week", "gsis_id"]].assign(injury="")
+        ros = ros.loc[injury_list(ros["status"], ros["code"]),
+                      ["season", "week", "gsis_id"]].assign(injury="")
         out = pd.concat([rep, ros], ignore_index=True)
         out["_has"] = (out["injury"] != "").astype(int)
         out = (out.sort_values(["season", "week", "gsis_id", "_has"], kind="stable")
