@@ -12,6 +12,13 @@ it fits the shipped set and the block on all of 2019-2025, predicts 2026 weeks
 projections, the block's own build), and scores both on identical rows, week
 by week and pooled, on the positions the block passed.
 
+Only block_runner.py blocks are scored here. A pass written by another
+harness (its results JSON names a "harness" other than block_runner.py, or
+carries a "harness_blob": the early-season and distribution harnesses), or
+a pass with no module in scripts/research/blocks/, is skipped with one line
+naming it. Its 2026 holdout, if any, is its own harness's
+(results/<ID>-2026.json, as for WR-10).
+
 The live forward check is the weeks played AFTER the block's result was
 committed (`live` in the output): a block is eligible for a serving
 decision only with at least two such weeks and better pooled pairwise AND MAE
@@ -32,6 +39,7 @@ import json
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -44,6 +52,42 @@ from gridiron.paths import REPO_ROOT, RESEARCH_CACHE
 SEASON = 2026
 HOLDOUT_TABLES = RESEARCH_CACHE / "tables" / "holdout"
 OUT = R.PREREG_DIR / "holdout_2026.json"
+RUNNER = "block_runner.py"
+
+
+def skip_reason(res: dict, blocks_dir) -> str | None:
+    """Why a passing result is not a block_runner.py block, or None when it is.
+    Runner results name no harness; the other harnesses say who scored them."""
+    block = res.get("block")
+    named = str(res.get("harness") or "").split()
+    if named and Path(named[0]).name != RUNNER:
+        return f"scored by {named[0]}, not {RUNNER}"
+    if not named and res.get("harness_blob"):
+        kind = f", kind {res['kind']}" if res.get("kind") else ""
+        return f"scored by another harness (harness_blob {res['harness_blob']}{kind}), not {RUNNER}"
+    if not (Path(blocks_dir) / f"{block}.py").exists():
+        return f"no block module scripts/research/blocks/{block}.py"
+    return None
+
+
+def passing_results(results_dir=None, blocks_dir=None) -> tuple[dict, dict]:
+    """The committed results that pass, split in two: {block: (positions, path)}
+    for the block_runner.py blocks this script scores, and {block: reason} for
+    the rest."""
+    results_dir = Path(results_dir or R.RESULTS_DIR)
+    blocks_dir = Path(blocks_dir or R.BLOCKS_DIR)
+    passing, skipped = {}, {}
+    for p in sorted(results_dir.glob("*.json")):
+        res = json.loads(p.read_text(encoding="utf-8"))
+        if not res.get("passed"):
+            continue
+        res.setdefault("block", p.stem)
+        why = skip_reason(res, blocks_dir)
+        if why:
+            skipped[res["block"]] = why
+        else:
+            passing[res["block"]] = (res["passed"], p)
+    return passing, skipped
 
 
 def table_2026(crosswalk: Crosswalk, refresh: bool) -> tuple[pd.DataFrame, dict]:
@@ -139,18 +183,18 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     if args.block and not args.harness_test:
         raise SystemExit("--block is for --harness-test only; the holdout scores passing blocks")
-    passing = {}
-    for p in sorted(R.RESULTS_DIR.glob("*.json")):
-        res = json.loads(p.read_text(encoding="utf-8"))
-        if res.get("passed"):
-            passing[res["block"]] = (res["passed"], committed_at(p))
+    found, skipped = passing_results()
+    passing = {b: (positions, committed_at(p)) for b, (positions, p) in found.items()}
     if args.harness_test:
-        passing = {b: (list(R.load_block(b)[0].COLUMNS), None) for b in args.block}
+        passing, skipped = {b: (list(R.load_block(b)[0].COLUMNS), None) for b in args.block}, {}
+    for b, why in skipped.items():
+        print(f"skip {b}: {why}")
     if not passing:
-        print("no block has passed the historical bar: nothing to hold out")
+        print("no block_runner.py block has passed the historical bar: nothing to hold out")
         if args.write:
-            OUT.write_text(json.dumps({"season": SEASON, "blocks": {}, "note": "no passing block"},
-                                      indent=1) + "\n", encoding="utf-8")
+            OUT.write_text(json.dumps({"season": SEASON, "blocks": {},
+                                       "note": "no passing block_runner.py block",
+                                       "skipped": skipped}, indent=1) + "\n", encoding="utf-8")
         return 0
     crosswalk = Crosswalk.from_csv(args.crosswalk)
     hist_skill = R.load_skill_tables(crosswalk)
@@ -161,7 +205,8 @@ def main(argv=None) -> int:
     kick = first_kickoffs()
     base = R.base_columns()
     report = {"season": SEASON, "through_week": through,
-              "built": datetime.now(timezone.utc).isoformat(timespec="seconds"), "blocks": {}}
+              "built": datetime.now(timezone.utc).isoformat(timespec="seconds"), "blocks": {},
+              "skipped": skipped}
     for block_id, (positions, passed_at) in passing.items():
         r = score_block(block_id, positions, crosswalk, hist_skill, hist_special, skill26,
                         special26, base, through)
