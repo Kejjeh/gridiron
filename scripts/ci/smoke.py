@@ -65,6 +65,7 @@ IMPORTS = [
     "gridiron.shadow",
     "gridiron.models.advanced",
     "gridiron.ros",
+    "gridiron.streaming",
     "gridiron.radar",
     "gridiron.theme",
 ]
@@ -117,6 +118,7 @@ PATTERNS = [
     "test_advanced_model.py",
     "test_k_def.py",
     "test_ros.py",
+    "test_streaming.py",
 ]
 
 # Anti-vacuity floor: a glob typo must not silently shrink the smoke set.
