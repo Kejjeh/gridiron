@@ -63,6 +63,51 @@ Integrity as block_runner.py: the pre-registration, the module, every helper
 (blocks/_*.py) and this harness must be committed and unchanged; each scored
 run writes docs/research/blocks/results/<ID>.json and appends one line to
 runs/<ID>.csv (the runner's ledger fields). Joins are on ids (rule #3).
+
+2026 HOLDOUT (added 2026-11-02, after RB-13, TE-10, K-03 and DEF-03 were
+scored; nothing above changed, and without --holdout-2026 every path runs
+as before)
+
+    PYTHONPATH=src python scripts/research/distribution_backtest.py --block RB-13 --holdout-2026 --coverage-only
+    PYTHONPATH=src python scripts/research/distribution_backtest.py --block RB-13 --holdout-2026
+
+Ground rule 3's untouched season for a block whose committed result passes
+(results/<ID>.json). The block's frozen pipeline is the fold above with the
+2026 rows as the test season and all of 2019-2025 as training: the 2026
+means from models fit on the seven seasons, each training row's mean from
+models fit on the six seasons other than its own (nested), the block's
+`fit` and the fitted normal on those training rows, its `pmf` on the 2026
+rows without their outcome, and the leagues dealt from the 2026 rows. It is
+`run_folds` itself, called for the one test season 2026 (`holdout=True`
+adds the reporting below and changes nothing else).
+
+  window   HOLDOUT_WEEKS, fixed before any 2026 score: a week counts only
+           when every scheduled game of it is in the table (the 2026
+           schedule's regular-season games, each in the season table with
+           both defenses in the DEF table). 2026 weeks 4-7; week 8 had 12 of
+           its 14 games. Only window rows are scored or dealt (their inputs
+           use the 2026 games before each row's week, as in history).
+  tables   holdout_2026.py's cached 2026 tables (table_2026), read the way
+           that script reads them and never rebuilt here.
+  bar      the block's historical bar applied once, pooled over the window:
+           mean CRPS lower than the page's normal, and the pooled P(win)
+           Brier of the window's leagues not worse, on unrounded numbers;
+           the same week-clustered bootstrap (four clusters here).
+  reported each system's share of actuals inside its 10-90% interval beside
+           its OWN share of that interval (0.8 for a normal; for a lattice,
+           the mass on its closed [q10, q90]); for whole points (K), the
+           fitted normal on the lattice too; everything by week; the rows
+           and the matchups used.
+
+A scored holdout refuses unless docs/research/blocks/<ID>-2026.md, the block
+module, every helper, this harness and results/<ID>.json are committed and
+unchanged; the 2019-2025 tables have the digest the block was scored on;
+every window week is complete; the leak check passes at 2026 weeks 4-7; and
+the stored REPRODUCE_FOLD fold, re-run through the unchanged fold code on
+today's data, gives exactly the numbers in results/<ID>.json. It writes
+results/<ID>-2026.json and one line in runs/<ID>-2026.csv. `--coverage-only`
+prints the 2026 coverage, the window, the leak check and the reproduction
+check, never a 2026 score.
 """
 from __future__ import annotations
 
@@ -84,7 +129,7 @@ import block_runner as BR
 import pwin_calibration as PW
 from gridiron.ids import Crosswalk
 from gridiron.models import advanced as A
-from gridiron.paths import REPO_ROOT
+from gridiron.paths import REPO_ROOT, RESEARCH_CACHE
 
 HARNESS = Path(__file__).resolve()
 QUANTILES = (0.1, 0.5, 0.9)
@@ -94,6 +139,16 @@ BOOT = 1000
 BOOT_SEED = 20261102
 SKILL = BR.SKILL
 SQRT_PI = math.sqrt(math.pi)
+
+# --holdout-2026 only (the "2026 HOLDOUT" section above)
+HOLDOUT = 2026
+#: fixed 2026-11-02 before any 2026 score: every scheduled game of each week
+#: is in the cached table (16, 15, 14, 14); week 8 had 12 of its 14
+HOLDOUT_WEEKS = (4, 5, 6, 7)
+HOLDOUT_TABLES = RESEARCH_CACHE / "tables" / "holdout"     # holdout_2026.py's cache
+HOLDOUT_LEAK_CHECKS = tuple((HOLDOUT, w) for w in HOLDOUT_WEEKS)
+REPRODUCE_FOLD = 2025             # the stored fold re-run before a holdout is scored
+NOMINAL_10_90 = 0.8               # a continuous normal's own share of its 10-90% interval
 
 
 # ------------------------------------------------------------------ scores
@@ -158,6 +213,18 @@ def scores_lattice(x0, probs, step, y) -> dict:
         out[f"pinball_{int(t * 100)}"] = pinball(y, q[t], t)
     out["inside_10_90"] = ((y >= q[0.1] - 1e-9) & (y <= q[0.9] + 1e-9)).astype(float)
     return out
+
+
+def lattice_own_share(probs) -> np.ndarray:
+    """The mass a lattice distribution puts on its own closed [q10, q90]
+    (lattice_quantile's quantiles, the interval scores_lattice counts an
+    actual inside; neither depends on where the lattice starts). Above 0.8
+    on a coarse lattice: both end points count. Holdout reporting only."""
+    f = np.cumsum(probs, axis=1)
+    lo = np.argmax(f >= QUANTILES[0] - 1e-12, axis=1)
+    hi = np.argmax(f >= QUANTILES[2] - 1e-12, axis=1)
+    rows = np.arange(len(probs))
+    return f[rows, hi] - f[rows, lo] + probs[rows, lo]
 
 
 def summarize(sc: dict) -> dict:
@@ -266,10 +333,11 @@ def _sum_pmf(idx, x0, probs, step):
 
 
 def pwin_records(season: int, uni, position: str, cand, fit_sd, step: float, reps: int,
-                 check: bool = True) -> pd.DataFrame:
+                 check: bool = True, matchup: bool = False) -> pd.DataFrame:
     """One record per matchup: the page's, the candidate's and the fitted
     normal's P(win), and the outcome (a tied margin is skipped, as
-    pwin_calibration does)."""
+    pwin_calibration does). `matchup` (the holdout's record of the matchups
+    used) adds each one's index in its week's deal, rep * 6 + pair."""
     x0, probs = cand
     recs = []
     for w in sorted(uni):
@@ -310,7 +378,8 @@ def pwin_records(season: int, uni, position: str, cand, fit_sd, step: float, rep
             fv = rva + rvb + float((fit_sd[ia] ** 2).sum() + (fit_sd[ib] ** 2).sum())
             recs.append({"season": season, "week": w, "rep": g["rep"], "y": float(m > 0),
                          "page": float(ndtr(d / math.sqrt(var))), "candidate": p_cand,
-                         "fitted_normal": float(ndtr(d / math.sqrt(fv)))})
+                         "fitted_normal": float(ndtr(d / math.sqrt(fv))),
+                         **({"matchup": gi} if matchup else {})})
     return pd.DataFrame(recs)
 
 
@@ -346,7 +415,11 @@ def brier_boot(rec: pd.DataFrame) -> dict:
 # ------------------------------------------------------------------- folds
 
 def run_folds(mod, frame, key, frames, cols, def_sd: float, folds_for, reps: int,
-              check_leagues: bool = True) -> dict:
+              check_leagues: bool = True, holdout: bool = False) -> dict:
+    """`holdout` (the 2026 holdout, test season HOLDOUT) adds reporting only:
+    each system's own 10-90% share, the fitted normal on whole points (K),
+    the scored rows and each matchup's index. Every number the historical
+    folds compute is computed the same way either way."""
     pos = next(iter(mod.COLUMNS))
     step = float(mod.LATTICE)
     inputs = sorted({c for cs in mod.COLUMNS.values() for c in cs})
@@ -391,6 +464,18 @@ def run_folds(mod, frame, key, frames, cols, def_sd: float, folds_for, reps: int
         if step == 1.0:
             lx, lp = lattice_normal(mu, page_sd)
             sc["lattice_normal"] = scores_lattice(lx, lp, 1.0, y)
+        if holdout:
+            # each system's own share of its 10-90% interval, read beside the
+            # share of actuals inside it; for whole points, the fitted normal
+            # on the integer lattice too (the refitted sd plus whole points)
+            for name in ("page", "fitted_normal"):
+                sc[name]["own_10_90"] = np.full(len(y), NOMINAL_10_90)
+            sc["candidate"]["own_10_90"] = lattice_own_share(probs)
+            if step == 1.0:
+                sc["lattice_normal"]["own_10_90"] = lattice_own_share(lp)
+                fx, fp = lattice_normal(mu, fsd)
+                sc["lattice_fitted_normal"] = {**scores_lattice(fx, fp, 1.0, y),
+                                               "own_10_90": lattice_own_share(fp)}
         res = {"rows": int(len(test)), "params": params,
                # its own key: under "fitted_normal" the scores below overwrote
                # these in the first P7 runs (2026-11-02; reporting only)
@@ -411,9 +496,13 @@ def run_folds(mod, frame, key, frames, cols, def_sd: float, folds_for, reps: int
             f["sd"] = def_sd if p == "DEF" else f["sd"]
             lrows[p] = f
         uni = league_universe(lrows)
-        rec = pwin_records(s, uni, pos, (x0, probs), fsd, step, reps, check=check_leagues)
+        rec = pwin_records(s, uni, pos, (x0, probs), fsd, step, reps, check=check_leagues,
+                           matchup=holdout)
         res["pwin"] = pwin_summary(rec)
         folds[s] = {"res": res, "rec": rec, "scores": sc}
+        if holdout:
+            folds[s]["rows"] = pd.DataFrame({**{k: test[k].to_numpy() for k in key}, "mu": mu,
+                                             "page_sd": page_sd, "actual": y})
         print(f"  {s}: CRPS page {res['page']['crps']:.4f} candidate {res['candidate']['crps']:.4f}"
               f" (fitted normal {res['fitted_normal']['crps']:.4f}"
               + (f", lattice normal {res['lattice_normal']['crps']:.4f}" if 'lattice_normal' in res else "")
@@ -551,15 +640,350 @@ def run(block_id: str, args, crosswalk, skill, special, base) -> dict:
     return result
 
 
+# ----------------------------------------------------------------- 2026 holdout
+
+def holdout_id(block_id: str) -> str:
+    return f"{block_id}-{HOLDOUT}"
+
+
+def stored_result(block_id: str) -> dict:
+    """The block's historical result; the holdout refuses one that did not pass."""
+    path = BR.RESULTS_DIR / f"{block_id}.json"
+    if not path.exists():
+        raise SystemExit(f"refused: {block_id} has no result to hold out")
+    res = json.loads(path.read_text(encoding="utf-8"))
+    if res.get("kind") != "distribution" or not res.get("passed"):
+        raise SystemExit(f"refused: {block_id} did not pass its historical bar in this harness; "
+                         f"the {HOLDOUT} holdout scores only blocks that did")
+    return res
+
+
+def holdout_integrity(block_id: str) -> tuple[dict, str]:
+    """The ledger's blobs (the holdout's pre-registration, the block module,
+    every helper) and this harness's, and the blob of the stored result whose
+    bar passed: each committed and unchanged (block_runner.committed_blob
+    refuses otherwise)."""
+    blobs = {"prereg_blob": BR.committed_blob(BR.PREREG_DIR / f"{holdout_id(block_id)}.md"),
+             "module_blob": BR.committed_blob(BR.BLOCKS_DIR / f"{block_id}.py"),
+             "helpers_blob": BR.helpers_blob(), "harness_blob": BR.committed_blob(HARNESS)}
+    return blobs, BR.committed_blob(BR.RESULTS_DIR / f"{block_id}.json")
+
+
+def holdout_tables() -> tuple[pd.DataFrame, dict[str, pd.DataFrame], list[Path]]:
+    """holdout_2026.py's cached 2026 tables, read the way its table_2026 reads
+    them: the skill rows in block_runner's universe (week >= 4, a Sleeper
+    projection), the K and DEF rows (also an actual), each with its pre-game
+    keys. Never rebuilt here; a missing table refuses."""
+    paths = [HOLDOUT_TABLES / f"{n}_{HOLDOUT}.parquet" for n in ("season", "K", "DEF")]
+    missing = [_shown(p) for p in paths if not p.exists()]
+    if missing:
+        raise SystemExit(f"refused: no cached {HOLDOUT} table {missing} (holdout_2026.py builds them)")
+    skill = BR.attach_keys(BR._keep(pd.read_parquet(paths[0])), HOLDOUT)
+    special = {}
+    for pos, path in (("K", paths[1]), ("DEF", paths[2])):
+        t = pd.read_parquet(path)
+        t = t.loc[(t["week"] >= BR.MIN_WEEK) & t["sleeper"].notna() & t["actual"].notna()].copy()
+        special[pos] = BR.attach_special_keys(t, pos, HOLDOUT)
+    return skill, special, paths
+
+
+def window_games(skill26: pd.DataFrame, special26: dict[str, pd.DataFrame]) -> dict[str, dict]:
+    """Per 2026 week from 4 to the last in the tables: the schedule's
+    regular-season games, how many are in the season table (a skill row) and
+    how many have both defenses in the DEF table. The window rule: a week
+    counts only when every scheduled game of it is in the table."""
+    sched = BR._nfl().load_schedules([HOLDOUT]).to_pandas()
+    sched = sched.loc[sched["game_type"] == "REG", ["game_id", "week"]]
+    d = special26["DEF"]
+    out = {}
+    for w in range(BR.MIN_WEEK, max(int(skill26["week"].max()), HOLDOUT_WEEKS[-1]) + 1):
+        games = set(sched.loc[sched["week"] == w, "game_id"].astype(str))
+        in_skill = set(skill26.loc[skill26["week"] == w, "game_id"].dropna().astype(str))
+        teams = d.loc[d["week"] == w].groupby("game_id")["team"].nunique()
+        both = {str(g) for g in teams.index[teams.to_numpy() == 2]}
+        out[str(w)] = {"scheduled": len(games), "in_season_table": len(games & in_skill),
+                       "both_defenses": len(games & both),
+                       "complete": bool(games) and games <= in_skill and games <= both,
+                       "in_window": w in HOLDOUT_WEEKS}
+    return out
+
+
+def leak_check_at(mod, ctx, full: pd.DataFrame, key: list[str], checks) -> list[str]:
+    """block_runner.leak_check at the given (season, week) pairs: the block is
+    rebuilt with every post-game frame cut before week w (pre-game frames
+    after week w), and week w's inputs must come out identical."""
+    problems = []
+    wanted = sorted({c for cs in mod.COLUMNS.values() for c in cs})
+    for s, w in checks:
+        cut, _ = BR.build_block(mod, ctx.truncated(s, w))
+        a = full.loc[(full["season"] == s) & (full["week"] == w)].set_index(key)[wanted].sort_index()
+        b = cut.loc[(cut["season"] == s) & (cut["week"] == w)].set_index(key)[wanted].reindex(a.index)
+        diff = ~np.isclose(a.to_numpy(), b.to_numpy(), equal_nan=True, rtol=0, atol=1e-9)
+        if diff.any():
+            cols = [wanted[i] for i in sorted(set(np.where(diff)[1]))]
+            problems.append(f"{s} week {w}: {int(diff.any(axis=1).sum())} row(s) differ in {cols}"
+                            " when data from week >= w is removed")
+        if len(a) == 0:
+            problems.append(f"{s} week {w}: block returned no rows to check")
+    return problems
+
+
+def holdout_coverage(frame: pd.DataFrame, rows: pd.DataFrame, mod, key: list[str]) -> dict:
+    """Each input column's non-missing share on the window rows, by week."""
+    m = rows[key].merge(frame, on=key, how="left")
+    return {c: {str(int(w)): round(float(g[c].notna().mean()), 3) for w, g in m.groupby("week")}
+            for cs in mod.COLUMNS.values() for c in cs}
+
+
+def fold_differences(stored: dict, res: dict) -> list[str]:
+    """The keys where a fold re-run differs from the fold stored in
+    results/<ID>.json (every stored key, compared as the JSON holds it; the
+    stored `fitted_normal` is the fitted normal's scores, as the scoring
+    harness wrote it)."""
+    got = json.loads(json.dumps(res, default=str))
+    return [k for k in stored if got.get(k) != stored[k]]
+
+
+def by_week(f: dict) -> dict[str, dict]:
+    """Every system's mean scores and the leagues' P(win), per window week
+    (reported, never the bar)."""
+    week = f["rows"]["week"].to_numpy()
+    out = {}
+    for w in HOLDOUT_WEEKS:
+        sel = week == w
+        out[str(w)] = {"rows": int(sel.sum()),
+                       **{name: {m: round(float(np.mean(v[sel])), 5) for m, v in sc.items()}
+                          for name, sc in f["scores"].items()},
+                       "pwin": pwin_summary(f["rec"].loc[f["rec"]["week"] == w])}
+    return out
+
+
+def holdout(block_id: str, args, crosswalk, skill, special, base) -> dict:
+    """The block's frozen pipeline on the 2026 window (module docstring,
+    "2026 HOLDOUT"). `skill` and `special` are block_runner's 2019-2025
+    tables."""
+    mod, _ = BR.load_block(block_id)
+    if getattr(mod, "KIND", None) != "distribution" or len(mod.COLUMNS) != 1:
+        raise SystemExit(f"{block_id}: not a one-position distribution block")
+    position = next(iter(mod.COLUMNS))
+    hid = holdout_id(block_id)
+    stored = stored_result(block_id)
+    blobs, result_blob = (None, None) if args.coverage_only else holdout_integrity(block_id)
+    if not args.coverage_only and args.reps != REPS:
+        raise SystemExit(f"refused: the historical leagues were {REPS} a week")
+    w0, w1 = HOLDOUT_WEEKS[0], HOLDOUT_WEEKS[-1]
+    sk_all, sp_all, paths26 = holdout_tables()
+    digest26 = BR.tables_digest(paths26)
+    games = window_games(sk_all, sp_all)
+
+    def window(t: pd.DataFrame) -> pd.DataFrame:
+        return t.loc[t["week"].isin(HOLDOUT_WEEKS)].reset_index(drop=True)
+    sk26 = window(sk_all)
+    sp26 = {p: window(t) for p, t in sp_all.items()}
+    # the block's inputs for every 2019-2025 row and the window's rows
+    cols = ["season", "week", "gsis_id", "position", "team", "opponent", "game_id", "home"]
+    dcols = [c for c in cols if c != "gsis_id"]
+    keys = pd.concat([*(t[cols] for t in skill.values()), sk26[cols]], ignore_index=True)
+    special_keys = {
+        "K": pd.concat([*(t[cols] for t in special["K"].values()), sp26["K"][cols]],
+                       ignore_index=True),
+        "DEF": pd.concat([*(t[dcols] for t in special["DEF"].values()), sp26["DEF"][dcols]],
+                         ignore_index=True)}
+    ctx = BR.Context(keys, crosswalk, special_keys=special_keys)
+    frame, key = BR.build_block(mod, ctx)
+    rows26 = sp26[position] if position in BR.SPECIAL else sk26.loc[sk26["position"] == position]
+    cov = holdout_coverage(frame, rows26, mod, key)
+    same = args.digest == stored["tables_digest"]
+    league_rows = {p: {str(w): int(n) for w, n in
+                       (sk26.loc[sk26["position"] == p] if p in SKILL else sp26[p])
+                       .groupby("week").size().items()} for p in (*SKILL, "K", "DEF")}
+    print(f"\n{hid} - {block_id}'s frozen pipeline on {HOLDOUT} weeks {w0}-{w1}: {mod.TITLE}")
+    print(f"  training tables {BR.SEASONS[0]}-{BR.SEASONS[-1]}: digest {args.digest} "
+          + ("(the one scored)" if same else f"(NOT the one scored, {stored['tables_digest']})"))
+    print(f"  {HOLDOUT} tables: digest {digest26}")
+    for w, g in games.items():
+        print(f"  {HOLDOUT} week {w}: {g['scheduled']} games scheduled, {g['in_season_table']} in the "
+              f"season table, {g['both_defenses']} with both defenses -> "
+              f"{'complete' if g['complete'] else 'NOT complete'}"
+              f"{'' if g['in_window'] else ' (not in the window)'}")
+    print(f"  {position} rows in the window: {len(rows26)} ("
+          + ", ".join(f"week {w} {n}" for w, n in league_rows[position].items()) + ")")
+    print("  league rows by position and week: " + "; ".join(
+        f"{p} " + "/".join(str(n) for n in league_rows[p].values()) for p in league_rows))
+    for c, by in cov.items():
+        print(f"  coverage {position} {c}: " + ", ".join(f"week {w} {v:.0%}" for w, v in by.items()))
+    leaks = leak_check_at(mod, ctx, frame, key, HOLDOUT_LEAK_CHECKS)
+    for line in leaks:
+        print(f"  LEAK {line}")
+    print(f"  leak check: {'FAILED' if leaks else 'passed'} "
+          f"({', '.join(f'{s} week {w}' for s, w in HOLDOUT_LEAK_CHECKS)})")
+    meta = A.AdvancedModel.load().meta
+    def_sd = float((meta.get("resid_sd") or {}).get("DEF"))
+    frames = position_frames({**skill, HOLDOUT: sk26},
+                             {p: {**special[p], HOLDOUT: sp26[p]} for p in ("K", "DEF")})
+    mcols = mean_columns(base)
+    print(f"  the stored {REPRODUCE_FOLD} fold, re-run through the unchanged fold code:")
+    again = run_folds(mod, frame, key, frames, mcols, def_sd, (REPRODUCE_FOLD,), args.reps)
+    bad = fold_differences(stored["fold_results"][str(REPRODUCE_FOLD)],
+                           again[REPRODUCE_FOLD]["res"])
+    print(f"  it reproduces results/{block_id}.json's {REPRODUCE_FOLD} fold: "
+          + ("yes, every stored number" if not bad else "NO: " + ", ".join(bad)))
+    incomplete = [w for w in HOLDOUT_WEEKS if not games[str(w)]["complete"]]
+    dealt = len(HOLDOUT_WEEKS) * args.reps * (PW.TEAMS // 2)
+    print(f"  leagues: weeks {w0}-{w1}, {args.reps} a week, {dealt} matchups dealt")
+    if args.coverage_only:
+        return {"block": hid, "coverage": cov, "leaks": leaks, "games": games,
+                "training_digest_matches": same, "reproduces": not bad, "differences": bad,
+                "tables_digest": digest26, "league_rows": league_rows}
+    if leaks:
+        raise SystemExit(f"refused: {hid} fails the leak check")
+    if not same:
+        raise SystemExit(f"refused: the {BR.SEASONS[0]}-{BR.SEASONS[-1]} tables are not the ones "
+                         f"{block_id} was scored on")
+    if incomplete:
+        raise SystemExit(f"refused: window weeks {incomplete} are not complete in the table")
+    if bad:
+        raise SystemExit(f"refused: the {REPRODUCE_FOLD} fold does not reproduce the stored result")
+
+    # the one scored run: run_folds for the test season 2026, training 2019-2025
+    folds = run_folds(mod, frame, key, frames, mcols, def_sd, (HOLDOUT,), args.reps, holdout=True)
+    f = folds[HOLDOUT]
+    res, v = f["res"], bar(folds, position)
+    passes = v["passes"]
+    weeks = by_week(f)
+    ps, pw, b = v["pooled_scores"], v["pwin_pooled"], v["pwin_brier_boot"]
+    systems = [s for s in ("page", "candidate", "fitted_normal", "lattice_normal",
+                           "lattice_fitted_normal") if s in ps]
+    print(f"\n  {'':<22}" + "".join(f"{s:>22}" for s in systems))
+    for m in ("crps", "pinball_10", "pinball_50", "pinball_90", "inside_10_90", "own_10_90"):
+        print(f"  {m:<22}" + "".join(f"{ps[s][m]:>22.5f}" for s in systems))
+    for w, wk in weeks.items():
+        print(f"  week {w} ({wk['rows']} rows, {wk['pwin']['matchups']} matchups): CRPS "
+              + " ".join(f"{s} {wk[s]['crps']:.4f}" for s in systems)
+              + f"; Brier page {wk['pwin']['page']['brier']:.5f} candidate "
+              f"{wk['pwin']['candidate']['brier']:.5f}")
+    print(f"  pooled: CRPS change {res['crps_delta']:+.6f} ({'lower' if res['crps_delta'] < 0 else 'NOT lower'})"
+          f"; Brier change {v['pwin_brier_delta']:+.8f} "
+          f"({'not worse' if v['pwin_brier_not_worse'] else 'WORSE'}; 95% CI {b['ci95'][0]:+.7f} to "
+          f"{b['ci95'][1]:+.7f} over {b['clusters']} weeks) over {pw['matchups']} matchups"
+          f" -> {hid} {'PASSES' if passes else 'fails'}")
+    summary = (f"{'PASS' if passes else 'fail'} ({position}, {HOLDOUT} weeks {w0}-{w1}): mean CRPS "
+               f"{ps['candidate']['crps']:.4f} vs the page's normal {ps['page']['crps']:.4f} "
+               f"({res['crps_delta']:+.4f}; fitted normal {ps['fitted_normal']['crps']:.4f}); P(win) "
+               f"Brier {pw['candidate']['brier']:.5f} vs {pw['page']['brier']:.5f} "
+               f"({b['delta_brier']:+.6f}, 95% CI {b['ci95'][0]:+.6f} to {b['ci95'][1]:+.6f}) over "
+               f"{pw['matchups']} matchups")
+    rows = f["rows"]
+    sc = f["scores"]
+    idc = key[-1]
+    rows_used = {"columns": ["week", idc, "mu", "page_sd", "actual", "crps_page",
+                             "crps_candidate", "crps_fitted_normal"],
+                 "rows": [[int(rows["week"].iat[i]), str(rows[idc].iat[i]),
+                           round(float(rows["mu"].iat[i]), 6), round(float(rows["page_sd"].iat[i]), 6),
+                           round(float(rows["actual"].iat[i]), 2)]
+                          + [round(float(sc[s]["crps"][i]), 6)
+                             for s in ("page", "candidate", "fitted_normal")]
+                          for i in range(len(rows))]}
+    rec = f["rec"]
+    matchups_used = {"dealt": dealt, "tied_skipped": dealt - int(len(rec)),
+                     "columns": ["week", "rep", "matchup", "y", "page", "candidate", "fitted_normal"],
+                     "records": [[int(r.week), int(r.rep), int(r.matchup), int(r.y),
+                                  round(float(r.page), 9), round(float(r.candidate), 9),
+                                  round(float(r.fitted_normal), 9)]
+                                 for r in rec.itertuples(index=False)]}
+    run_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    head = BR._git("rev-parse", "HEAD")[:12]
+    result = {
+        "block": hid, "idea": block_id,
+        "title": f"{block_id}'s frozen pipeline on {HOLDOUT} weeks {w0}-{w1}: {mod.TITLE}",
+        "kind": f"distribution holdout: {HOLDOUT} weeks {w0}-{w1}, the frozen pipeline fit on "
+                f"{BR.SEASONS[0]}-{BR.SEASONS[-1]}",
+        "harness": "scripts/research/distribution_backtest.py --holdout-2026",
+        "summary": summary,
+        "folds": f"{position} {HOLDOUT} {int(passes)}/1 (CRPS "
+                 f"{'lower' if v['crps_every_fold'] else 'not lower'}, Brier "
+                 f"{'not worse' if v['pwin_brier_not_worse'] else 'worse'})",
+        "historical_result": {"path": _shown(BR.RESULTS_DIR / f"{block_id}.json"),
+                              "blob": result_blob, "verdict": stored.get("verdict"),
+                              "head": stored.get("head"), "run_at": stored.get("run_at"),
+                              "scoring_harness_blob": stored.get("harness_blob"),
+                              "tables_digest": stored.get("tables_digest")},
+        "columns": mod.COLUMNS, "positions": [position], "lattice": float(mod.LATTICE),
+        "seasons": [HOLDOUT], "folds_tested": [HOLDOUT], "weeks": list(HOLDOUT_WEEKS),
+        "training_seasons": list(BR.SEASONS), "min_week": BR.MIN_WEEK,
+        "window": {"rule": "a week counts only when every scheduled game of it is in the table",
+                   "games": games},
+        "league": {"weeks": [w0, w1], "reps": args.reps, "teams": PW.TEAMS, "top_n": PW.TOP_N,
+                   "flex_pool": PW.FLEX_POOL, "seed": PW.SEED, "rows": league_rows},
+        "page_sd": {"skill_and_K": "max(baseline x WEEKLY_CV, SD_FLOOR) (tables' sd)",
+                    "DEF": def_sd},
+        "coverage": cov, "leak_checks": [f"{s} week {w}" for s, w in HOLDOUT_LEAK_CHECKS],
+        "reproduced_fold": {"fold": REPRODUCE_FOLD, "matches": True},
+        "frozen_fit": {"candidate": res["params"], "fitted_normal": res["fitted_normal_ab"],
+                       "train_rows": res["train_rows"], "training_seasons": list(BR.SEASONS)},
+        "result": res, "by_week": weeks, "bar": v,
+        "verdict": "PASS " + position if passes else "FAIL",
+        "passed": [position] if passes else [],
+        "rows_used": rows_used, "matchups_used": matchups_used,
+        "tables_digest": digest26, "training_tables_digest": args.digest,
+        **blobs, "head": head, "run_at": run_at}
+    write_holdout(hid, result, blobs, position, passes)
+    return result
+
+
+def holdout_json(result: dict) -> str:
+    """json.dumps(result, indent=1), with the rows and the matchups used one
+    record per line (the same JSON, read back unchanged)."""
+    slim, lists = json.loads(json.dumps(result, default=str)), {}
+    for k, field in (("rows_used", "rows"), ("matchups_used", "records")):
+        mark = f"@@{k}@@"
+        lists[mark], slim[k][field] = slim[k][field], mark
+    text = json.dumps(slim, indent=1)
+    for mark, recs in lists.items():
+        text = text.replace(json.dumps(mark), "[\n" + ",\n".join(
+            "   " + json.dumps(r) for r in recs) + "\n  ]")
+    return text + "\n"
+
+
+def write_holdout(hid: str, result: dict, blobs: dict, position: str, passes: bool) -> None:
+    """results/<ID>-2026.json and one line in runs/<ID>-2026.csv."""
+    BR.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out = BR.RESULTS_DIR / f"{hid}.json"
+    out.write_text(holdout_json(result), encoding="utf-8")
+    BR.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    ledger = BR.RUNS_DIR / f"{hid}.csv"
+    new = not ledger.exists()
+    with ledger.open("a", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=BR.RUN_FIELDS)
+        if new:
+            w.writeheader()
+        w.writerow({"when": result["run_at"], "block": hid,
+                    **{k: blobs[k] for k in ("prereg_blob", "module_blob", "helpers_blob")},
+                    "tables_digest": result["tables_digest"], "head": result["head"],
+                    "verdict": result["verdict"], "positions": position, "folds": str(HOLDOUT),
+                    "folds_passed": f"{position}:{int(passes)}/1"})
+    print(f"  wrote {_shown(out)} and {_shown(ledger)}")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--block", action="append", default=[])
     ap.add_argument("--coverage-only", action="store_true")
     ap.add_argument("--reps", type=int, default=REPS)
     ap.add_argument("--crosswalk", type=Path, default=BR.CROSSWALK)
+    ap.add_argument("--holdout-2026", action="store_true",
+                    help=f"score a passing block's frozen pipeline on {HOLDOUT} weeks "
+                         f"{HOLDOUT_WEEKS[0]}-{HOLDOUT_WEEKS[-1]} (its own pre-registration, "
+                         f"docs/research/blocks/<ID>-{HOLDOUT}.md)")
     args = ap.parse_args(argv)
     if not args.block:
         ap.error("--block is required")
+    if args.holdout_2026:
+        if len(args.block) != 1:
+            ap.error("the holdout takes one --block")
+        stored_result(args.block[0])                # refuse a block that did not pass
+        if not args.coverage_only:
+            holdout_integrity(args.block[0])        # refuse before any data is read
     crosswalk = Crosswalk.from_csv(args.crosswalk)
     skill = BR.load_skill_tables(crosswalk)
     special = BR.load_kdef_tables(crosswalk)
@@ -568,7 +992,10 @@ def main(argv=None) -> int:
     print(f"tables digest {args.digest}")
     base = BR.base_columns()
     for b in args.block:
-        run(b, args, crosswalk, skill, special, base)
+        if args.holdout_2026:
+            holdout(b, args, crosswalk, skill, special, base)
+        else:
+            run(b, args, crosswalk, skill, special, base)
     return 0
 
 
