@@ -27,6 +27,7 @@ from pathlib import Path
 import pandas as pd
 
 from gridiron import ingest as ing
+from gridiron import props
 from gridiron import ros
 from gridiron.dashboard import build_dashboard
 from gridiron.freshness import WeekContext
@@ -197,6 +198,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--grades-dir", type=Path, default=None,
                     help="season grade ledger folder for the report card "
                          "(default data/ledger/grades)")
+    ap.add_argument("--props-root", type=Path, default=None,
+                    help="the prop collector's derived folder (record-only market_v1 "
+                         "contender; default <cache root>/props/derived)")
     args = ap.parse_args(argv)
 
     if not SETTINGS_VERIFIED:
@@ -280,6 +284,21 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
+    # The prop market's derived consensus for this week (the props-collect
+    # workflow's cache, restored read-only), for the record-only market_v1
+    # contender. A file for another season or week, or an unreadable one, is
+    # no file. It never reaches the page's numbers.
+    props_root = args.props_root or (
+        props.DERIVED_ROOT if args.cache_root is None
+        else Path(args.cache_root) / props.DERIVED_ROOT.relative_to(props.RESEARCH_CACHE))
+    market_blob = props.read_derived(props_root, state_season, report_week)
+    market, market_error = None, ""
+    if market_blob is not None:
+        try:
+            market = props.MarketWeek(market_blob)
+        except Exception as exc:  # noqa: BLE001 — record-only: never stops the board
+            market_error = type(exc).__name__
+
     dash = build_dashboard(
         context=ctx, sources=sources, snapshot=snapshot, sleeper_players=players,
         crosswalk=crosswalk, weeks=weeks, schedule=schedule, injuries=injuries,
@@ -295,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
         # The free-agent watch only (gridiron.notable): last season's box
         # scores and who is on an NFL reserve list. Neither feeds a projection.
         prior_weekly=(adv_inputs or {}).get("prior_weekly"),
+        market=market,
         **watch_reserve(adv_inputs, report_week, now))
 
     # The report card: every graded week of the season, from the ledger the
@@ -310,6 +330,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{ctx.headline()} | evidence boundary wk{ctx.evidence_boundary}")
     print("DEGRADED" if dash.degraded else "All inputs current.")
     print(f"projection model: {advanced.status}")
+    detail = (dash.contenders or {}).get("market_v1_detail") or {}
+    if market_error:
+        said = f"week-{report_week} prop file unreadable ({market_error})"
+    elif market is None:
+        said = f"no week-{report_week} prop file"
+    elif detail.get("error"):
+        said = str(detail["error"])
+    else:
+        said = (f"{detail.get('projected', 0)} player(s) from "
+                f"{detail.get('snapshot_games', 0)} game snapshot(s)")
+    print(f"market contender (record-only): {said}")
     for n in dash.notes:
         print(f"  - {n}")
     print(f"projected roster rows: {sum(1 for p in dash.roster if p.projected)}/{len(dash.roster)}")

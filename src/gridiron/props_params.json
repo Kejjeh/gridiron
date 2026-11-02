@@ -1,0 +1,991 @@
+{
+ "meta": {
+  "fitted": "2026-11-02",
+  "script": "scripts/research/prop_distribution_fit.py",
+  "seasons": [
+   2019,
+   2020,
+   2021,
+   2022,
+   2023,
+   2024,
+   2025
+  ],
+  "expectation": "Sleeper's pre-game projection of the stat (rotowire feed), scaled per stat by `calibration` so its mean matches the outcomes'",
+  "outcome": "nflverse weekly box score, regular season; a snap with no box-score row is a zero",
+  "gamma": "one shape per stat: least squares on log quantiles of outcome / expectation over the band 0.35-0.65 where de-vigged main lines sit (a relative quantile error there is the relative error of the mean)",
+  "counts": "negative-binomial size by moments; Poisson when not positive or when the negative binomial's held-out log loss (five lines around the expectation) is not lower in more than half of the scored seasons",
+  "caveat": "a projection is a weaker expectation than a market, so these shapes are if anything too wide for a market line"
+ },
+ "gamma": {
+  "passing_yards": {
+   "shape": 13.9111,
+   "population": "Sleeper projected pass_yd >= 150; n=3386",
+   "n": 3386,
+   "calibration": 0.9626,
+   "median_over_mean": 0.9873,
+   "band_quantile_error": {
+    "0.35": 0.0023,
+    "0.40": -0.0067,
+    "0.45": -0.0104,
+    "0.50": -0.0113,
+    "0.55": -0.0163,
+    "0.60": -0.0221,
+    "0.65": -0.0303
+   },
+   "shape_moments": 8.7643,
+   "shape_mle_censored": 6.3811,
+   "zero_share": 0.0012,
+   "held_out_worst_band_coverage_error": 0.065,
+   "held_out_worst_coverage_error": 0.065,
+   "held_out": {
+    "2019": {
+     "shape": 13.8652,
+     "scale_test": 0.938,
+     "coverage": {
+      "0.25": 0.2782,
+      "0.35": 0.3494,
+      "0.40": 0.3931,
+      "0.45": 0.4276,
+      "0.50": 0.469,
+      "0.55": 0.5241,
+      "0.60": 0.5678,
+      "0.65": 0.6253,
+      "0.75": 0.7172
+     }
+    },
+    "2020": {
+     "shape": 14.0219,
+     "scale_test": 0.9433,
+     "coverage": {
+      "0.25": 0.2727,
+      "0.35": 0.3592,
+      "0.40": 0.3969,
+      "0.45": 0.4346,
+      "0.50": 0.4701,
+      "0.55": 0.5144,
+      "0.60": 0.5477,
+      "0.65": 0.6009,
+      "0.75": 0.7051
+     }
+    },
+    "2021": {
+     "shape": 14.4217,
+     "scale_test": 0.9003,
+     "coverage": {
+      "0.25": 0.2785,
+      "0.35": 0.3523,
+      "0.40": 0.3903,
+      "0.45": 0.4367,
+      "0.50": 0.4916,
+      "0.55": 0.5549,
+      "0.60": 0.6055,
+      "0.65": 0.6371,
+      "0.75": 0.7046
+     }
+    },
+    "2022": {
+     "shape": 13.2523,
+     "scale_test": 0.9321,
+     "coverage": {
+      "0.25": 0.26,
+      "0.35": 0.322,
+      "0.40": 0.356,
+      "0.45": 0.41,
+      "0.50": 0.468,
+      "0.55": 0.516,
+      "0.60": 0.572,
+      "0.65": 0.622,
+      "0.75": 0.724
+     }
+    },
+    "2023": {
+     "shape": 13.8941,
+     "scale_test": 1.0245,
+     "coverage": {
+      "0.25": 0.2574,
+      "0.35": 0.3556,
+      "0.40": 0.4106,
+      "0.45": 0.4519,
+      "0.50": 0.4872,
+      "0.55": 0.5226,
+      "0.60": 0.558,
+      "0.65": 0.5992,
+      "0.75": 0.6896
+     }
+    },
+    "2024": {
+     "shape": 13.9547,
+     "scale_test": 1.0122,
+     "coverage": {
+      "0.25": 0.2866,
+      "0.35": 0.3498,
+      "0.40": 0.3834,
+      "0.45": 0.4368,
+      "0.50": 0.4802,
+      "0.55": 0.5217,
+      "0.60": 0.5593,
+      "0.65": 0.585,
+      "0.75": 0.7016
+     }
+    },
+    "2025": {
+     "shape": 14.0654,
+     "scale_test": 0.9777,
+     "coverage": {
+      "0.25": 0.2916,
+      "0.35": 0.364,
+      "0.40": 0.3894,
+      "0.45": 0.4286,
+      "0.50": 0.4658,
+      "0.55": 0.5205,
+      "0.60": 0.5597,
+      "0.65": 0.593,
+      "0.75": 0.7025
+     }
+    }
+   }
+  },
+  "rushing_yards": {
+   "shape": 2.033,
+   "population": "Sleeper projected rush_yd >= 15; n=7671",
+   "n": 7671,
+   "calibration": 1.0153,
+   "median_over_mean": 0.858,
+   "band_quantile_error": {
+    "0.35": 0.0278,
+    "0.40": 0.0035,
+    "0.45": -0.01,
+    "0.50": -0.0191,
+    "0.55": -0.0196,
+    "0.60": -0.021,
+    "0.65": -0.0301
+   },
+   "shape_moments": 1.5571,
+   "shape_mle_censored": 1.2049,
+   "zero_share": 0.0491,
+   "held_out_worst_band_coverage_error": 0.0251,
+   "held_out_worst_coverage_error": 0.0448,
+   "held_out": {
+    "2019": {
+     "shape": 2.0398,
+     "scale_test": 1.0238,
+     "coverage": {
+      "0.25": 0.2882,
+      "0.35": 0.3592,
+      "0.40": 0.4035,
+      "0.45": 0.449,
+      "0.50": 0.4967,
+      "0.55": 0.5455,
+      "0.60": 0.5931,
+      "0.65": 0.633,
+      "0.75": 0.7483
+     }
+    },
+    "2020": {
+     "shape": 2.068,
+     "scale_test": 1.0357,
+     "coverage": {
+      "0.25": 0.2948,
+      "0.35": 0.3728,
+      "0.40": 0.416,
+      "0.45": 0.461,
+      "0.50": 0.5005,
+      "0.55": 0.5482,
+      "0.60": 0.6097,
+      "0.65": 0.6419,
+      "0.75": 0.753
+     }
+    },
+    "2021": {
+     "shape": 2.0243,
+     "scale_test": 0.994,
+     "coverage": {
+      "0.25": 0.2812,
+      "0.35": 0.35,
+      "0.40": 0.4089,
+      "0.45": 0.4455,
+      "0.50": 0.4911,
+      "0.55": 0.5446,
+      "0.60": 0.5911,
+      "0.65": 0.6455,
+      "0.75": 0.7429
+     }
+    },
+    "2022": {
+     "shape": 2.0373,
+     "scale_test": 1.0133,
+     "coverage": {
+      "0.25": 0.2875,
+      "0.35": 0.3716,
+      "0.40": 0.4084,
+      "0.45": 0.4452,
+      "0.50": 0.4847,
+      "0.55": 0.5276,
+      "0.60": 0.5749,
+      "0.65": 0.6284,
+      "0.75": 0.7415
+     }
+    },
+    "2023": {
+     "shape": 2.0232,
+     "scale_test": 1.0362,
+     "coverage": {
+      "0.25": 0.2626,
+      "0.35": 0.3526,
+      "0.40": 0.4022,
+      "0.45": 0.449,
+      "0.50": 0.4904,
+      "0.55": 0.5308,
+      "0.60": 0.5831,
+      "0.65": 0.6281,
+      "0.75": 0.7374
+     }
+    },
+    "2024": {
+     "shape": 2.0288,
+     "scale_test": 1.0495,
+     "coverage": {
+      "0.25": 0.2679,
+      "0.35": 0.3532,
+      "0.40": 0.3991,
+      "0.45": 0.4523,
+      "0.50": 0.4936,
+      "0.55": 0.545,
+      "0.60": 0.5862,
+      "0.65": 0.6413,
+      "0.75": 0.744
+     }
+    },
+    "2025": {
+     "shape": 2.0014,
+     "scale_test": 0.9638,
+     "coverage": {
+      "0.25": 0.2653,
+      "0.35": 0.3508,
+      "0.40": 0.3911,
+      "0.45": 0.4355,
+      "0.50": 0.4758,
+      "0.55": 0.5282,
+      "0.60": 0.5847,
+      "0.65": 0.6379,
+      "0.75": 0.7411
+     }
+    }
+   }
+  },
+  "receiving_yards": {
+   "shape": 1.6261,
+   "population": "Sleeper projected rec_yd >= 15; n=18551",
+   "n": 18551,
+   "calibration": 0.9553,
+   "median_over_mean": 0.8284,
+   "band_quantile_error": {
+    "0.35": 0.044,
+    "0.40": 0.0107,
+    "0.45": -0.0157,
+    "0.50": -0.0293,
+    "0.55": -0.0292,
+    "0.60": -0.0355,
+    "0.65": -0.044
+   },
+   "shape_moments": 1.28,
+   "shape_mle_censored": 0.7659,
+   "zero_share": 0.1236,
+   "held_out_worst_band_coverage_error": 0.0391,
+   "held_out_worst_coverage_error": 0.0643,
+   "held_out": {
+    "2019": {
+     "shape": 1.6261,
+     "scale_test": 0.9477,
+     "coverage": {
+      "0.25": 0.2915,
+      "0.35": 0.3614,
+      "0.40": 0.4015,
+      "0.45": 0.4395,
+      "0.50": 0.4861,
+      "0.55": 0.5352,
+      "0.60": 0.5834,
+      "0.65": 0.6312,
+      "0.75": 0.7351
+     }
+    },
+    "2020": {
+     "shape": 1.6156,
+     "scale_test": 0.9028,
+     "coverage": {
+      "0.25": 0.2818,
+      "0.35": 0.3553,
+      "0.40": 0.4019,
+      "0.45": 0.4403,
+      "0.50": 0.4858,
+      "0.55": 0.5246,
+      "0.60": 0.5794,
+      "0.65": 0.6221,
+      "0.75": 0.7261
+     }
+    },
+    "2021": {
+     "shape": 1.6772,
+     "scale_test": 0.8767,
+     "coverage": {
+      "0.25": 0.3143,
+      "0.35": 0.3891,
+      "0.40": 0.4307,
+      "0.45": 0.4689,
+      "0.50": 0.5102,
+      "0.55": 0.5502,
+      "0.60": 0.5932,
+      "0.65": 0.6382,
+      "0.75": 0.7311
+     }
+    },
+    "2022": {
+     "shape": 1.6234,
+     "scale_test": 0.9455,
+     "coverage": {
+      "0.25": 0.2863,
+      "0.35": 0.3647,
+      "0.40": 0.397,
+      "0.45": 0.4364,
+      "0.50": 0.4852,
+      "0.55": 0.531,
+      "0.60": 0.576,
+      "0.65": 0.6214,
+      "0.75": 0.7253
+     }
+    },
+    "2023": {
+     "shape": 1.6057,
+     "scale_test": 1.0325,
+     "coverage": {
+      "0.25": 0.2754,
+      "0.35": 0.3502,
+      "0.40": 0.3969,
+      "0.45": 0.4353,
+      "0.50": 0.48,
+      "0.55": 0.5326,
+      "0.60": 0.5714,
+      "0.65": 0.6169,
+      "0.75": 0.7186
+     }
+    },
+    "2024": {
+     "shape": 1.6053,
+     "scale_test": 1.0464,
+     "coverage": {
+      "0.25": 0.2726,
+      "0.35": 0.3537,
+      "0.40": 0.3919,
+      "0.45": 0.4313,
+      "0.50": 0.4734,
+      "0.55": 0.5255,
+      "0.60": 0.5761,
+      "0.65": 0.6266,
+      "0.75": 0.7247
+     }
+    },
+    "2025": {
+     "shape": 1.6188,
+     "scale_test": 0.9514,
+     "coverage": {
+      "0.25": 0.2753,
+      "0.35": 0.3552,
+      "0.40": 0.399,
+      "0.45": 0.4409,
+      "0.50": 0.4896,
+      "0.55": 0.5426,
+      "0.60": 0.5941,
+      "0.65": 0.6382,
+      "0.75": 0.7377
+     }
+    }
+   }
+  },
+  "kicking_points": {
+   "shape": 5.0127,
+   "population": "Sleeper projected kick_pts >= 4; n=3563",
+   "n": 3563,
+   "calibration": 0.9952,
+   "median_over_mean": 0.9558,
+   "band_quantile_error": {
+    "0.35": 0.022,
+    "0.40": 0.0021,
+    "0.45": -0.0145,
+    "0.50": -0.0224,
+    "0.55": -0.0363,
+    "0.60": -0.0424,
+    "0.65": -0.0502
+   },
+   "shape_moments": 3.7648,
+   "shape_mle_censored": 2.8822,
+   "zero_share": 0.0188,
+   "held_out_worst_band_coverage_error": 0.0624,
+   "held_out_worst_coverage_error": 0.0633,
+   "held_out": {
+    "2019": {
+     "shape": 4.9518,
+     "scale_test": 0.9476,
+     "coverage": {
+      "0.25": 0.2604,
+      "0.35": 0.3479,
+      "0.40": 0.4009,
+      "0.45": 0.4332,
+      "0.50": 0.4724,
+      "0.55": 0.5046,
+      "0.60": 0.5484,
+      "0.65": 0.5876,
+      "0.75": 0.7143
+     }
+    },
+    "2020": {
+     "shape": 4.9691,
+     "scale_test": 0.9701,
+     "coverage": {
+      "0.25": 0.2898,
+      "0.35": 0.3571,
+      "0.40": 0.3878,
+      "0.45": 0.4306,
+      "0.50": 0.4837,
+      "0.55": 0.5204,
+      "0.60": 0.5469,
+      "0.65": 0.6184,
+      "0.75": 0.7245
+     }
+    },
+    "2021": {
+     "shape": 5.0336,
+     "scale_test": 0.9574,
+     "coverage": {
+      "0.25": 0.2805,
+      "0.35": 0.3636,
+      "0.40": 0.3985,
+      "0.45": 0.4352,
+      "0.50": 0.4778,
+      "0.55": 0.5242,
+      "0.60": 0.5629,
+      "0.65": 0.5996,
+      "0.75": 0.6867
+     }
+    },
+    "2022": {
+     "shape": 5.1534,
+     "scale_test": 1.0095,
+     "coverage": {
+      "0.25": 0.2746,
+      "0.35": 0.3902,
+      "0.40": 0.4148,
+      "0.45": 0.447,
+      "0.50": 0.4981,
+      "0.55": 0.5284,
+      "0.60": 0.5663,
+      "0.65": 0.6212,
+      "0.75": 0.7197
+     }
+    },
+    "2023": {
+     "shape": 5.0077,
+     "scale_test": 1.0291,
+     "coverage": {
+      "0.25": 0.2953,
+      "0.35": 0.357,
+      "0.40": 0.4112,
+      "0.45": 0.443,
+      "0.50": 0.4916,
+      "0.55": 0.5346,
+      "0.60": 0.572,
+      "0.65": 0.6093,
+      "0.75": 0.6897
+     }
+    },
+    "2024": {
+     "shape": 4.9921,
+     "scale_test": 1.0468,
+     "coverage": {
+      "0.25": 0.2865,
+      "0.35": 0.3614,
+      "0.40": 0.4064,
+      "0.45": 0.4551,
+      "0.50": 0.4981,
+      "0.55": 0.5206,
+      "0.60": 0.5712,
+      "0.65": 0.6086,
+      "0.75": 0.7191
+     }
+    },
+    "2025": {
+     "shape": 4.9383,
+     "scale_test": 0.9941,
+     "coverage": {
+      "0.25": 0.2933,
+      "0.35": 0.3543,
+      "0.40": 0.3905,
+      "0.45": 0.4381,
+      "0.50": 0.4629,
+      "0.55": 0.5086,
+      "0.60": 0.5562,
+      "0.65": 0.6057,
+      "0.75": 0.7105
+     }
+    }
+   }
+  }
+ },
+ "counts": {
+  "passing_tds": {
+   "size": null,
+   "family": "poisson",
+   "population": "Sleeper projected pass_yd >= 150; n=3386",
+   "n": 3386,
+   "calibration": 0.9121,
+   "var_over_mean": 0.866,
+   "size_moments": null,
+   "held_out_seasons": 7,
+   "held_out_negative_binomial_wins": 0,
+   "held_out": {
+    "2019": {
+     "size": null,
+     "nb_logloss": 0.57513,
+     "poisson_logloss": 0.57513,
+     "stated": 0.4595,
+     "observed": 0.4606
+    },
+    "2020": {
+     "size": null,
+     "nb_logloss": 0.54812,
+     "poisson_logloss": 0.54812,
+     "stated": 0.4657,
+     "observed": 0.4775
+    },
+    "2021": {
+     "size": null,
+     "nb_logloss": 0.54023,
+     "poisson_logloss": 0.54023,
+     "stated": 0.459,
+     "observed": 0.4703
+    },
+    "2022": {
+     "size": null,
+     "nb_logloss": 0.55079,
+     "poisson_logloss": 0.55079,
+     "stated": 0.4471,
+     "observed": 0.4549
+    },
+    "2023": {
+     "size": null,
+     "nb_logloss": 0.54037,
+     "poisson_logloss": 0.54037,
+     "stated": 0.4444,
+     "observed": 0.448
+    },
+    "2024": {
+     "size": null,
+     "nb_logloss": 0.55515,
+     "poisson_logloss": 0.55515,
+     "stated": 0.4564,
+     "observed": 0.4643
+    },
+    "2025": {
+     "size": null,
+     "nb_logloss": 0.56604,
+     "poisson_logloss": 0.56604,
+     "stated": 0.46,
+     "observed": 0.4702
+    }
+   }
+  },
+  "attempts": {
+   "size": 23.035,
+   "family": "negative_binomial",
+   "population": "Sleeper projected pass_yd >= 150; n=3386",
+   "n": 3386,
+   "calibration": 0.9701,
+   "var_over_mean": 2.4144,
+   "size_moments": 23.035,
+   "held_out_seasons": 7,
+   "held_out_negative_binomial_wins": 7,
+   "held_out": {
+    "2019": {
+     "size": 22.907,
+     "nb_logloss": 0.62928,
+     "poisson_logloss": 0.64344,
+     "stated": 0.4788,
+     "observed": 0.4984
+    },
+    "2020": {
+     "size": 23.04,
+     "nb_logloss": 0.63439,
+     "poisson_logloss": 0.65056,
+     "stated": 0.479,
+     "observed": 0.5002
+    },
+    "2021": {
+     "size": 23.041,
+     "nb_logloss": 0.624,
+     "poisson_logloss": 0.6344,
+     "stated": 0.4781,
+     "observed": 0.5042
+    },
+    "2022": {
+     "size": 23.65,
+     "nb_logloss": 0.62418,
+     "poisson_logloss": 0.63639,
+     "stated": 0.479,
+     "observed": 0.4996
+    },
+    "2023": {
+     "size": 22.508,
+     "nb_logloss": 0.62079,
+     "poisson_logloss": 0.6289,
+     "stated": 0.4779,
+     "observed": 0.5073
+    },
+    "2024": {
+     "size": 23.214,
+     "nb_logloss": 0.62843,
+     "poisson_logloss": 0.64075,
+     "stated": 0.4797,
+     "observed": 0.5067
+    },
+    "2025": {
+     "size": 22.948,
+     "nb_logloss": 0.62622,
+     "poisson_logloss": 0.63926,
+     "stated": 0.4794,
+     "observed": 0.4955
+    }
+   }
+  },
+  "completions": {
+   "size": 24.327,
+   "family": "negative_binomial",
+   "population": "Sleeper projected pass_yd >= 150; n=3383",
+   "n": 3383,
+   "calibration": 0.9776,
+   "var_over_mean": 1.8762,
+   "size_moments": 24.327,
+   "held_out_seasons": 7,
+   "held_out_negative_binomial_wins": 7,
+   "held_out": {
+    "2019": {
+     "size": 23.865,
+     "nb_logloss": 0.61607,
+     "poisson_logloss": 0.62438,
+     "stated": 0.4801,
+     "observed": 0.5011
+    },
+    "2020": {
+     "size": 24.885,
+     "nb_logloss": 0.61895,
+     "poisson_logloss": 0.62805,
+     "stated": 0.4806,
+     "observed": 0.5011
+    },
+    "2021": {
+     "size": 24.469,
+     "nb_logloss": 0.607,
+     "poisson_logloss": 0.61152,
+     "stated": 0.4804,
+     "observed": 0.4981
+    },
+    "2022": {
+     "size": 24.722,
+     "nb_logloss": 0.60582,
+     "poisson_logloss": 0.60999,
+     "stated": 0.4808,
+     "observed": 0.507
+    },
+    "2023": {
+     "size": 24.515,
+     "nb_logloss": 0.61241,
+     "poisson_logloss": 0.61763,
+     "stated": 0.4804,
+     "observed": 0.5126
+    },
+    "2024": {
+     "size": 24.176,
+     "nb_logloss": 0.61707,
+     "poisson_logloss": 0.62554,
+     "stated": 0.4811,
+     "observed": 0.5012
+    },
+    "2025": {
+     "size": 23.829,
+     "nb_logloss": 0.59879,
+     "poisson_logloss": 0.60106,
+     "stated": 0.48,
+     "observed": 0.4955
+    }
+   }
+  },
+  "passing_interceptions": {
+   "size": 16.584,
+   "family": "negative_binomial",
+   "population": "Sleeper projected pass_yd >= 150; n=2500",
+   "n": 2500,
+   "calibration": 0.9214,
+   "var_over_mean": 1.0448,
+   "size_moments": 16.584,
+   "held_out_seasons": 5,
+   "held_out_negative_binomial_wins": 3,
+   "held_out": {
+    "2021": {
+     "size": 41.501,
+     "nb_logloss": 0.61081,
+     "poisson_logloss": 0.6112,
+     "stated": 0.3647,
+     "observed": 0.3611
+    },
+    "2022": {
+     "size": 13.921,
+     "nb_logloss": 0.59233,
+     "poisson_logloss": 0.59253,
+     "stated": 0.34,
+     "observed": 0.3492
+    },
+    "2023": {
+     "size": 14.192,
+     "nb_logloss": 0.57456,
+     "poisson_logloss": 0.57445,
+     "stated": 0.3513,
+     "observed": 0.3522
+    },
+    "2024": {
+     "size": 18.94,
+     "nb_logloss": 0.58311,
+     "poisson_logloss": 0.58339,
+     "stated": 0.3369,
+     "observed": 0.3371
+    },
+    "2025": {
+     "size": 12.432,
+     "nb_logloss": 0.56201,
+     "poisson_logloss": 0.56164,
+     "stated": 0.333,
+     "observed": 0.334
+    }
+   }
+  },
+  "carries": {
+   "size": 10.035,
+   "family": "negative_binomial",
+   "population": "Sleeper projected rush_att >= 4; n=7136",
+   "n": 7136,
+   "calibration": 1.0024,
+   "var_over_mean": 2.2293,
+   "size_moments": 10.035,
+   "held_out_seasons": 7,
+   "held_out_negative_binomial_wins": 7,
+   "held_out": {
+    "2019": {
+     "size": 9.858,
+     "nb_logloss": 0.6219,
+     "poisson_logloss": 0.63317,
+     "stated": 0.4669,
+     "observed": 0.4711
+    },
+    "2020": {
+     "size": 10.233,
+     "nb_logloss": 0.63145,
+     "poisson_logloss": 0.64649,
+     "stated": 0.4642,
+     "observed": 0.4621
+    },
+    "2021": {
+     "size": 10.445,
+     "nb_logloss": 0.63736,
+     "poisson_logloss": 0.65835,
+     "stated": 0.4657,
+     "observed": 0.4619
+    },
+    "2022": {
+     "size": 10.16,
+     "nb_logloss": 0.63648,
+     "poisson_logloss": 0.65363,
+     "stated": 0.4678,
+     "observed": 0.4733
+    },
+    "2023": {
+     "size": 10.053,
+     "nb_logloss": 0.63591,
+     "poisson_logloss": 0.65411,
+     "stated": 0.4643,
+     "observed": 0.4585
+    },
+    "2024": {
+     "size": 9.909,
+     "nb_logloss": 0.62868,
+     "poisson_logloss": 0.64325,
+     "stated": 0.4662,
+     "observed": 0.4767
+    },
+    "2025": {
+     "size": 9.63,
+     "nb_logloss": 0.61549,
+     "poisson_logloss": 0.62305,
+     "stated": 0.4677,
+     "observed": 0.472
+    }
+   }
+  },
+  "receptions": {
+   "size": 10.746,
+   "family": "negative_binomial",
+   "population": "Sleeper projected rec >= 1.5; n=19027",
+   "n": 19027,
+   "calibration": 0.9596,
+   "var_over_mean": 1.3508,
+   "size_moments": 10.746,
+   "held_out_seasons": 7,
+   "held_out_negative_binomial_wins": 7,
+   "held_out": {
+    "2019": {
+     "size": 10.917,
+     "nb_logloss": 0.58749,
+     "poisson_logloss": 0.59084,
+     "stated": 0.4703,
+     "observed": 0.4663
+    },
+    "2020": {
+     "size": 10.855,
+     "nb_logloss": 0.58506,
+     "poisson_logloss": 0.58807,
+     "stated": 0.4703,
+     "observed": 0.4669
+    },
+    "2021": {
+     "size": 11.217,
+     "nb_logloss": 0.58875,
+     "poisson_logloss": 0.592,
+     "stated": 0.4706,
+     "observed": 0.466
+    },
+    "2022": {
+     "size": 10.888,
+     "nb_logloss": 0.58906,
+     "poisson_logloss": 0.59219,
+     "stated": 0.4689,
+     "observed": 0.4656
+    },
+    "2023": {
+     "size": 10.533,
+     "nb_logloss": 0.58009,
+     "poisson_logloss": 0.58176,
+     "stated": 0.47,
+     "observed": 0.4757
+    },
+    "2024": {
+     "size": 10.735,
+     "nb_logloss": 0.58154,
+     "poisson_logloss": 0.58355,
+     "stated": 0.4699,
+     "observed": 0.4695
+    },
+    "2025": {
+     "size": 10.198,
+     "nb_logloss": 0.57278,
+     "poisson_logloss": 0.57344,
+     "stated": 0.47,
+     "observed": 0.4707
+    }
+   }
+  },
+  "fg_made": {
+   "size": null,
+   "family": "poisson",
+   "population": "Sleeper projected fgm >= 0.8; n=3563",
+   "n": 3563,
+   "calibration": 1.0234,
+   "var_over_mean": 0.8889,
+   "size_moments": null,
+   "held_out_seasons": 7,
+   "held_out_negative_binomial_wins": 0,
+   "held_out": {
+    "2019": {
+     "size": null,
+     "nb_logloss": 0.53753,
+     "poisson_logloss": 0.53753,
+     "stated": 0.4726,
+     "observed": 0.4802
+    },
+    "2020": {
+     "size": null,
+     "nb_logloss": 0.5423,
+     "poisson_logloss": 0.5423,
+     "stated": 0.4725,
+     "observed": 0.4761
+    },
+    "2021": {
+     "size": null,
+     "nb_logloss": 0.54884,
+     "poisson_logloss": 0.54884,
+     "stated": 0.4666,
+     "observed": 0.4801
+    },
+    "2022": {
+     "size": null,
+     "nb_logloss": 0.53985,
+     "poisson_logloss": 0.53985,
+     "stated": 0.4706,
+     "observed": 0.4799
+    },
+    "2023": {
+     "size": null,
+     "nb_logloss": 0.55127,
+     "poisson_logloss": 0.55127,
+     "stated": 0.4701,
+     "observed": 0.4755
+    },
+    "2024": {
+     "size": null,
+     "nb_logloss": 0.54597,
+     "poisson_logloss": 0.54597,
+     "stated": 0.4666,
+     "observed": 0.4723
+    },
+    "2025": {
+     "size": null,
+     "nb_logloss": 0.53733,
+     "poisson_logloss": 0.53733,
+     "stated": 0.4683,
+     "observed": 0.4741
+    }
+   }
+  }
+ },
+ "anytime_td": {
+  "family": "poisson",
+  "n": 24780,
+  "calibration": 0.9723623687900509,
+  "stated": 0.2485,
+  "observed": 0.248,
+  "by_expected_td_quintile": {
+   "(0.0962, 0.146]": {
+    "n": 4986,
+    "stated": 0.1124,
+    "observed": 0.1143
+   },
+   "(0.146, 0.224]": {
+    "n": 4968,
+    "stated": 0.1675,
+    "observed": 0.1645
+   },
+   "(0.224, 0.301]": {
+    "n": 4983,
+    "stated": 0.23,
+    "observed": 0.228
+   },
+   "(0.301, 0.428]": {
+    "n": 5115,
+    "stated": 0.3048,
+    "observed": 0.3015
+   },
+   "(0.428, 1.41]": {
+    "n": 4728,
+    "stated": 0.4355,
+    "observed": 0.4401
+   }
+  },
+  "population": "Sleeper projected tds >= 0.1; n=24780"
+ }
+}

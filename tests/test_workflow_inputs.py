@@ -21,7 +21,12 @@ not a declared dependency of this project.
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
+import random
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -177,3 +182,250 @@ def test_a_refused_week_stops_the_run_rather_than_falling_back():
     a week nobody asked for, off an input that was already malformed."""
     with pytest.raises(SystemExit):
         CLI.week_from_env("3; rm -rf /")
+
+
+# ------------------------------------------------- the prop collector workflow
+#
+# props-collect.yml handles an API credential and data whose terms forbid
+# redistribution, in a repository whose logs, artifacts and caches are
+# public. Each property below is part of what keeps it inside those terms.
+
+PROPS = ROOT / ".github" / "workflows" / "props-collect.yml"
+DERIVED_PATH = "data/research/cache/props/derived"
+USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)")
+
+
+def _props() -> str:
+    return PROPS.read_text("utf-8")
+
+
+def _ancestors(lines: list[str], i: int) -> list[str]:
+    """The stripped lines that enclose line i, innermost first (YAML by
+    indentation: each is the nearest earlier line indented less)."""
+    out, depth = [], len(lines[i]) - len(lines[i].lstrip())
+    for j in range(i - 1, -1, -1):
+        line = lines[j]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        ind = len(line) - len(line.lstrip())
+        if ind < depth:
+            out.append(line.strip())
+            depth = ind
+    return out
+
+
+def _steps(text: str) -> list[str]:
+    """Each step of a workflow as its block of text."""
+    return [("- name:" + b) for b in text.split("- name:")[1:]]
+
+
+def test_the_collector_runs_only_on_a_schedule_or_by_hand_and_only_when_enabled():
+    text = _props()
+    on = text.split("\non:", 1)[1].split("\npermissions:", 1)[0]
+    assert "workflow_dispatch:" in on and "schedule:" in on
+    for trigger in ("pull_request", "pull_request_target", "push:", "workflow_run"):
+        assert trigger not in on, f"props-collect.yml must not run on {trigger}"
+    assert "if: vars.GRIDIRON_PROPS_ENABLED == 'true'" in text
+    assert "permissions:\n  contents: read" in text
+    cron = re.findall(r"cron: '([^']+)'", text)
+    assert len(cron) == 1
+    minute, *rest = cron[0].split()
+    assert rest == ["*", "*", "*", "*"], "hourly"
+    assert minute.isdigit() and int(minute) % 15 != 0, "off the quarter hours"
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda p: p.name)
+def test_every_action_is_pinned_to_a_full_commit_sha(workflow):
+    for line in workflow.read_text("utf-8").splitlines():
+        m = USES.match(line)
+        if m:
+            assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", m.group(1)), \
+                f"{workflow.name}: {m.group(1)} is not pinned to a commit SHA"
+
+
+def test_secrets_reach_only_step_level_env_and_the_key_one_step():
+    lines = _props().splitlines()
+    hits = [i for i, line in enumerate(lines) if "secrets." in line and "${{" in line]
+    assert hits, "the parser found no secret at all"
+    for i in hits:
+        chain = _ancestors(lines, i)
+        assert chain[0] == "env:", f"line {i + 1}: a secret outside an env: block"
+        assert chain[1].startswith("- "), f"line {i + 1}: a secret in a job- or workflow-level env"
+    key_steps = [s for s in _steps(_props()) if "secrets.GRIDIRON_ODDS_API_KEY" in s]
+    assert len(key_steps) == 1, "exactly one step holds the API key"
+    assert "run: python scripts/ingest/pull_props.py\n" in key_steps[0]
+    for s in _steps(_props()):
+        if "secrets." in s:
+            assert "uses:" not in s, "a secret handed to an action's inputs"
+
+
+def test_raw_odds_never_leave_the_runner_unencrypted():
+    text = _props()
+    actions = [m.group(1) for m in map(USES.match, text.splitlines()) if m]
+    assert actions, "the parser found no action at all"
+    assert not [a for a in actions if "upload" in a], \
+        "no artifact of any kind: raw odds may not be redistributed"
+    enc = [line for line in text.splitlines() if "openssl enc" in line]
+    assert len(enc) == 2, "one decrypt and one encrypt"
+    for line in enc:
+        for flag in ("-aes-256-cbc", "-pbkdf2", "-iter 200000",
+                     "-pass env:GRIDIRON_ODDS_ARCHIVE_KEY"):
+            assert flag in line, f"openssl without {flag}"
+        assert "-pass pass:" not in line and " -k " not in line and " -K " not in line
+    # every cache path is the encrypted vault or the derived folder, never raw/
+    paths = re.findall(r"^\s*path:\s*(\S+)\s*$", text, flags=re.M)
+    assert set(paths) == {".props-vault", DERIVED_PATH}
+    assert "gridiron-props-vault-" in text and "gridiron-props-derived-" in text
+    # the plaintext goes, whatever happened above (the decrypt step's own
+    # cleanup of a half-extracted archive is not this: it runs only there)
+    always = [s for s in _steps(text) if "\n        if: always()\n" in s and "rm -rf" in s]
+    assert any('"$PROPS_DIR/raw"' in s for s in always)
+
+
+def test_the_summary_says_when_nothing_raw_is_kept():
+    summary = next(b for _n, b in _run_blocks(_props()) if "GITHUB_STEP_SUMMARY" in b
+                   and "Prop market collector" in b)
+    assert "nothing raw is kept between runs" in summary
+    assert "VAULT_KEY_PRESENT: ${{ steps.vaultkey.outputs.present }}" in _props()
+
+
+def test_the_dashboard_restores_the_derived_cache_once_and_never_saves_it():
+    text = (ROOT / ".github" / "workflows" / "dashboard-artifact.yml").read_text("utf-8")
+    steps = [s for s in _steps(text) if DERIVED_PATH in s]
+    assert len(steps) == 1, "exactly one step touches the derived prop cache"
+    step = steps[0]
+    assert "actions/cache/restore@" in step and "actions/cache/save" not in step
+    assert "restore-keys: |\n            gridiron-props-derived-" in step
+    # the same path string as the collector's save: a cache's version is
+    # computed from its paths, so any other spelling would never restore
+    save = next(s for s in _steps(_props()) if "actions/cache/save@" in s and DERIVED_PATH in s)
+    assert f"path: {DERIVED_PATH}\n" in save and f"path: {DERIVED_PATH}\n" in step
+    assert "secrets." not in step
+
+
+def test_every_openssl_pipeline_runs_under_pipefail():
+    """Without pipefail a pipeline's status is its LAST command's: a tar
+    that fails half-way would leave openssl encrypting a truncated stream
+    that then replaces the good archive, and a failed decrypt could hide
+    behind a tar that exited cleanly."""
+    steps = [s for s in _steps(_props()) if "openssl enc" in s]
+    assert len(steps) == 2
+    for s in steps:
+        run = s.split("run: |", 1)[1]
+        assert run.lstrip().startswith("set -euo pipefail"), s.splitlines()[0]
+
+
+def test_the_summary_reports_every_step_that_can_fail_quietly():
+    """A continue-on-error step fails in silence unless the summary names
+    its outcome (the dashboard's rule, extended to the collector), and the
+    archive's save is reported beside its encryption."""
+    text = _props()
+    quiet = [s for s in _steps(text) if "continue-on-error: true" in s]
+    assert quiet, "the parser found no continue-on-error step"
+    for s in quiet + [next(s for s in _steps(text) if "actions/cache/save@" in s
+                           and ".props-vault" in s)]:
+        m = re.search(r"^\s*id:\s*(\S+)\s*$", s, flags=re.M)
+        assert m, f"{s.splitlines()[0]}: a step the summary must quote needs an id"
+        assert f"${{{{ steps.{m.group(1)}.outcome }}}}" in text, m.group(1)
+
+
+def _step(text: str, step_id: str) -> str:
+    """The one step whose `id:` is `step_id`."""
+    found = [s for s in _steps(text)
+             if re.search(rf"^\s*id:\s*{re.escape(step_id)}\s*$", s, flags=re.M)]
+    assert len(found) == 1, f"one step with id {step_id}"
+    return found[0]
+
+
+def test_an_archive_that_will_not_decrypt_stops_no_collecting_and_is_never_replaced():
+    """A snapshot missed while the archive is unreadable can never be bought
+    back (the free tier has no history). So a decrypt failure must not stop
+    the run. It must only keep the archive it could not read from being read
+    or replaced, and it must stay in sight. Under continue-on-error a failed
+    step's CONCLUSION is 'success' and only its OUTCOME stays 'failure', so
+    every gate on the archive must read the outcome."""
+    text = _props()
+    steps = _steps(text)
+    decrypt, collect = _step(text, "decrypt"), _step(text, "collect")
+    install = next(s for s in steps if "pip install" in s)
+    assert "continue-on-error: true" in decrypt
+    assert steps.index(decrypt) < steps.index(install) < steps.index(collect)
+    for s in (install, collect):
+        assert "steps.decrypt" not in s and "\n        if:" not in s, s.splitlines()[0]
+    for sid in ("encrypt", "rank"):
+        assert "steps.decrypt.outcome == 'success'" in _step(text, sid), sid
+    assert "steps.encrypt.outcome == 'success'" in _step(text, "savevault")
+    assert "steps.decrypt.conclusion" not in text
+    # the summary names the failure, and the run still fails, last
+    summary = next(b for _n, b in _run_blocks(text) if "Prop market collector" in b)
+    assert '"${DECRYPT_OUTCOME}" = "failure"' in summary and "did not decrypt" in summary
+    last = steps[-1]
+    assert "if: always() && steps.decrypt.outcome == 'failure'" in last
+    assert re.search(r"^\s*exit 1\s*$", last, flags=re.M)
+    assert "continue-on-error" not in last
+
+
+def _script(step: str) -> str:
+    blocks = _run_blocks(step)
+    assert len(blocks) == 1, step.splitlines()[0]
+    return blocks[0][1]
+
+
+@pytest.mark.skipif(not all(shutil.which(t) for t in ("bash", "openssl", "tar")),
+                    reason="needs bash, openssl and tar")
+def test_the_decrypt_step_restores_refuses_and_never_leaves_a_half_archive(tmp_path):
+    """The workflow's own encrypt and decrypt scripts, run with a fictional
+    key on fictional files. A good archive round-trips. A wrong key or a
+    damaged file fails the step with state=unreadable, leaves no plaintext
+    behind, and leaves the archive byte for byte as it was. A damaged file
+    does half-extract before tar stops, so the cleanup is what removes it
+    (shown by running the step without that line)."""
+    text = _props()
+    dirs = dict(re.findall(r"^\s+(PROPS_DIR|VAULT_DIR):\s*(\S+)\s*$", text, flags=re.M))
+    assert set(dirs) == {"PROPS_DIR", "VAULT_DIR"}
+    decrypt_sh, encrypt_sh = _script(_step(text, "decrypt")), _script(_step(text, "encrypt"))
+    cleanup = 'rm -rf "$PROPS_DIR/raw"'
+    assert cleanup in decrypt_sh
+    props, vault = tmp_path / dirs["PROPS_DIR"], tmp_path / dirs["VAULT_DIR"] / "raw.tar.gz.enc"
+    week = props / "raw" / "season2026" / "week09"
+    week.mkdir(parents=True)
+    rng = random.Random(7)
+    for i in range(40):      # incompressible padding: a cut file still holds whole members
+        (week / f"2026_09_G{i:02d}__20261108T163000Z.json").write_text(
+            json.dumps({"pad": rng.randbytes(2048).hex()}), encoding="utf-8")
+
+    def files():
+        return sorted(p.relative_to(props) for p in props.rglob("*") if p.is_file())
+
+    def step(script, key):
+        out = tmp_path / "github_output"
+        out.write_text("", encoding="utf-8")
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
+               "GITHUB_OUTPUT": str(out), "GRIDIRON_ODDS_ARCHIVE_KEY": key, **dirs}
+        done = subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path, env=env,
+                              capture_output=True, text=True, timeout=120)
+        return done.returncode, out.read_text(encoding="utf-8").strip()
+
+    written = files()
+    assert step(encrypt_sh, "fictional-key-one") == (0, "")
+    shutil.rmtree(props / "raw")
+    assert step(decrypt_sh, "fictional-key-one") == (0, "state=restored")
+    assert files() == written
+    sealed = vault.read_bytes()
+
+    shutil.rmtree(props / "raw")
+    code, state = step(decrypt_sh, "fictional-key-two")          # a re-created key
+    assert code != 0 and state == "state=unreadable"
+    assert not (props / "raw").exists() and vault.read_bytes() == sealed
+
+    damaged = sealed[: len(sealed) // 2]                           # a damaged file
+    vault.write_bytes(damaged)
+    step(decrypt_sh.replace(cleanup, ":"), "fictional-key-one")
+    assert files(), "the damaged file half-extracts, or this case proves nothing"
+    shutil.rmtree(props / "raw")
+    code, state = step(decrypt_sh, "fictional-key-one")
+    assert code != 0 and state == "state=unreadable"
+    assert not (props / "raw").exists() and vault.read_bytes() == damaged
+
+    vault.unlink()                                                 # nothing cached yet
+    assert step(decrypt_sh, "fictional-key-one") == (0, "state=empty")

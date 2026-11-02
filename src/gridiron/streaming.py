@@ -1,0 +1,599 @@
+"""Weekly streaming plans for tight ends, kickers and team defenses —
+roadmap TE-09, K-13 and DEF-13 (docs/research/MODEL_ROADMAP.md).
+
+A product LIST, not a projection. Every number in it is one week of a
+player's rest-of-season line exactly as `gridiron.ros.build_table` wrote it,
+after `ros.ownership` said who holds him: nothing is re-projected,
+re-weighted or guessed. For each position and each week of a short window
+(by default the table's first week and the next two) it answers "who fills
+this slot for me that week, and who is out there":
+
+  * my best rostered option (`held_by == "MINE"`) with his points and
+    opponent, or why there is none:
+      BYE      a week the schedule PROVES off (the line's `byes`, from
+               `gridiron.lineup.proven_byes`);
+      OUT      his line is 0 that week: an Out on the first week's injury
+               report, the NFL minimum of a reserve-list stint, or no
+               projected points;
+      UNKNOWN  opponent `?`: no game row and no proven bye. Counted at his
+               plain rate, as the line counts it, and NEVER a bye;
+      BELOW 0  a team defense's line under zero (it is not clipped): shown
+               as is, and it gives nothing;
+      NONE     none of mine at the position in the table (it holds only the
+               players it can project);
+      NOT KNOWN  no row in the whole table is MINE (the owner's roster was
+               not found): what I hold is not known, never empty, so a week
+               is neither a NEED nor covered, no free agent beats mine, and
+               there is no cover total.
+    A known game comes before an UNKNOWN week, whatever that week's number;
+    a week whose best is anything but a known game with points is a NEED.
+  * the top free agents (`held_by == "FA"`) in the same order as mine (a
+    known game first, then that week's points), so the two compare like for
+    like, with opponents and the table's own flags (injury tag, `depth N`,
+    `IR since wkN`). A free agent beats mine only with a known game: his
+    UNKNOWN week may be his bye. A flag goes to the reader; it never filters
+    anyone (rule #11). A row with no Sleeper id (`unresolved`) is in neither
+    list, and said.
+  * hold vs stream over the window: my total; the best single free agent
+    held for the whole window (hold); each week's best free agent, summed
+    (stream: a move every week the name changes); and mine, with the week's
+    best free agent only in the weeks mine gives nothing (cover). A week
+    that gives nothing (a bye, an OUT, a defense below 0) counts 0, as an
+    empty slot does. An UNKNOWN week counts at the plain rate, as the line
+    counts it, and each total says how much of it is UNKNOWN.
+
+What it is not (rules #7 and #11): points, not ΔP(win); planning, not a
+move. A pickup is a move only if it improves THIS week's lineup, and the
+board decides that (`gridiron.waivers`, the Free Agent Radar). `FA` means on
+no roster in the league snapshot, which is not "addable now": a player
+dropped in the last two days is on waivers, claims only, and every
+unrostered player is locked on waivers from his game's kickoff (or the
+week's last) until the weekly run (`gridiron.notable.waiver_clock`). The
+board's waiver clock, and his Sleeper card, come before any claim.
+
+Joins: none. A row is the table's row, keyed by the table's id (a gsis id,
+or `DEF:<team>` for a team defense, rule #3); names are display only.
+"""
+from __future__ import annotations
+
+import math
+import numbers
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+
+import pandas as pd
+
+from gridiron.ids import normalize_id
+from gridiron.ros import IR_MIN_GAMES
+
+#: The positions planned, in the order shown.
+POSITIONS: tuple[str, ...] = ("TE", "K", "DEF")
+#: Weeks planned by default: the table's first week and the next two.
+SPAN = 3
+#: Free agents listed per week.
+TOP = 5
+
+MINE, FA = "MINE", "FA"
+#: `ros.ownership`'s word for a row with no Sleeper id: who holds him is not known.
+UNRESOLVED = "unresolved"
+GAME, BYE, OUT, UNKNOWN, BELOW, NONE = "GAME", "BYE", "OUT", "UNKNOWN", "BELOW 0", "NONE"
+#: A week's status when no row in the whole table is MINE: what I hold is not known.
+NOT_KNOWN = "NOT KNOWN"
+_NO_RANK = 10 ** 6
+
+#: The section's standing words (rules #7 and #11), shown above every plan.
+WORDING = (
+    "Points, not ΔP(win); planning, not a move. A pickup is a move only if it "
+    "improves THIS week's lineup, and the board decides that (`gridiron.waivers`, its "
+    "Free Agent Radar), not this list. \"FA\" means on no roster in the league snapshot, "
+    "which may still be on waivers (claims only) — check the board's waiver clock "
+    "before acting (his Sleeper card is the authority)."
+)
+LEGEND = (
+    "Each week: my best rostered option, then the top free agents, both in one order: a "
+    "known game first, then that week's points on the ROS lines. BYE = a week the schedule "
+    "proves off; UNKNOWN = no game row and no proven bye (opponent ?, counted at his plain "
+    "rate, never a bye); OUT = his ROS line is 0 that week; BELOW 0 = a defense's line "
+    "under zero, shown as is. **NEED** = my best that week is not a known game with "
+    "points. **Bold** = a known game that beats my best that week, by the amount shown; a "
+    "week that gives nothing counts 0, as an empty slot does. An UNKNOWN week is never "
+    "bold (it may be his bye), and each total says how much of it is UNKNOWN. Flags are "
+    "the ROS table's own (injury tag, depth N, IR since wkN)."
+)
+
+
+def _missing(v: object) -> bool:
+    if v is None or v is pd.NA:
+        return True
+    return isinstance(v, numbers.Real) and math.isnan(v)      # any float NaN, numpy's too
+
+
+def _position(value: object) -> str:
+    p = "" if _missing(value) else str(value).strip().upper()
+    return "DEF" if p in ("DEF", "DST") else p
+
+
+# ------------------------------------------------------------- the table
+
+def parse_weeks(value: object) -> tuple[tuple[int, str, float], ...]:
+    """A ROS line's games as (week, opponent, points): the table's
+    `"week:opponent:points ..."` string (`gridiron.ros`), or `RosLine.weeks`
+    itself. A bye is not a game, so it is not in here."""
+    if _missing(value):
+        return ()
+    if isinstance(value, str):
+        out = []
+        for token in value.split():
+            week, opp, pts = token.split(":")
+            out.append((int(week), opp, float(pts)))
+        return tuple(out)
+    return tuple((int(w), str(o), float(p)) for w, o, p in value)
+
+
+def parse_byes(value: object) -> frozenset[int]:
+    """A ROS line's PROVEN byes: the table's `"6"`, `"6,14"` or `""`, a
+    number (a CSV round trip), or `RosLine.byes`."""
+    if _missing(value):
+        return frozenset()
+    if isinstance(value, str):
+        return frozenset(int(float(b)) for b in value.split(",") if b.strip())
+    if isinstance(value, numbers.Real):
+        return frozenset({int(value)})
+    return frozenset(int(b) for b in value)
+
+
+def row_flags(row: Mapping[str, object]) -> tuple[str, ...]:
+    """The ROS table's own flags on a row, in the words the rankings use:
+    the injury tag (the player map's, or the first week's Out from the
+    injury report), `depth N` when he was not first on the depth chart
+    before the week, and a reserve-list stint's NFL minimum."""
+    bits = []
+    st = row.get("injury")
+    st = "" if _missing(st) else str(st).upper()
+    if st and st != "NAN":
+        bits.append(st)
+    dr = row.get("depth_rank")
+    if not _missing(dr) and int(dr) > 1:
+        bits.append(f"depth {int(dr)}")
+    rs = row.get("reserve_since")
+    if not _missing(rs):
+        bits.append(f"IR since wk{int(rs)}: {IR_MIN_GAMES} games 0")
+    return tuple(bits)
+
+
+@dataclass(frozen=True)
+class Line:
+    """One row of the ROS table at a planned position: who he is, who holds
+    him, and his line week by week."""
+
+    gsis_id: str                               # the table's key; DEF:<team> for a defense
+    name: str
+    team: str
+    position: str
+    held_by: str                               # MINE, FA, a manager, rostered, unresolved
+    pos_rank: int | None
+    flags: tuple[str, ...]
+    games: tuple[tuple[int, str, float], ...]  # (week, opponent, points); byes absent
+    byes: frozenset[int]                       # proven by the schedule
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, object]) -> Line:
+        pos = _position(row.get("position"))
+        gid = normalize_id(row.get("gsis_id"))
+        team = normalize_id(row.get("team"))
+        if not team and gid.startswith("DEF:"):
+            team = gid.split(":", 1)[1]
+        name = "" if _missing(row.get("name")) else str(row.get("name")).strip()
+        if not name:                           # the table's own display rule
+            name = f"{team} DST" if pos == "DEF" else gid
+        held = row.get("held_by")
+        rank = row.get("pos_rank")
+        return cls(gid, name, team, pos, "" if _missing(held) else str(held),
+                   None if _missing(rank) else int(rank), row_flags(row),
+                   parse_weeks(row.get("weeks")), parse_byes(row.get("byes")))
+
+    def option(self, week: int) -> Option:
+        """This player in `week`, as his line has it."""
+        week = int(week)
+        if week in self.byes:
+            return Option(self, week, BYE, "", 0.0)
+        for w, opp, pts in self.games:
+            if w == week:
+                status = (OUT if pts == 0 else UNKNOWN if opp == "?" else
+                          BELOW if pts < 0 else GAME)
+                return Option(self, week, status, opp, pts)
+        # the line says nothing about the week (outside it): no number
+        return Option(self, week, UNKNOWN, "?", 0.0)
+
+
+@dataclass(frozen=True)
+class Option:
+    """One player in one week, as his ROS line has it."""
+
+    line: Line
+    week: int
+    status: str          # GAME | BYE | OUT | UNKNOWN | BELOW 0
+    opponent: str        # "" on a bye; "?" when the schedule has no game row
+    points: float        # the line's number that week; 0 on a bye or with no line
+
+    @property
+    def counts(self) -> bool:
+        """A number to start that week: a known game, or a week the line
+        counts as played without knowing the opponent."""
+        return self.status in (GAME, UNKNOWN) and self.points > 0
+
+    @property
+    def credit(self) -> float:
+        """What he adds to a total that week: his points, or 0 (an empty
+        slot) when he gives nothing."""
+        return self.points if self.counts else 0.0
+
+
+def _rank(line: Line) -> int:
+    return line.pos_rank if line.pos_rank is not None else _NO_RANK
+
+
+def _best_first(o: Option) -> tuple:
+    """Best first, one order for mine AND for free agents, so the week's
+    best of each compare like for like: a number to start, a KNOWN game
+    before an unknown week whatever its number (a `?` week may yet be his
+    bye), more points, the better ROS rank, the id (a stable tie-break)."""
+    return (not o.counts, o.status != GAME, -o.points, _rank(o.line), o.line.gsis_id)
+
+
+def _unknown(options: Iterable[Option | None]) -> tuple[tuple[int, float], ...]:
+    """(week, points) of each option a total counts from an UNKNOWN week:
+    no game row and no proven bye, at the plain rate, as the line counts it."""
+    return tuple((o.week, o.points) for o in options
+                 if o is not None and o.counts and o.status == UNKNOWN)
+
+
+# --------------------------------------------------------------- the plan
+
+@dataclass(frozen=True)
+class WeekPlan:
+    """One position in one week."""
+
+    week: int
+    mine: tuple[Option, ...]          # every rostered player at the position, best first
+    free_agents: tuple[Option, ...]   # the top free agents with a number, best first
+    #: False when no row in the whole table is MINE: what I hold is NOT KNOWN
+    owner_known: bool = True
+
+    @property
+    def best(self) -> Option | None:
+        return self.mine[0] if self.mine else None
+
+    @property
+    def status(self) -> str:
+        if self.best is not None:
+            return self.best.status
+        return NONE if self.owner_known else NOT_KNOWN
+
+    @property
+    def known(self) -> bool:
+        """What I hold this week is known. False ONLY when no row in the
+        whole table is MINE; a position with none of mine (NONE) is known."""
+        return self.status != NOT_KNOWN
+
+    @property
+    def need(self) -> bool | None:
+        """True: my best is not a known game with points: he gives nothing
+        (BYE, OUT, BELOW 0), none of mine is in the table (NONE), or his week
+        is UNKNOWN. None: what I hold is NOT KNOWN, so the week is neither a
+        need nor covered (never read None as False)."""
+        return None if not self.known else self.status != GAME
+
+    @property
+    def mine_points(self) -> float | None:
+        """My best's points that week, 0 when he gives nothing or none of
+        mine is in the table; None when what I hold is NOT KNOWN."""
+        if not self.known:
+            return None
+        return self.best.credit if self.best is not None else 0.0
+
+    def margin(self, option: Option) -> float | None:
+        """How far `option`'s week beats my best's (a week mine gives
+        nothing counts 0). None when that is not known: what I hold is NOT
+        KNOWN, or `option`'s week is UNKNOWN (no game row: it may be his bye)."""
+        mine = self.mine_points
+        if mine is None or option.status == UNKNOWN:
+            return None
+        return option.credit - mine
+
+    @property
+    def beats_mine(self) -> tuple[Option, ...] | None:
+        """The listed free agents known to beat my best that week: a known
+        game with more points. None when what I hold is NOT KNOWN."""
+        if not self.known:
+            return None
+        return tuple(o for o in self.free_agents
+                     if (m := self.margin(o)) is not None and m > 0)
+
+
+def adds(picks: Iterable[Line | None]) -> int:
+    """Pickups a weekly sequence needs: the first, then one each time the
+    name changes (a week without a pickup changes nothing)."""
+    n, last = 0, None
+    for p in picks:
+        if p is None:
+            continue
+        if p.gsis_id != last:
+            n += 1
+        last = p.gsis_id
+    return n
+
+
+@dataclass(frozen=True)
+class HoldVsStream:
+    """Ways through the window, in points (rule #7: never ΔP(win)). `mine`,
+    `cover` and `cover_picks` are None when what I hold is NOT KNOWN; the
+    free-agent totals stand. Each `*_unknown` is the (week, points) its
+    total counts from an UNKNOWN week (at the plain rate, as the line does)."""
+
+    weeks: tuple[int, ...]
+    mine: float | None                       # my best each week, summed
+    hold: Line | None                        # the free agent with the most points over the window
+    hold_total: float
+    stream: float                            # each week's best free agent, summed
+    stream_picks: tuple[Line | None, ...]    # per week; None: no free agent with a number
+    cover: float | None                      # mine, and the week's best FA where mine gives 0
+    cover_picks: tuple[Line | None, ...] | None   # per week; None where mine gives points
+    hold_unknown: tuple[tuple[int, float], ...] = ()
+    stream_unknown: tuple[tuple[int, float], ...] = ()
+    cover_unknown: tuple[tuple[int, float], ...] = ()
+
+    @property
+    def stream_adds(self) -> int:
+        return adds(self.stream_picks)
+
+    @property
+    def cover_adds(self) -> int | None:
+        return None if self.cover_picks is None else adds(self.cover_picks)
+
+
+@dataclass(frozen=True)
+class PositionPlan:
+    position: str
+    weeks: tuple[WeekPlan, ...]
+    totals: HoldVsStream
+    rostered: tuple[Line, ...]                 # mine at the position, best ROS rank first
+    pool: int                                  # free agents at the position in the table
+    rows: int                                  # table rows at the position
+    #: weeks after the window where my best is not a known game: (week, status)
+    later: tuple[tuple[int, str], ...] = ()
+    #: rows with no Sleeper id (or no holder): in neither list, since who
+    #: holds them is not known (one could be mine)
+    unresolved: int = 0
+    #: False when no row in the whole table is MINE: what I hold is NOT KNOWN
+    owner_known: bool = True
+
+    @property
+    def needs(self) -> tuple[int, ...] | None:
+        """The weeks my best is not a known game with points. None when what
+        I hold is NOT KNOWN: not known, which is not "no needs"."""
+        if not self.owner_known:
+            return None
+        return tuple(wp.week for wp in self.weeks if wp.need)
+
+
+@dataclass(frozen=True)
+class StreamingPlan:
+    weeks: tuple[int, ...]                     # the weeks planned
+    covered: tuple[int, ...]                   # every week the table's lines cover
+    skipped: tuple[int, ...]                   # asked for, but not in the table
+    top: int
+    positions: tuple[PositionPlan, ...]
+    #: MINE rows in the whole table, every position. 0 means the owner's
+    #: roster was not found, so "no rostered player" is NOT KNOWN, not empty.
+    owner_rows: int = 0
+
+
+def window(covered: Iterable[int], weeks: Iterable[int] | None = None,
+           span: int = SPAN) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """(the weeks to plan, the asked-for weeks the table has no line for).
+    Default: the table's first week and the next `span - 1` it covers."""
+    have = sorted({int(w) for w in covered})
+    if weeks is None:
+        if not have:
+            return (), ()
+        return tuple(w for w in range(have[0], have[0] + int(span)) if w in have), ()
+    want = sorted({int(w) for w in weeks})
+    return tuple(w for w in want if w in have), tuple(w for w in want if w not in have)
+
+
+def build(table: pd.DataFrame | Iterable[Mapping[str, object]], *,
+          positions: Iterable[str] = POSITIONS, weeks: Iterable[int] | None = None,
+          span: int = SPAN, top: int = TOP) -> StreamingPlan:
+    """The streaming plan for `positions` over `weeks` (default: the
+    table's first week and the next `span - 1`), from a ROS table that
+    carries `held_by` (`gridiron.ros.ownership`) and its `weeks` lines."""
+    if int(top) < 1 or int(span) < 1:
+        raise ValueError("top and span must be at least 1")
+    positions = tuple(dict.fromkeys(_position(p) for p in positions))
+    rows = table.to_dict("records") if hasattr(table, "to_dict") else list(table)
+    lines = [Line.from_row(r) for r in rows if _position(r.get("position")) in positions]
+    covered = tuple(sorted({w for ln in lines for w, _, _ in ln.games}
+                           | {b for ln in lines for b in ln.byes}))
+    planned, skipped = window(covered, weeks, span)
+    owner_rows = sum(1 for r in rows if r.get("held_by") == MINE)
+    return StreamingPlan(planned, covered, skipped, int(top), tuple(
+        _plan(p, [ln for ln in lines if ln.position == p], planned, covered, int(top),
+              owner_rows > 0)
+        for p in positions), owner_rows)
+
+
+def _plan(position: str, lines: Sequence[Line], weeks: Sequence[int],
+          covered: Sequence[int], top: int, owner_known: bool = True) -> PositionPlan:
+    mine = [ln for ln in lines if ln.held_by == MINE]
+    pool = [ln for ln in lines if ln.held_by == FA]
+    owner_known = owner_known or bool(mine)
+    plans: list[WeekPlan] = []
+    best_fa: list[Option | None] = []
+    for w in weeks:
+        fas = sorted((o for o in (ln.option(w) for ln in pool) if o.counts), key=_best_first)
+        plans.append(WeekPlan(w, tuple(sorted((ln.option(w) for ln in mine), key=_best_first)),
+                              tuple(fas[:top]), owner_known))
+        best_fa.append(fas[0] if fas else None)
+    held = sorted(((sum(ln.option(w).credit for w in weeks), ln) for ln in pool),
+                  key=lambda t: (-t[0], _rank(t[1]), t[1].gsis_id))
+    hold, hold_total = (held[0][1], held[0][0]) if held and held[0][0] > 0 else (None, 0.0)
+    gives = [wp.best is not None and wp.best.counts for wp in plans]
+    # what each week of the cover counts: mine where he gives points, else the week's best FA
+    cover = [wp.best if g else o for wp, g, o in zip(plans, gives, best_fa)]
+    totals = HoldVsStream(
+        tuple(weeks),
+        round(sum(wp.mine_points for wp in plans), 2) if owner_known else None,
+        hold, round(hold_total, 2),
+        round(sum(o.credit for o in best_fa if o is not None), 2),
+        tuple(o.line if o is not None else None for o in best_fa),
+        round(sum(o.credit for o in cover if o is not None), 2) if owner_known else None,
+        tuple(None if g or o is None else o.line for g, o in zip(gives, best_fa))
+        if owner_known else None,
+        _unknown(hold.option(w) for w in weeks) if hold is not None else (),
+        _unknown(best_fa),
+        _unknown(cover) if owner_known else ())
+    later: list[tuple[int, str]] = []
+    if mine and weeks:
+        for w in covered:
+            if w > weeks[-1]:
+                status = min((ln.option(w) for ln in mine), key=_best_first).status
+                if status != GAME:
+                    later.append((w, status))
+    return PositionPlan(position, tuple(plans), totals,
+                        tuple(sorted(mine, key=lambda ln: (_rank(ln), ln.gsis_id))),
+                        len(pool), len(lines), tuple(later),
+                        sum(1 for ln in lines if ln.held_by in ("", UNRESOLVED)), owner_known)
+
+
+# ---------------------------------------------------------------- markdown
+
+def _span(weeks: Iterable[int]) -> str:
+    """4, 5, 6, 7, 9 -> "4-7, 9"."""
+    ws = sorted(set(weeks))
+    runs: list[list[int]] = []
+    for w in ws:
+        if runs and w == runs[-1][-1] + 1:
+            runs[-1].append(w)
+        else:
+            runs.append([w])
+    return ", ".join(f"{r[0]}-{r[-1]}" if len(r) > 1 else str(r[0]) for r in runs)
+
+
+def _weeks_text(weeks: Sequence[int]) -> str:
+    return f"week {weeks[0]}" if len(weeks) == 1 else f"weeks {_span(weeks)}"
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def _who(line: Line) -> str:
+    name = line.name.replace("|", "/")
+    team_in_name = line.position == "DEF" and line.team in name.split()
+    bits = ([line.team] if line.team and not team_in_name else []) + list(line.flags)
+    return f"{name} ({'; '.join(bits)})" if bits else name
+
+
+def _cell(o: Option) -> str:
+    who = _who(o.line)
+    if o.status == BYE:
+        return f"{who} BYE"
+    if o.status == OUT:
+        return f"{who} OUT" + (f" (v {o.opponent})" if o.opponent not in ("", "?") else "")
+    if o.status == UNKNOWN and o.points == 0:      # a 0 on a line is OUT: no line here
+        return f"{who} UNKNOWN (no number that week)"
+    tail = {UNKNOWN: " (UNKNOWN)", BELOW: " (BELOW 0)"}.get(o.status, "")
+    return f"{who} {o.points:.1f} v {o.opponent}{tail}"
+
+
+def _fa_cell(wp: WeekPlan, o: Option) -> str:
+    m = wp.margin(o)
+    return f"**{_cell(o)}** (+{m:.1f})" if m is not None and m > 0 else _cell(o)
+
+
+def _unknown_note(parts: Sequence[tuple[int, float]]) -> str:
+    """'; 9.0 of it UNKNOWN: wk 14': what a total counts from UNKNOWN weeks."""
+    if not parts:
+        return ""
+    ws = [w for w, _ in parts]
+    return (f"; {sum(p for _, p in parts):.1f} of it UNKNOWN: "
+            f"wk{'s' if len(ws) > 1 else ''} {_span(ws)}")
+
+
+def _totals_line(p: PositionPlan) -> str:
+    t = p.totals
+    gaps = "; ".join(f"wk {wp.week} {wp.status}" for wp in p.weeks if wp.need)
+    if t.mine is None:
+        mine = "mine NOT KNOWN"
+    elif p.rostered:
+        mine = f"mine {t.mine:.1f}" + (f" ({gaps})" if gaps else "")
+    else:
+        mine = f"mine 0.0 (no {p.position} of mine in the table)"
+    head = f"Hold vs stream, {_weeks_text(t.weeks)} (points): "
+    if t.hold is None:              # no free agent has a number in any of these weeks
+        return head + mine + " · no free agent with a number in these weeks: nothing to " \
+                             "hold or stream."
+    hold = (f"hold one FA throughout, {_who(t.hold)}: {t.hold_total:.1f} "
+            f"(1 add{_unknown_note(t.hold_unknown)})")
+    stream = (f"stream each week's best FA: {t.stream:.1f} "
+              f"({_plural(t.stream_adds, 'add')}{_unknown_note(t.stream_unknown)})")
+    cover = "mine, plus the week's best FA where mine gives 0: " + (
+        "NOT KNOWN" if t.cover is None or t.cover_adds is None else
+        f"{t.cover:.1f} ({_plural(t.cover_adds, 'add')}{_unknown_note(t.cover_unknown)})")
+    return head + " · ".join((mine, hold, stream, cover)) + "."
+
+
+def _position_lines(p: PositionPlan, top: int) -> list[str]:
+    out = [f"### {p.position}", ""]
+    if p.rows == 0:
+        return out + [f"No {p.position} in this table: nothing to plan.", ""]
+    nobody = (f"No {p.position} of mine in this table (it holds only the players it can "
+              f"project): every week is a NEED." if p.owner_known else
+              f"What I hold at {p.position} is NOT KNOWN (no MINE row in this table): no "
+              f"week is called a NEED and no free agent is shown beating mine.")
+    unresolved = (f"{_plural(p.unresolved, 'row')} at {p.position} with no holder known "
+                  f"(no Sleeper id): NOT KNOWN, so in neither list.")
+    notes = ([nobody] if not p.rostered else []) \
+        + ([f"No free-agent {p.position} in this table."] if p.pool == 0 else []) \
+        + ([unresolved] if p.unresolved else [])
+    if notes:
+        out += [" ".join(notes), ""]
+    out += ["| week | mine (best first) | " + " | ".join(f"FA {i}" for i in range(1, top + 1))
+            + " |", "|---|---|" + "---|" * top]
+    for wp in p.weeks:
+        fas = [_fa_cell(wp, o) for o in wp.free_agents] + ["—"] * (top - len(wp.free_agents))
+        mine = ("; ".join(_cell(o) for o in wp.mine) or "—") if wp.known else NOT_KNOWN
+        out.append(f"| {wp.week}{' **NEED**' if wp.need is True else ''} | {mine} | "
+                   + " | ".join(fas) + " |")
+    out += ["", _totals_line(p), ""]
+    if p.later:
+        by: dict[str, list[int]] = {}
+        for w, st in p.later:
+            by.setdefault(st, []).append(w)
+        out += [f"Later weeks where my best {p.position} is not a known game: "
+                + "; ".join(f"{_weeks_text(ws)} {st}" for st, ws in by.items()) + ".", ""]
+    return out
+
+
+def markdown(plan: StreamingPlan) -> list[str]:
+    """The plan as a markdown section. It names the owner's players, so it
+    belongs in gitignored outputs only (rule #10)."""
+    title = "## Streaming plan — " + ", ".join(p.position for p in plan.positions)
+    out = [title + (f", {_weeks_text(plan.weeks)}" if plan.weeks else ""), "", WORDING, "",
+           LEGEND, ""]
+    if not plan.weeks:
+        why = ("this table has no per-week lines" if not plan.covered else
+               f"week(s) {_span(plan.skipped)} are not in this table "
+               f"(weeks {_span(plan.covered)})")
+        return out + [f"Nothing to plan: {why}.", ""]
+    if plan.skipped:
+        out += [f"Not in this table (weeks {_span(plan.covered)}), so not planned: "
+                f"week(s) {_span(plan.skipped)}.", ""]
+    if not plan.owner_rows:
+        out += ["**No row in this table is MINE**, at any position: the owner's roster was "
+                "not found in the league snapshot, so what I hold is NOT KNOWN here, never "
+                "empty. The free-agent lists, and the hold and stream totals, stand.", ""]
+    for p in plan.positions:
+        out += _position_lines(p, plan.top)
+    return out

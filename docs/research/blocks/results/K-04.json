@@ -1,0 +1,204 @@
+{
+ "block": "K-04",
+ "title": "Red-zone touchdown rate over the league, shrunk: his team's offense and the opponent's defense",
+ "columns": {
+  "K": [
+   "rz_td_oe",
+   "opp_rz_td_allowed_oe"
+  ]
+ },
+ "model_columns": {
+  "K": [
+   "rz_td_oe",
+   "opp_rz_td_allowed_oe"
+  ]
+ },
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "coverage": {
+  "K": {
+   "rz_td_oe": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "opp_rz_td_allowed_oe": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   }
+  }
+ },
+ "folds": {
+  "2019": {
+   "K": {
+    "pairs": 3941,
+    "rows": 349,
+    "sleeper": {
+     "pairwise": 0.551129,
+     "mae": 3.3419
+    },
+    "shipped": {
+     "pairwise": 0.553159,
+     "mae": 3.3312
+    },
+    "block": {
+     "pairwise": 0.551129,
+     "mae": 3.3327
+    }
+   }
+  },
+  "2020": {
+   "K": {
+    "pairs": 5011,
+    "rows": 393,
+    "sleeper": {
+     "pairwise": 0.512073,
+     "mae": 3.6825
+    },
+    "shipped": {
+     "pairwise": 0.580323,
+     "mae": 3.5705
+    },
+    "block": {
+     "pairwise": 0.571143,
+     "mae": 3.5822
+    }
+   }
+  },
+  "2021": {
+   "K": {
+    "pairs": 5487,
+    "rows": 424,
+    "sleeper": {
+     "pairwise": 0.551485,
+     "mae": 3.5946
+    },
+    "shipped": {
+     "pairwise": 0.56643,
+     "mae": 3.5481
+    },
+    "block": {
+     "pairwise": 0.566065,
+     "mae": 3.5494
+    }
+   }
+  },
+  "2022": {
+   "K": {
+    "pairs": 5602,
+    "rows": 430,
+    "sleeper": {
+     "pairwise": 0.540521,
+     "mae": 3.4999
+    },
+    "shipped": {
+     "pairwise": 0.536594,
+     "mae": 3.5074
+    },
+    "block": {
+     "pairwise": 0.537844,
+     "mae": 3.5106
+    }
+   }
+  },
+  "2023": {
+   "K": {
+    "pairs": 5764,
+    "rows": 435,
+    "sleeper": {
+     "pairwise": 0.540597,
+     "mae": 3.6101
+    },
+    "shipped": {
+     "pairwise": 0.553262,
+     "mae": 3.6442
+    },
+    "block": {
+     "pairwise": 0.547536,
+     "mae": 3.66
+    }
+   }
+  },
+  "2024": {
+   "K": {
+    "pairs": 5706,
+    "rows": 433,
+    "sleeper": {
+     "pairwise": 0.532597,
+     "mae": 3.8065
+    },
+    "shipped": {
+     "pairwise": 0.582369,
+     "mae": 3.7214
+    },
+    "block": {
+     "pairwise": 0.583771,
+     "mae": 3.722
+    }
+   }
+  },
+  "2025": {
+   "K": {
+    "pairs": 5526,
+    "rows": 427,
+    "sleeper": {
+     "pairwise": 0.541621,
+     "mae": 3.8593
+    },
+    "shipped": {
+     "pairwise": 0.573109,
+     "mae": 3.8102
+    },
+    "block": {
+     "pairwise": 0.571299,
+     "mae": 3.811
+    }
+   }
+  }
+ },
+ "verdict": {
+  "positions": {
+   "K": {
+    "folds_better_on_both": 0,
+    "folds": 7,
+    "passes": false,
+    "mean_pairwise_delta": -0.002351,
+    "mean_mae_delta": 0.005
+   }
+  },
+  "pooled_not_worse_every_fold": true
+ },
+ "passed": [],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "000156ff192e",
+ "module_blob": "ae6f26e102fa",
+ "helpers_blob": "bddbdc05d170",
+ "head": "45ddc8d842c7",
+ "run_at": "2026-11-02T04:19:40+00:00"
+}
