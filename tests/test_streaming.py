@@ -3,10 +3,12 @@ and their section in scripts/weekly/ros_rankings.py. Synthetic data only:
 fictional names, ids and teams (the DEF rows use the ROS table's own
 `DEF:<team>` keys). Pins: a proven bye is a bye and an unknown week never
 is; an OUT week gives nothing; a defense below zero is shown, never called
-out; a known game covers a week before an unknown one; a free agent can
-matter only in my bye week; hold vs stream adds up and counts a move each
-time the name changes; an empty pool, an empty position and an unresolved
-row are said, not hidden; team defenses keep the table's ids; a free
+out; a known game covers a week before an unknown one, for mine and for a
+free agent alike, and an unknown week never beats mine; a free agent can
+matter only in my bye week; hold vs stream adds up, counts a move each time
+the name changes and says how much of each total is unknown; an empty pool,
+an empty position and an unresolved row are said, not hidden; an owner not
+found is NOT KNOWN, never a NEED; team defenses keep the table's ids; a free
 agent's flags stay with him; every number is the ROS table's own; and the
 wording keeps the plan a plan."""
 from __future__ import annotations
@@ -52,6 +54,12 @@ def _md(plan) -> str:
 
 def _ids(options) -> list[str]:
     return [o.line.gsis_id for o in options]
+
+
+def _week_rows(md: str) -> list[str]:
+    """The plan's week rows: its tables without their header lines."""
+    return [ln for ln in md.splitlines()
+            if ln.startswith("| ") and not ln.startswith("| week |")]
 
 
 def test_a_proven_bye_is_a_bye_and_an_unknown_week_never_is():
@@ -215,6 +223,80 @@ def test_a_known_game_is_my_best_before_an_unknown_week():
     assert alone.needs == (9,) and alone.weeks[0].mine_points == 9.0
 
 
+def test_a_free_agents_unknown_week_never_outranks_a_known_game():
+    """One order for both sides. A free agent's `?` week (no game row, no
+    proven bye: a cancelled game, one damaged schedule row) may yet be his
+    bye, so it never comes before a known game, never beats mine, and is
+    never a week's stream or cover pick while a known game has points. A
+    total that counts one says how much of it is UNKNOWN."""
+    table = [
+        _row("te_m", "TE", "MINE", {13: ("BBB", 9.0), 15: ("CCC", 9.0)}, byes="14"),
+        _row("fa_q", "TE", "FA", {13: ("AAA", 9.0), 14: ("?", 9.0), 15: ("DDD", 9.0)},
+             team="EEE", rank=2),
+        _row("fa_k", "TE", "FA", {13: ("CCC", 7.0), 14: ("GGG", 7.0), 15: ("BBB", 7.0)},
+             team="FFF", rank=3)]
+    plan = S.build(table, positions=("TE",), weeks=(13, 14, 15))
+    te = plan.positions[0]
+    w14 = te.weeks[1]
+    assert w14.status == S.BYE and w14.need
+    assert _ids(w14.free_agents) == ["fa_k", "fa_q"]            # the known game first
+    assert _ids(w14.beats_mine) == ["fa_k"] and w14.margin(w14.free_agents[1]) is None
+    t = te.totals
+    assert [p.gsis_id for p in t.stream_picks] == ["fa_q", "fa_k", "fa_q"]
+    assert (t.stream, t.stream_adds, t.stream_unknown) == (25.0, 3, ())
+    assert [p and p.gsis_id for p in t.cover_picks] == [None, "fa_k", None]
+    assert (t.cover, t.cover_adds, t.cover_unknown) == (25.0, 1, ())
+    # the hold is the most points over the window as the line counts them, and
+    # it says that 9.0 of them is a week with no game row
+    assert (t.hold.gsis_id, t.hold_total, t.hold_unknown) == ("fa_q", 27.0, ((14, 9.0),))
+    md = _md(plan)
+    assert ("| 14 **NEED** | Fixture te_m (AAA) BYE | **Fixture fa_k (FFF) 7.0 v GGG** (+7.0) "
+            "| Fixture fa_q (EEE) 9.0 v ? (UNKNOWN) |") in md
+    assert ("mine 18.0 (wk 14 BYE) · hold one FA throughout, Fixture fa_q (EEE): 27.0 (1 add; "
+            "9.0 of it UNKNOWN: wk 14) · stream each week's best FA: 25.0 (3 adds) · mine, plus "
+            "the week's best FA where mine gives 0: 25.0 (1 add).") in md
+    # no known game to take: the unknown week is the pick, never bold, and each
+    # total that counts it says so
+    only = S.build(table[:2], positions=("TE",), weeks=(13, 14, 15))
+    o14 = only.positions[0].weeks[1]
+    assert _ids(o14.free_agents) == ["fa_q"] and o14.beats_mine == ()
+    o = only.positions[0].totals
+    assert [p.gsis_id for p in o.stream_picks] == ["fa_q"] * 3
+    assert o.hold_unknown == o.stream_unknown == o.cover_unknown == ((14, 9.0),)
+    md = _md(only)
+    assert "| 14 **NEED** | Fixture te_m (AAA) BYE | Fixture fa_q (EEE) 9.0 v ? (UNKNOWN) |" in md
+    assert ("stream each week's best FA: 27.0 (1 add; 9.0 of it UNKNOWN: wk 14) · mine, plus "
+            "the week's best FA where mine gives 0: 27.0 (1 add; 9.0 of it UNKNOWN: wk 14).") in md
+
+
+def test_an_unknown_week_never_beats_mine_and_each_total_says_how_much_is_unknown():
+    table = [
+        _row("te_m", "TE", "MINE", {9: ("BBB", 6.0), 10: ("?", 8.0), 11: ("DDD", 6.0)}),
+        _row("fa_u", "TE", "FA", {9: ("?", 9.0), 10: ("CCC", 5.0), 11: ("?", 4.0)},
+             team="EEE", rank=2)]
+    plan = S.build(table, positions=("TE",))
+    te = plan.positions[0]
+    w9, w10, _ = te.weeks
+    # his unknown 9.0 against my known 6.0: not known to beat mine (it may be his bye)
+    assert w9.status == S.GAME and not w9.need
+    assert w9.margin(w9.free_agents[0]) is None and w9.beats_mine == ()
+    # my unknown week is a NEED, counted at his plain rate; a known 5.0 does not beat it
+    assert w10.status == S.UNKNOWN and w10.need and w10.mine_points == 8.0
+    assert w10.margin(w10.free_agents[0]) == -3.0 and w10.beats_mine == ()
+    t = te.totals
+    assert (t.mine, t.hold_total, t.stream, t.cover, t.cover_adds) == (20.0, 18.0, 18.0, 20.0, 0)
+    assert t.hold_unknown == t.stream_unknown == ((9, 9.0), (11, 4.0))
+    assert t.cover_unknown == ((10, 8.0),)                  # mine every week, his unknown one
+    md = _md(plan)
+    assert not any("** (+" in r for r in _week_rows(md))     # no free agent is bold
+    assert "| 9 | Fixture te_m (AAA) 6.0 v BBB | Fixture fa_u (EEE) 9.0 v ? (UNKNOWN) |" in md
+    assert ("Hold vs stream, weeks 9-11 (points): mine 20.0 (wk 10 UNKNOWN) · hold one FA "
+            "throughout, Fixture fa_u (EEE): 18.0 (1 add; 13.0 of it UNKNOWN: wks 9, 11) · "
+            "stream each week's best FA: 18.0 (1 add; 13.0 of it UNKNOWN: wks 9, 11) · mine, "
+            "plus the week's best FA where mine gives 0: 20.0 (0 adds; 8.0 of it UNKNOWN: "
+            "wk 10).") in md
+
+
 def test_a_free_agent_can_beat_mine_only_in_my_bye_week():
     table = [
         _row("te_m", "TE", "MINE", {9: ("BBB", 9.0), 10: ("CCC", 9.0)}, byes="11",
@@ -313,14 +395,31 @@ def test_no_rostered_player_at_the_position_makes_every_week_a_need():
 
 def test_a_table_with_no_mine_row_at_all_says_not_known_never_empty():
     """The owner's roster not found in the snapshot (a wrong `--owner`): no
-    row is MINE anywhere, so "no rostered player" would be a false claim."""
+    row is MINE anywhere, so "no rostered player" would be a false claim, and
+    so would a NEED, a free agent beating mine, or a cover total worked out
+    as if mine gave 0 every week."""
     plan = S.build(_defenses_for_hire(), positions=("DEF",))
     assert plan.owner_rows == 0
+    d = plan.positions[0]
+    assert d.needs is None and not d.owner_known          # not known, never "no needs"
+    for wp in d.weeks:
+        assert (wp.status, wp.known, wp.need, wp.mine_points) == (S.NOT_KNOWN, False, None,
+                                                                  None)
+        assert wp.beats_mine is None and [wp.margin(o) for o in wp.free_agents] == [None, None]
+    t = d.totals
+    assert (t.mine, t.cover, t.cover_picks, t.cover_adds) == (None, None, None, None)
+    # the free-agent totals never needed mine: they stand
+    assert (t.hold.gsis_id, t.hold_total, t.stream, t.stream_adds) == ("DEF:KC", 18.0, 21.0, 3)
     md = _md(plan)
     assert "**No row in this table is MINE**" in md and "never empty" in md
     assert "What I hold at DEF is NOT KNOWN" in md and "mine NOT KNOWN" in md
     assert "every week is a NEED" not in md and "DEF of mine" not in md
-    assert "KC DST 7.0 v LV" in md                       # the free-agent lists stand
+    rows = _week_rows(md)
+    assert len(rows) == 3 and not any("**" in r for r in rows)      # no NEED, nothing bold
+    assert "| 9 | NOT KNOWN | KC DST 7.0 v LV | SF DST 6.0 v SEA | — | — | — |" in rows
+    assert ("mine NOT KNOWN · hold one FA throughout, KC DST: 18.0 (1 add) · stream each "
+            "week's best FA: 21.0 (3 adds) · mine, plus the week's best FA where mine gives "
+            "0: NOT KNOWN.") in md
 
 
 def test_team_defenses_keep_the_ros_tables_def_ids():
@@ -452,6 +551,16 @@ def test_the_rankings_carry_the_streaming_plan(tmp_path):
     assert "### TE" in sec and "### K" in sec and "### DEF" in sec
     assert "| MINE |" not in sec and "Other weeks: `--stream 12-14`" in sec
     assert md.index("## Streaming plan") < md.index("\n## TE")      # before the long tables
+    assert any("**NEED**" in r for r in _week_rows(sec))           # this owner has needs
+    # a wrong --owner finds no roster: NOT KNOWN, never a NEED or a free agent beating mine
+    typo = tmp_path / "typo"
+    assert rr.main(["--cache-root", str(root), "--owner", "no_such_owner", "--week", "3",
+                    "--out", str(typo), "--stream", "3-4"]) == 0
+    sec = (typo / "ros_week03.md").read_text("utf-8").split("## Streaming plan")[1] \
+        .split("\n## ")[0]
+    rows = _week_rows(sec)
+    assert "**No row in this table is MINE**" in sec and rows
+    assert all(r.split(" | ")[1] == "NOT KNOWN" and "**" not in r for r in rows)
     assert (rr.stream_weeks("12-14"), rr.stream_weeks("12,14"), rr.stream_weeks("14")) == \
         ((12, 13, 14), (12, 14), (14,))
     for bad in ("14-12", "soon", ""):
