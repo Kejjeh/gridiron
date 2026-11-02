@@ -69,9 +69,9 @@ appears only when the table is rebuilt.
 
 **Hindsight rows.** A few in-season play-calling changes were reported only
 after the game, so for those weeks the table knows more than a pre-game
-reader could. For a backtest that flatters a block (the P3 blocks failed
-regardless); for live use it does not matter, since the board reads only
-the current week. Known cases, from the rows' own quotes:
+reader could. In a backtest that flatters a block (the P3 blocks failed
+regardless). Nothing on the board reads the table. Known cases, from the
+rows' own quotes:
 
 - 2021 PHI: Shane Steichen from week 8. Reported in 2022 as "about midway
   through last season", so the week-8 boundary is an estimate.
