@@ -68,3 +68,24 @@ Record-only contender for two live weeks (ground rule 3), then a
 DECISIONS.md row. Nothing serves after the week-14 board.
 
 ## Result
+
+Run 2026-11-02T04:22:53+00:00 at `774c3df` (one scored run; `runs/DEF-12.csv`).
+Pairwise (all defenses in a week) and MAE on the defense table:
+
+| fold | shipped | DEF-12 |
+|---|---|---|
+| 2019 | 60.23%, 5.248 | 60.44%, 5.251 |
+| 2020 | 60.30%, 4.638 | 60.57%, 4.635 |
+| 2021 | 60.28%, 4.801 | 60.31%, 4.799 |
+| 2022 | 59.26%, 4.335 | 59.33%, 4.333 |
+| 2023 | 60.72%, 4.835 | 60.35%, 4.838 |
+| 2024 | 64.66%, 4.461 | 64.35%, 4.464 |
+| 2025 | 62.01%, 4.588 | 61.78%, 4.599 |
+
+**Fails.** Better on both metrics in 3 of 7 folds (2020, 2021 and 2022, by
+at most 0.26 points of pairwise and 0.003 MAE), 2019 on pairwise only, and
+worse on both in 2023-2025; mean change -0.05 points of pairwise, +0.0019
+MAE. As the roadmap expected, small: a return touchdown is worth 6 points
+but comes under once a team-season, and neither the yards nor last
+season's touchdowns say which team gets the next one. Not shipped, not a
+contender.
