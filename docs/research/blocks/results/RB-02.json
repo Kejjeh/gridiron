@@ -90,8 +90,8 @@
      "mae": 4.2579
     },
     "block": {
-     "pairwise": 0.625342,
-     "mae": 4.2573
+     "pairwise": 0.625403,
+     "mae": 4.2568
     }
    },
    "QB": {
@@ -122,8 +122,8 @@
      "mae": 4.3495
     },
     "block": {
-     "pairwise": 0.649667,
-     "mae": 4.3474
+     "pairwise": 0.649923,
+     "mae": 4.3454
     }
    },
    "WR": {
@@ -172,8 +172,8 @@
      "mae": 4.3213
     },
     "block": {
-     "pairwise": 0.621094,
-     "mae": 4.3133
+     "pairwise": 0.620959,
+     "mae": 4.3157
     }
    },
    "QB": {
@@ -204,8 +204,8 @@
      "mae": 4.365
     },
     "block": {
-     "pairwise": 0.652644,
-     "mae": 4.3352
+     "pairwise": 0.652061,
+     "mae": 4.344
     }
    },
    "WR": {
@@ -254,8 +254,8 @@
      "mae": 4.2077
     },
     "block": {
-     "pairwise": 0.646553,
-     "mae": 4.2026
+     "pairwise": 0.645808,
+     "mae": 4.2062
     }
    },
    "QB": {
@@ -286,8 +286,8 @@
      "mae": 4.5214
     },
     "block": {
-     "pairwise": 0.644105,
-     "mae": 4.5015
+     "pairwise": 0.640928,
+     "mae": 4.5156
     }
    },
    "WR": {
@@ -336,8 +336,8 @@
      "mae": 4.0405
     },
     "block": {
-     "pairwise": 0.635291,
-     "mae": 4.0367
+     "pairwise": 0.635358,
+     "mae": 4.0363
     }
    },
    "QB": {
@@ -368,8 +368,8 @@
      "mae": 4.1898
     },
     "block": {
-     "pairwise": 0.645343,
-     "mae": 4.1759
+     "pairwise": 0.645611,
+     "mae": 4.1744
     }
    },
    "WR": {
@@ -418,8 +418,8 @@
      "mae": 3.9386
     },
     "block": {
-     "pairwise": 0.640644,
-     "mae": 3.9348
+     "pairwise": 0.640627,
+     "mae": 3.9345
     }
    },
    "QB": {
@@ -450,8 +450,8 @@
      "mae": 4.0712
     },
     "block": {
-     "pairwise": 0.650273,
-     "mae": 4.0564
+     "pairwise": 0.650203,
+     "mae": 4.0553
     }
    },
    "WR": {
@@ -500,8 +500,8 @@
      "mae": 4.0393
     },
     "block": {
-     "pairwise": 0.633392,
-     "mae": 4.0327
+     "pairwise": 0.633259,
+     "mae": 4.033
     }
    },
    "QB": {
@@ -532,8 +532,8 @@
      "mae": 4.1315
     },
     "block": {
-     "pairwise": 0.662119,
-     "mae": 4.1064
+     "pairwise": 0.661516,
+     "mae": 4.1075
     }
    },
    "WR": {
@@ -582,8 +582,8 @@
      "mae": 3.8809
     },
     "block": {
-     "pairwise": 0.641968,
-     "mae": 3.8854
+     "pairwise": 0.641984,
+     "mae": 3.8845
     }
    },
    "QB": {
@@ -614,8 +614,8 @@
      "mae": 4.1216
     },
     "block": {
-     "pairwise": 0.670013,
-     "mae": 4.1389
+     "pairwise": 0.670072,
+     "mae": 4.1356
     }
    },
    "WR": {
@@ -658,17 +658,17 @@
     "folds_better_on_both": 4,
     "folds": 7,
     "passes": false,
-    "mean_pairwise_delta": 0.001696,
-    "mean_mae_delta": -0.0126
+    "mean_pairwise_delta": 0.001146,
+    "mean_mae_delta": -0.0103
    }
   },
   "pooled_not_worse_every_fold": false
  },
  "passed": [],
  "tables_digest": "42693a4a57591b37",
- "prereg_blob": "33dfc90d86a3",
+ "prereg_blob": "1fd371636e3c",
  "module_blob": "16f61772b497",
- "helpers_blob": "a0e270efc56d",
- "head": "159e9adb1936",
- "run_at": "2026-11-02T03:14:18+00:00"
+ "helpers_blob": "8bb29e1d71b7",
+ "head": "fb26c4bc424b",
+ "run_at": "2026-11-02T09:13:01+00:00"
 }

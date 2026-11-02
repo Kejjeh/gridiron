@@ -37,7 +37,7 @@
  "coverage": {
   "WR": {
    "wind10": {
-    "2019": 1.0,
+    "2019": 0.978,
     "2020": 1.0,
     "2021": 1.0,
     "2022": 1.0,
@@ -46,7 +46,7 @@
     "2025": 0.975
    },
    "wind10_x_deep": {
-    "2019": 0.993,
+    "2019": 0.972,
     "2020": 0.994,
     "2021": 0.995,
     "2022": 0.992,
@@ -70,8 +70,8 @@
      "mae": 4.2579
     },
     "block": {
-     "pairwise": 0.626076,
-     "mae": 4.2556
+     "pairwise": 0.6263,
+     "mae": 4.2545
     }
    },
    "QB": {
@@ -118,8 +118,8 @@
      "mae": 4.1511
     },
     "block": {
-     "pairwise": 0.618333,
-     "mae": 4.1457
+     "pairwise": 0.6187,
+     "mae": 4.1429
     }
    },
    "TE": {
@@ -152,7 +152,7 @@
      "mae": 4.3213
     },
     "block": {
-     "pairwise": 0.62117,
+     "pairwise": 0.621275,
      "mae": 4.3163
     }
    },
@@ -200,8 +200,8 @@
      "mae": 4.2749
     },
     "block": {
-     "pairwise": 0.613104,
-     "mae": 4.2631
+     "pairwise": 0.613274,
+     "mae": 4.2629
     }
    },
    "TE": {
@@ -234,8 +234,8 @@
      "mae": 4.2077
     },
     "block": {
-     "pairwise": 0.646821,
-     "mae": 4.201
+     "pairwise": 0.646955,
+     "mae": 4.2006
     }
    },
    "QB": {
@@ -282,8 +282,8 @@
      "mae": 4.0411
     },
     "block": {
-     "pairwise": 0.654706,
-     "mae": 4.0253
+     "pairwise": 0.654924,
+     "mae": 4.0243
     }
    },
    "TE": {
@@ -365,7 +365,7 @@
     },
     "block": {
      "pairwise": 0.63267,
-     "mae": 4.0094
+     "mae": 4.0095
     }
    },
    "TE": {
@@ -480,7 +480,7 @@
      "mae": 4.0393
     },
     "block": {
-     "pairwise": 0.632429,
+     "pairwise": 0.632413,
      "mae": 4.039
     }
    },
@@ -528,8 +528,8 @@
      "mae": 3.9183
     },
     "block": {
-     "pairwise": 0.628188,
-     "mae": 3.9176
+     "pairwise": 0.628161,
+     "mae": 3.9175
     }
    },
    "TE": {
@@ -562,8 +562,8 @@
      "mae": 3.8809
     },
     "block": {
-     "pairwise": 0.642215,
-     "mae": 3.8802
+     "pairwise": 0.64228,
+     "mae": 3.8792
     }
    },
    "QB": {
@@ -610,8 +610,8 @@
      "mae": 3.5471
     },
     "block": {
-     "pairwise": 0.640245,
-     "mae": 3.5454
+     "pairwise": 0.640368,
+     "mae": 3.5432
     }
    },
    "TE": {
@@ -638,17 +638,17 @@
     "folds_better_on_both": 3,
     "folds": 7,
     "passes": false,
-    "mean_pairwise_delta": 0.000881,
-    "mean_mae_delta": -0.0038
+    "mean_pairwise_delta": 0.001003,
+    "mean_mae_delta": -0.0047
    }
   },
   "pooled_not_worse_every_fold": false
  },
  "passed": [],
  "tables_digest": "42693a4a57591b37",
- "prereg_blob": "be8940b368e2",
+ "prereg_blob": "a9e957ceb8f9",
  "module_blob": "64e9a715610a",
- "helpers_blob": "4b6bb64fd76b",
- "head": "47a4d085f108",
- "run_at": "2026-11-02T04:19:08+00:00"
+ "helpers_blob": "8bb29e1d71b7",
+ "head": "fb26c4bc424b",
+ "run_at": "2026-11-02T09:17:51+00:00"
 }

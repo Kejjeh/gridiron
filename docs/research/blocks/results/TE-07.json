@@ -71,7 +71,7 @@
     },
     "block": {
      "pairwise": 0.626647,
-     "mae": 4.2576
+     "mae": 4.2574
     }
    },
    "QB": {
@@ -135,7 +135,7 @@
     },
     "block": {
      "pairwise": 0.62737,
-     "mae": 3.2662
+     "mae": 3.2653
     }
    }
   },
@@ -152,8 +152,8 @@
      "mae": 4.3213
     },
     "block": {
-     "pairwise": 0.620038,
-     "mae": 4.3223
+     "pairwise": 0.620053,
+     "mae": 4.3222
     }
    },
    "QB": {
@@ -216,8 +216,8 @@
      "mae": 3.2937
     },
     "block": {
-     "pairwise": 0.599819,
-     "mae": 3.2985
+     "pairwise": 0.600045,
+     "mae": 3.2983
     }
    }
   },
@@ -234,8 +234,8 @@
      "mae": 4.2077
     },
     "block": {
-     "pairwise": 0.645153,
-     "mae": 4.21
+     "pairwise": 0.645123,
+     "mae": 4.2103
     }
    },
    "QB": {
@@ -298,8 +298,8 @@
      "mae": 3.1398
     },
     "block": {
-     "pairwise": 0.632013,
-     "mae": 3.1507
+     "pairwise": 0.631601,
+     "mae": 3.1522
     }
    }
   },
@@ -316,7 +316,7 @@
      "mae": 4.0405
     },
     "block": {
-     "pairwise": 0.635275,
+     "pairwise": 0.635325,
      "mae": 4.0397
     }
    },
@@ -380,8 +380,8 @@
      "mae": 3.1738
     },
     "block": {
-     "pairwise": 0.575739,
-     "mae": 3.1701
+     "pairwise": 0.576636,
+     "mae": 3.1699
     }
    }
   },
@@ -398,8 +398,8 @@
      "mae": 3.9386
     },
     "block": {
-     "pairwise": 0.640143,
-     "mae": 3.937
+     "pairwise": 0.640126,
+     "mae": 3.9372
     }
    },
    "QB": {
@@ -462,8 +462,8 @@
      "mae": 3.0248
     },
     "block": {
-     "pairwise": 0.572109,
-     "mae": 3.0171
+     "pairwise": 0.571769,
+     "mae": 3.018
     }
    }
   },
@@ -480,7 +480,7 @@
      "mae": 4.0393
     },
     "block": {
-     "pairwise": 0.632363,
+     "pairwise": 0.632396,
      "mae": 4.0394
     }
    },
@@ -544,8 +544,8 @@
      "mae": 3.0461
     },
     "block": {
-     "pairwise": 0.594735,
-     "mae": 3.0465
+     "pairwise": 0.595257,
+     "mae": 3.0468
     }
    }
   },
@@ -562,7 +562,7 @@
      "mae": 3.8809
     },
     "block": {
-     "pairwise": 0.641902,
+     "pairwise": 0.641919,
      "mae": 3.8804
     }
    },
@@ -626,8 +626,8 @@
      "mae": 3.0401
     },
     "block": {
-     "pairwise": 0.62747,
-     "mae": 3.0379
+     "pairwise": 0.627668,
+     "mae": 3.0378
     }
    }
   }
@@ -638,17 +638,17 @@
     "folds_better_on_both": 2,
     "folds": 7,
     "passes": false,
-    "mean_pairwise_delta": -0.000129,
-    "mean_mae_delta": 0.0002
+    "mean_pairwise_delta": 2.7e-05,
+    "mean_mae_delta": 0.0004
    }
   },
   "pooled_not_worse_every_fold": false
  },
  "passed": [],
  "tables_digest": "42693a4a57591b37",
- "prereg_blob": "fe857a01dc25",
+ "prereg_blob": "1984c2f8e3ef",
  "module_blob": "850a19b9c042",
- "helpers_blob": "7a0bc0abf656",
- "head": "50e9aa0fe219",
- "run_at": "2026-11-02T03:29:52+00:00"
+ "helpers_blob": "8bb29e1d71b7",
+ "head": "fb26c4bc424b",
+ "run_at": "2026-11-02T09:16:52+00:00"
 }

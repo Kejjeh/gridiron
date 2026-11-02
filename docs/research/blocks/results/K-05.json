@@ -40,7 +40,7 @@
  "coverage": {
   "K": {
    "wind10": {
-    "2019": 1.0,
+    "2019": 0.98,
     "2020": 1.0,
     "2021": 1.0,
     "2022": 1.0,
@@ -49,7 +49,7 @@
     "2025": 0.977
    },
    "precip3h": {
-    "2019": 1.0,
+    "2019": 0.98,
     "2020": 1.0,
     "2021": 1.0,
     "2022": 1.0,
@@ -82,8 +82,8 @@
      "mae": 3.3312
     },
     "block": {
-     "pairwise": 0.556458,
-     "mae": 3.3403
+     "pairwise": 0.558741,
+     "mae": 3.3373
     }
    }
   },
@@ -100,8 +100,8 @@
      "mae": 3.5705
     },
     "block": {
-     "pairwise": 0.588705,
-     "mae": 3.5639
+     "pairwise": 0.589104,
+     "mae": 3.5643
     }
    }
   },
@@ -118,8 +118,8 @@
      "mae": 3.5481
     },
     "block": {
-     "pairwise": 0.567159,
-     "mae": 3.5483
+     "pairwise": 0.567341,
+     "mae": 3.5486
     }
    }
   },
@@ -136,8 +136,8 @@
      "mae": 3.5074
     },
     "block": {
-     "pairwise": 0.556051,
-     "mae": 3.4802
+     "pairwise": 0.556587,
+     "mae": 3.4799
     }
    }
   },
@@ -155,7 +155,7 @@
     },
     "block": {
      "pairwise": 0.570264,
-     "mae": 3.6326
+     "mae": 3.6325
     }
    }
   },
@@ -172,8 +172,8 @@
      "mae": 3.7214
     },
     "block": {
-     "pairwise": 0.595163,
-     "mae": 3.6972
+     "pairwise": 0.595689,
+     "mae": 3.6969
     }
    }
   },
@@ -190,8 +190,8 @@
      "mae": 3.8102
     },
     "block": {
-     "pairwise": 0.567861,
-     "mae": 3.8246
+     "pairwise": 0.567499,
+     "mae": 3.8227
     }
    }
   }
@@ -202,17 +202,17 @@
     "folds_better_on_both": 4,
     "folds": 7,
     "passes": false,
-    "mean_pairwise_delta": 0.008059,
-    "mean_mae_delta": -0.0066
+    "mean_pairwise_delta": 0.008568,
+    "mean_mae_delta": -0.0073
    }
   },
   "pooled_not_worse_every_fold": true
  },
  "passed": [],
  "tables_digest": "42693a4a57591b37",
- "prereg_blob": "0af2c555871e",
+ "prereg_blob": "1a1b9a4aced9",
  "module_blob": "0c2a61da1f30",
- "helpers_blob": "4b6bb64fd76b",
- "head": "6ba7d2bc1e07",
- "run_at": "2026-11-02T04:15:55+00:00"
+ "helpers_blob": "8bb29e1d71b7",
+ "head": "fb26c4bc424b",
+ "run_at": "2026-11-02T09:14:10+00:00"
 }

@@ -68,8 +68,8 @@
      "mae": 4.2579
     },
     "block": {
-     "pairwise": 0.626341,
-     "mae": 4.2584
+     "pairwise": 0.626259,
+     "mae": 4.2581
     }
    },
    "QB": {
@@ -84,8 +84,8 @@
      "mae": 6.362
     },
     "block": {
-     "pairwise": 0.59832,
-     "mae": 6.3666
+     "pairwise": 0.597501,
+     "mae": 6.3638
     }
    },
    "RB": {
@@ -150,8 +150,8 @@
      "mae": 4.3213
     },
     "block": {
-     "pairwise": 0.619903,
-     "mae": 4.321
+     "pairwise": 0.619857,
+     "mae": 4.3209
     }
    },
    "QB": {
@@ -166,8 +166,8 @@
      "mae": 6.3194
     },
     "block": {
-     "pairwise": 0.62386,
-     "mae": 6.317
+     "pairwise": 0.623278,
+     "mae": 6.3159
     }
    },
    "RB": {
@@ -232,8 +232,8 @@
      "mae": 4.2077
     },
     "block": {
-     "pairwise": 0.645094,
-     "mae": 4.2084
+     "pairwise": 0.645108,
+     "mae": 4.2083
     }
    },
    "QB": {
@@ -248,8 +248,8 @@
      "mae": 6.1418
     },
     "block": {
-     "pairwise": 0.623253,
-     "mae": 6.1478
+     "pairwise": 0.62344,
+     "mae": 6.1471
     }
    },
    "RB": {
@@ -314,8 +314,8 @@
      "mae": 4.0405
     },
     "block": {
-     "pairwise": 0.635391,
-     "mae": 4.0408
+     "pairwise": 0.635325,
+     "mae": 4.0407
     }
    },
    "QB": {
@@ -330,8 +330,8 @@
      "mae": 5.5202
     },
     "block": {
-     "pairwise": 0.663856,
-     "mae": 5.5234
+     "pairwise": 0.663181,
+     "mae": 5.5219
     }
    },
    "RB": {
@@ -396,8 +396,8 @@
      "mae": 3.9386
     },
     "block": {
-     "pairwise": 0.639746,
-     "mae": 3.9399
+     "pairwise": 0.639625,
+     "mae": 3.9401
     }
    },
    "QB": {
@@ -412,8 +412,8 @@
      "mae": 5.8483
     },
     "block": {
-     "pairwise": 0.628323,
-     "mae": 5.8604
+     "pairwise": 0.627195,
+     "mae": 5.862
     }
    },
    "RB": {
@@ -478,8 +478,8 @@
      "mae": 4.0393
     },
     "block": {
-     "pairwise": 0.632711,
-     "mae": 4.0405
+     "pairwise": 0.632794,
+     "mae": 4.0409
     }
    },
    "QB": {
@@ -494,8 +494,8 @@
      "mae": 6.1601
     },
     "block": {
-     "pairwise": 0.627025,
-     "mae": 6.1708
+     "pairwise": 0.627812,
+     "mae": 6.1748
     }
    },
    "RB": {
@@ -560,8 +560,8 @@
      "mae": 3.8809
     },
     "block": {
-     "pairwise": 0.641902,
-     "mae": 3.8815
+     "pairwise": 0.641853,
+     "mae": 3.8818
     }
    },
    "QB": {
@@ -576,8 +576,8 @@
      "mae": 6.2439
     },
     "block": {
-     "pairwise": 0.597233,
-     "mae": 6.2499
+     "pairwise": 0.596767,
+     "mae": 6.2527
     }
    },
    "RB": {
@@ -636,17 +636,17 @@
     "folds_better_on_both": 0,
     "folds": 7,
     "passes": false,
-    "mean_pairwise_delta": -0.000711,
-    "mean_mae_delta": 0.0057
+    "mean_pairwise_delta": -0.001096,
+    "mean_mae_delta": 0.0061
    }
   },
   "pooled_not_worse_every_fold": false
  },
  "passed": [],
  "tables_digest": "42693a4a57591b37",
- "prereg_blob": "a9bf405d614c",
+ "prereg_blob": "3c2604d3ea3f",
  "module_blob": "48c6301dc84f",
- "helpers_blob": "7a0bc0abf656",
- "head": "1d33d4c637e3",
- "run_at": "2026-11-02T03:24:59+00:00"
+ "helpers_blob": "8bb29e1d71b7",
+ "head": "fb26c4bc424b",
+ "run_at": "2026-11-02T09:16:00+00:00"
 }

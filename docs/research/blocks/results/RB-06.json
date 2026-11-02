@@ -82,7 +82,7 @@
      "mae": 4.2579
     },
     "block": {
-     "pairwise": 0.628319,
+     "pairwise": 0.62836,
      "mae": 4.2449
     }
    },
@@ -114,7 +114,7 @@
      "mae": 4.3495
     },
     "block": {
-     "pairwise": 0.662118,
+     "pairwise": 0.662289,
      "mae": 4.3014
     }
    },
@@ -164,8 +164,8 @@
      "mae": 4.3213
     },
     "block": {
-     "pairwise": 0.620989,
-     "mae": 4.3225
+     "pairwise": 0.620974,
+     "mae": 4.3222
     }
    },
    "QB": {
@@ -196,8 +196,8 @@
      "mae": 4.365
     },
     "block": {
-     "pairwise": 0.652191,
-     "mae": 4.3695
+     "pairwise": 0.652126,
+     "mae": 4.3684
     }
    },
    "WR": {
@@ -246,8 +246,8 @@
      "mae": 4.2077
     },
     "block": {
-     "pairwise": 0.646791,
-     "mae": 4.1992
+     "pairwise": 0.646955,
+     "mae": 4.1993
     }
    },
    "QB": {
@@ -278,8 +278,8 @@
      "mae": 4.5214
     },
     "block": {
-     "pairwise": 0.645122,
-     "mae": 4.4884
+     "pairwise": 0.645821,
+     "mae": 4.4888
     }
    },
    "WR": {
@@ -328,8 +328,8 @@
      "mae": 4.0405
     },
     "block": {
-     "pairwise": 0.635558,
-     "mae": 4.0367
+     "pairwise": 0.635475,
+     "mae": 4.0369
     }
    },
    "QB": {
@@ -360,8 +360,8 @@
      "mae": 4.1898
     },
     "block": {
-     "pairwise": 0.646416,
-     "mae": 4.1758
+     "pairwise": 0.646081,
+     "mae": 4.1767
     }
    },
    "WR": {
@@ -410,8 +410,8 @@
      "mae": 3.9386
     },
     "block": {
-     "pairwise": 0.639625,
-     "mae": 3.9303
+     "pairwise": 0.639538,
+     "mae": 3.931
     }
    },
    "QB": {
@@ -442,8 +442,8 @@
      "mae": 4.0712
     },
     "block": {
-     "pairwise": 0.64614,
-     "mae": 4.0387
+     "pairwise": 0.64579,
+     "mae": 4.0414
     }
    },
    "WR": {
@@ -492,7 +492,7 @@
      "mae": 4.0393
     },
     "block": {
-     "pairwise": 0.633226,
+     "pairwise": 0.63316,
      "mae": 4.0297
     }
    },
@@ -524,8 +524,8 @@
      "mae": 4.1315
     },
     "block": {
-     "pairwise": 0.661366,
-     "mae": 4.0949
+     "pairwise": 0.661064,
+     "mae": 4.0948
     }
    },
    "WR": {
@@ -574,8 +574,8 @@
      "mae": 3.8809
     },
     "block": {
-     "pairwise": 0.64205,
-     "mae": 3.8733
+     "pairwise": 0.642116,
+     "mae": 3.8732
     }
    },
    "QB": {
@@ -606,8 +606,8 @@
      "mae": 4.1216
     },
     "block": {
-     "pairwise": 0.67031,
-     "mae": 4.0926
+     "pairwise": 0.670548,
+     "mae": 4.0924
     }
    },
    "WR": {
@@ -647,20 +647,20 @@
  "verdict": {
   "positions": {
    "RB": {
-    "folds_better_on_both": 5,
+    "folds_better_on_both": 4,
     "folds": 7,
     "passes": false,
-    "mean_pairwise_delta": 0.003053,
-    "mean_mae_delta": -0.027
+    "mean_pairwise_delta": 0.003061,
+    "mean_mae_delta": -0.0266
    }
   },
   "pooled_not_worse_every_fold": false
  },
  "passed": [],
  "tables_digest": "42693a4a57591b37",
- "prereg_blob": "91bee930db5d",
+ "prereg_blob": "35d4719fec8f",
  "module_blob": "44b814a87f7a",
- "helpers_blob": "7a0bc0abf656",
- "head": "b5da0b21927d",
- "run_at": "2026-11-02T03:27:32+00:00"
+ "helpers_blob": "8bb29e1d71b7",
+ "head": "fb26c4bc424b",
+ "run_at": "2026-11-02T09:15:20+00:00"
 }
