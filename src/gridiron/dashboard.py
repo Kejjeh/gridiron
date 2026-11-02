@@ -74,6 +74,7 @@ from gridiron.notable import (ALERT_HOURS, MARKET_CAP, NOTABLE_CAP, FreeAgentWat
                               PreviousWatch, build_watch, league_drops, market_ranks,
                               prior_lines)
 from gridiron.radar import RadarChanges, diff_radar, move_deadline, radar_record
+from gridiron.props import MarketWeek, market_block, season_rates
 from gridiron.scoring import ScoringCoverage
 from gridiron.models.advanced import (FEED_MIN_PER_POSITION, NAME as ADVANCED_NAME,
                                       POSITIONS as SKILL_POSITIONS, STACK_NAME,
@@ -446,22 +447,31 @@ def stack_serving_note(roster_and_pool: Sequence["Player"], shadow: Mapping[str,
 
 def contenders_block(advanced: AdvancedContext | None,
                      shadow: Mapping[str, object] | None,
-                     players: Sequence[Player]) -> dict | None:
+                     players: Sequence[Player],
+                     market: "MarketWeek | None" = None,
+                     market_rates: Mapping[str, Mapping[str, float]] | None = None) -> dict | None:
     """The numbers other systems give the same players, for the weekly
     shoot-out only: `baseline_v1` (the model before advanced stats),
     `adv_v1` (advanced_v1 alone, the number the page served before the stack
-    did and still serves where Sleeper's number is missing) and `stack`
-    (advanced + Sleeper's pre-kickoff projection). Nothing reads these to
-    project, rank, gate or recommend; the page's own number comes from
+    did and still serves where Sleeper's number is missing), `stack`
+    (advanced + Sleeper's pre-kickoff projection) and, when this week's
+    derived prop file exists, `market_v1` (the player-prop market's expected
+    stats scored by `gridiron.scoring`, only from a snapshot taken before the
+    player's kickoff; `gridiron.props.market_block`, with `market_v1_detail`
+    saying which stats came from his own per-game rate). Nothing reads these
+    to project, rank, gate or recommend; the page's own number comes from
     `refine`."""
     base: dict[str, float] = {}
     adv_only: dict[str, float] = {}
     stack: dict[str, float] = {}
+    graded: list[Player] = []
     sleeper = (shadow or {}).get("players") or {}
     for p in players:
         proj = p.projection
         if not proj.usable or proj.is_withheld:
             continue
+        if not is_dst_id(p.sleeper_id):
+            graded.append(p)       # team defenses stay out of the market contender
         hit = sleeper.get(p.sleeper_id)
         st = None
         if is_dst_id(p.sleeper_id):
@@ -486,6 +496,10 @@ def contenders_block(advanced: AdvancedContext | None,
            "note": "grading only: never used by any projection, gate or action"}
     if adv_only:
         out["adv_v1"] = adv_only
+    if market is not None:
+        numbers, detail = market_block(market, graded, market_rates or {})
+        out["market_v1"] = numbers
+        out["market_v1_detail"] = detail
     return out
 
 
@@ -503,11 +517,14 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                     advanced: AdvancedContext | None = None,
                     prior_weekly: pd.DataFrame | None = None,
                     nfl_reserve: set[str] | None = None,
-                    nfl_reserve_week: int | None = None) -> Dashboard:
+                    nfl_reserve_week: int | None = None,
+                    market: MarketWeek | None = None) -> Dashboard:
     """`prior_weekly` is last season's regular-season box scores and
     `nfl_reserve` the gsis ids on an NFL reserve list as of the
     `nfl_reserve_week` weekly roster (None: unknown); both feed only the
-    free-agent watch (`gridiron.notable`), never a projection."""
+    free-agent watch (`gridiron.notable`), never a projection. `market` is
+    this week's derived prop-market file (`gridiron.props.MarketWeek`); it
+    feeds only the record-only `market_v1` contender, never the page."""
     week = context.report_week
     rosters = list(snapshot.get("rosters") or [])
     league = snapshot.get("league") or {}
@@ -870,7 +887,10 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                                    if advanced is not None and advanced.active
                                    else BASELINE_LABEL + (f" ({advanced.status})"
                                                           if advanced is not None else "")),
-                     contenders=contenders_block(advanced, shadow, (*roster, *pool)),
+                     contenders=contenders_block(
+                         advanced, shadow, (*roster, *pool), market=market,
+                         market_rates=(season_rates(weeks, context.stats_through)
+                                       if market is not None else None)),
                      pwin_calibration=cal, league_matchups=tuple(league_matchups),
                      watch=watch(PreviousWatch()))
 
