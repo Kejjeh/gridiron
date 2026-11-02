@@ -159,3 +159,15 @@ def test_team_codes_are_mapped_for_pandas_string_columns():
     out = R.normalize_teams(df.copy())
     assert out["home_team"].tolist() == ["LV", "KC"]
     assert out["away_team"].tolist() == ["LAC", "LA"]
+
+
+def test_regular_rows_survives_columns_that_drift_between_seasons():
+    """2018-2024 injury files carry game_type only; 2025 adds season_type. The
+    2025 depth charts carry neither. A multi-season frame keeps every
+    season's regular rows."""
+    df = pd.DataFrame({"season": [2024, 2024, 2025, 2025, 2025],
+                       "game_type": ["REG", "POST", "REG", None, None],
+                       "season_type": [None, None, "REG", "POST", None]})
+    assert R.regular_rows(df).tolist() == [True, False, True, False, True]
+    only_game = pd.DataFrame({"season": [2024, 2025], "game_type": ["REG", None]})
+    assert R.regular_rows(only_game).tolist() == [True, True]      # 2025: neither -> kept

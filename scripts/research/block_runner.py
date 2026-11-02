@@ -111,6 +111,21 @@ TEAM_COLUMNS = ("team", "recent_team", "posteam", "defteam", "home_team", "away_
                 "forced_fumble_player_1_team", "fumble_recovery_1_team")
 
 
+def regular_rows(df: pd.DataFrame) -> pd.Series:
+    """Regular-season rows, row by row. nflverse's columns drift between
+    seasons: the 2025 injury file adds `season_type` that 2018-2024 lack, and
+    the 2025 depth charts drop `game_type`. Filtering on whichever column
+    the concatenated frame happens to have (as this did until 2026-11-02)
+    silently dropped every season that lacked it. A row is regular when its
+    `season_type` says REG, or it has none and its `game_type` says REG, or
+    it has neither (nothing says otherwise)."""
+    none = pd.Series(pd.NA, index=df.index, dtype="object")
+    st = df["season_type"] if "season_type" in df.columns else none
+    gt = df["game_type"] if "game_type" in df.columns else none
+    return (st.eq("REG").fillna(False) | (st.isna() & gt.eq("REG").fillna(False))
+            | (st.isna() & gt.isna())).astype(bool)
+
+
 def normalize_teams(df: pd.DataFrame) -> pd.DataFrame:
     # pandas 3 reads text as the `str` dtype, not `object`: test for both,
     # or the mapping silently never runs (it did not, until 2026-11-02)
@@ -205,10 +220,7 @@ class Context:
         if key not in self._store:
             df = loader(list(seasons), columns)
             df = df.loc[df["season"].isin(seasons)].copy()
-            if "season_type" in df.columns:
-                df = df.loc[df["season_type"].isin(["REG"])]
-            elif "game_type" in df.columns:
-                df = df.loc[df["game_type"].isin(["REG"])]
+            df = df.loc[regular_rows(df)]
             df["season"] = df["season"].astype(int)
             df = df.loc[df["week"].notna()].copy()
             df["week"] = df["week"].astype(int)
