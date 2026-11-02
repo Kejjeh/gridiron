@@ -84,3 +84,24 @@ Record-only contender for two live weeks (ground rule 3), then a
 DECISIONS.md row. Nothing serves after the week-14 board.
 
 ## Result
+
+Run 2026-11-02T03:19:52+00:00 at `8a91690` (one scored run; `runs/DEF-02.csv`).
+Pairwise (all defenses in a week) and MAE on the defense table:
+
+| fold | shipped | DEF-02 |
+|---|---|---|
+| 2019 | 60.23%, 5.248 | 60.17%, 5.249 |
+| 2020 | 60.30%, 4.638 | 60.43%, 4.634 |
+| 2021 | 60.28%, 4.801 | 59.71%, 4.820 |
+| 2022 | 59.26%, 4.335 | 58.72%, 4.354 |
+| 2023 | 60.72%, 4.835 | 60.43%, 4.836 |
+| 2024 | 64.66%, 4.461 | 64.70%, 4.460 |
+| 2025 | 62.01%, 4.588 | 62.02%, 4.588 |
+
+**Fails.** Better on both metrics in 3 of 7 folds (2020, 2024, and 2025 by
+less than 0.02 points of pairwise and 0.0001 MAE) and worse on both in the
+other four; mean change -0.18 points of pairwise, +0.0051 MAE. The
+roadmap's likeliest defense signal adds nothing to the shipped set: the
+closing line (`opp_implied`, `spread`) already prices who the opponent
+starts, and the start count and the change flag only add noise on top.
+Not shipped, not a contender.
