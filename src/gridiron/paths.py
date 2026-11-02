@@ -24,6 +24,7 @@ DATA = REPO_ROOT / "data"
 RESEARCH_CACHE = DATA / "research" / "cache"   # bulk pulls, gitignored
 OUTPUTS = DATA / "outputs"                     # small weekly CSVs, committed
 LEDGER = DATA / "ledger"                       # decision ledger, committed
+REFERENCE = DATA / "reference"                 # small reference tables, committed
 DOCS = REPO_ROOT / "docs"
 TEST_LOG_DIR = REPO_ROOT / ".cache" / "test-logs"
 
