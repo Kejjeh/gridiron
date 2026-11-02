@@ -124,3 +124,17 @@ def test_a_failure_prints_its_type_only(tmp_path, capsys):
     out = capsys.readouterr()
     assert out.out.strip().endswith("book ranking failed: ValueError (rerun locally with --debug)")
     assert "Fixture" not in out.out + out.err
+
+
+def test_a_player_with_a_snap_but_no_box_score_is_graded_at_zero(tmp_path):
+    """Books settle a prop on a player who played as under / no even when
+    nflverse wrote no stat row for him; only a player who did not play is void."""
+    raw, table, actuals = setup(tmp_path)
+    snaps = P.read_raw_snapshots(raw, 2026)
+    rows, skipped = BR.graded_lines(snaps, P.IdentityTable.read(table), actuals,
+                                    played={(WR, 10)})
+    week10 = [r for r in rows if r["week"] == 10 and r["book"] == "book_alpha"]
+    assert week10 and all(r["y"] == 0.0 for r in week10)            # the under won
+    assert week10[0]["err"] == pytest.approx(-55.5)
+    assert skipped.get("graded at zero (a snap, no box score)") == 1
+    assert "no box score (did not play: the prop is void)" not in skipped

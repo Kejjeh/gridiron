@@ -19,8 +19,11 @@ collected weeks it says "needs 4+ collected weeks" and still runs: a
 ranking on a few hundred lines is noise, and the roadmap waits for four
 weeks before reading one (firm conclusions wait for the offseason).
 
-Actuals are the season's nflverse weekly box scores by gsis id (a prop on a
-player who did not play is void, so he is left out). Names reach an id only
+Actuals are the season's nflverse weekly box scores by gsis id. A prop on a
+player who did not play is void, so he is left out; a player who took a
+snap but has no box-score row (nflverse writes rows only for players with
+a stat) played, and books settle his props as under / no, so he is graded
+at zero (`load_played`, from the snap counts through the crosswalk). Names reach an id only
 through the committed table data/reference/odds_player_names.csv, 'exact'
 or 'reviewed' rows (research, record-only); an unmatched name is counted.
 The output is aggregate grades only (derived values): no player, no single
@@ -74,10 +77,44 @@ def load_actuals(season: int, path: Path | None = None) -> dict[tuple[str, int],
     return out
 
 
+def load_played(season: int, crosswalk_path: Path | None = None) -> set[tuple[str, int]]:
+    """(gsis_id, week) for every player with at least one snap (offense,
+    defense or special teams) in a regular-season game: his props stand even
+    when he has no box-score row. Snap counts are keyed by PFR id and reach a
+    gsis id only through the crosswalk; an empty set when either is missing
+    (then such a player is left out as void, the conservative reading)."""
+    from gridiron.ids import Crosswalk
+    path = crosswalk_path or RESEARCH_CACHE / "crosswalk_db_playerids.csv"
+    if not Path(path).exists():
+        return set()
+    pfr_to_gsis = {pfr: g for g, pfr in getattr(Crosswalk.from_csv(path), "_g2p", {}).items()}
+    from nflreadpy.config import update_config
+    update_config(cache_mode="filesystem", cache_dir=RESEARCH_CACHE / "nflreadpy",
+                  cache_duration=30 * 86400, verbose=False)
+    import nflreadpy as nfl
+    snaps = nfl.load_snap_counts([season]).to_pandas()
+    if "game_type" in snaps:
+        snaps = snaps.loc[snaps["game_type"] == "REG"]
+    out = set()
+    for row in snaps.to_dict("records"):
+        n = sum(float(row.get(c) or 0.0) for c in ("offense_snaps", "defense_snaps", "st_snaps")
+                if row.get(c) == row.get(c))
+        gid = pfr_to_gsis.get(normalize_id(row.get("pfr_player_id")))
+        if n > 0 and gid:
+            out.add((gid, int(row["week"])))
+    return out
+
+
+#: The settled stats of a player who played without a box-score row.
+ZERO = {**dict.fromkeys(_STATS, 0.0), "scrimmage_tds": 0.0, "kicking_points": 0.0}
+
+
 def graded_lines(snaps: Mapping[tuple[int, str], tuple[Path, dict]], table: P.IdentityTable,
-                 actuals: Mapping[tuple[str, int], Mapping[str, float]]):
+                 actuals: Mapping[tuple[str, int], Mapping[str, float]],
+                 played: set[tuple[str, int]] | frozenset = frozenset()):
     """Every book's main line (and the consensus) with its outcome; and the
-    counts of what could not be graded."""
+    counts of what could not be graded. `played` = (gsis_id, week) with a
+    snap: graded at zero when the box scores have no row for him."""
     rows, skipped = [], defaultdict(int)
     for (week, _gid), (_path, blob) in sorted(snaps.items()):
         payload = blob.get("payload")
@@ -94,6 +131,9 @@ def graded_lines(snaps: Mapping[tuple[int, str], tuple[Path, dict]], table: P.Id
                 skipped[f"name {res.reason}"] += real
                 continue
             got = actuals.get((res.gsis_id, int(week)))
+            if got is None and (res.gsis_id, int(week)) in played:
+                got = ZERO                     # played, no stat: under / no
+                skipped["graded at zero (a snap, no box score)"] += real
             if got is None:
                 skipped["no box score (did not play: the prop is void)"] += real
                 continue
@@ -184,8 +224,15 @@ def rank(args: argparse.Namespace) -> int:
     if not snaps:
         print("no snapshot in the raw archive: nothing to grade")
         return 0
+    played = set()
+    if args.actuals is None:                   # a given box-score file is used as is
+        try:
+            played = load_played(args.season)
+        except Exception as exc:               # noqa: BLE001 — void is the safe reading
+            print(f"snap counts unavailable ({type(exc).__name__}): a player without a "
+                  "box score is left out as void")
     rows, skipped = graded_lines(snaps, P.IdentityTable.read(args.table),
-                                 load_actuals(args.season, args.actuals))
+                                 load_actuals(args.season, args.actuals), played)
     grades = grade(rows)
     print("\n".join(render(grades, weeks=weeks, skipped=skipped, markdown=args.markdown)))
     if args.out is not None:
