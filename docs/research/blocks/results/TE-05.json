@@ -1,0 +1,571 @@
+{
+ "block": "TE-05",
+ "title": "Play-caller's tight-end target share before this season, and the TE's implied share",
+ "columns": {
+  "TE": [
+   "pc_te_tgt_share",
+   "te_implied_tgt_share"
+  ]
+ },
+ "model_columns": {
+  "TE": [
+   "pc_te_tgt_share",
+   "pc_te_tgt_share__known",
+   "te_implied_tgt_share",
+   "te_implied_tgt_share__known"
+  ]
+ },
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "coverage": {
+  "TE": {
+   "pc_te_tgt_share": {
+    "2019": 0.0,
+    "2020": 0.785,
+    "2021": 0.68,
+    "2022": 0.688,
+    "2023": 0.686,
+    "2024": 0.898,
+    "2025": 0.832
+   },
+   "te_implied_tgt_share": {
+    "2019": 0.0,
+    "2020": 0.782,
+    "2021": 0.68,
+    "2022": 0.688,
+    "2023": 0.685,
+    "2024": 0.894,
+    "2025": 0.83
+   }
+  }
+ },
+ "folds": {
+  "2020": {
+   "pooled": {
+    "pairs": 66283,
+    "rows": 4326,
+    "sleeper": {
+     "pairwise": 0.639349,
+     "mae": 4.1219
+    },
+    "shipped": {
+     "pairwise": 0.619978,
+     "mae": 4.3213
+    },
+    "block": {
+     "pairwise": 0.620325,
+     "mae": 4.3174
+    }
+   },
+   "QB": {
+    "pairs": 5155,
+    "rows": 473,
+    "sleeper": {
+     "pairwise": 0.62968,
+     "mae": 6.1282
+    },
+    "shipped": {
+     "pairwise": 0.62483,
+     "mae": 6.3194
+    },
+    "block": {
+     "pairwise": 0.62483,
+     "mae": 6.3194
+    }
+   },
+   "RB": {
+    "pairs": 15451,
+    "rows": 1154,
+    "sleeper": {
+     "pairwise": 0.671283,
+     "mae": 4.1612
+    },
+    "shipped": {
+     "pairwise": 0.647855,
+     "mae": 4.365
+    },
+    "block": {
+     "pairwise": 0.647855,
+     "mae": 4.365
+    }
+   },
+   "WR": {
+    "pairs": 41254,
+    "rows": 1812,
+    "sleeper": {
+     "pairwise": 0.629127,
+     "mae": 4.1176
+    },
+    "shipped": {
+     "pairwise": 0.611189,
+     "mae": 4.2749
+    },
+    "block": {
+     "pairwise": 0.611189,
+     "mae": 4.2749
+    }
+   },
+   "TE": {
+    "pairs": 4423,
+    "rows": 887,
+    "sleeper": {
+     "pairwise": 0.634411,
+     "mae": 3.0099
+    },
+    "shipped": {
+     "pairwise": 0.598915,
+     "mae": 3.2937
+    },
+    "block": {
+     "pairwise": 0.604115,
+     "mae": 3.2745
+    }
+   }
+  },
+  "2021": {
+   "pooled": {
+    "pairs": 67167,
+    "rows": 4629,
+    "sleeper": {
+     "pairwise": 0.653327,
+     "mae": 4.2076
+    },
+    "shipped": {
+     "pairwise": 0.645183,
+     "mae": 4.2077
+    },
+    "block": {
+     "pairwise": 0.645153,
+     "mae": 4.2063
+    }
+   },
+   "QB": {
+    "pairs": 5367,
+    "rows": 505,
+    "sleeper": {
+     "pairwise": 0.641327,
+     "mae": 6.3642
+    },
+    "shipped": {
+     "pairwise": 0.624371,
+     "mae": 6.1418
+    },
+    "block": {
+     "pairwise": 0.624371,
+     "mae": 6.1418
+    }
+   },
+   "RB": {
+    "pairs": 15735,
+    "rows": 1195,
+    "sleeper": {
+     "pairwise": 0.656625,
+     "mae": 4.3493
+    },
+    "shipped": {
+     "pairwise": 0.638259,
+     "mae": 4.5214
+    },
+    "block": {
+     "pairwise": 0.638259,
+     "mae": 4.5214
+    }
+   },
+   "WR": {
+    "pairs": 41217,
+    "rows": 1971,
+    "sleeper": {
+     "pairwise": 0.655045,
+     "mae": 4.1021
+    },
+    "shipped": {
+     "pairwise": 0.652037,
+     "mae": 4.0411
+    },
+    "block": {
+     "pairwise": 0.652037,
+     "mae": 4.0411
+    }
+   },
+   "TE": {
+    "pairs": 4848,
+    "rows": 958,
+    "sleeper": {
+     "pairwise": 0.641295,
+     "mae": 3.1112
+    },
+    "shipped": {
+     "pairwise": 0.632426,
+     "mae": 3.1398
+    },
+    "block": {
+     "pairwise": 0.632013,
+     "mae": 3.133
+    }
+   }
+  },
+  "2022": {
+   "pooled": {
+    "pairs": 60026,
+    "rows": 4611,
+    "sleeper": {
+     "pairwise": 0.64707,
+     "mae": 3.8326
+    },
+    "shipped": {
+     "pairwise": 0.635508,
+     "mae": 4.0405
+    },
+    "block": {
+     "pairwise": 0.635491,
+     "mae": 4.0389
+    }
+   },
+   "QB": {
+    "pairs": 5929,
+    "rows": 485,
+    "sleeper": {
+     "pairwise": 0.668241,
+     "mae": 5.4709
+    },
+    "shipped": {
+     "pairwise": 0.665036,
+     "mae": 5.5202
+    },
+    "block": {
+     "pairwise": 0.665036,
+     "mae": 5.5202
+    }
+   },
+   "RB": {
+    "pairs": 14913,
+    "rows": 1260,
+    "sleeper": {
+     "pairwise": 0.660028,
+     "mae": 3.948
+    },
+    "shipped": {
+     "pairwise": 0.646215,
+     "mae": 4.1898
+    },
+    "block": {
+     "pairwise": 0.646215,
+     "mae": 4.1898
+    }
+   },
+   "WR": {
+    "pairs": 35837,
+    "rows": 1897,
+    "sleeper": {
+     "pairwise": 0.642967,
+     "mae": 3.7811
+    },
+    "shipped": {
+     "pairwise": 0.631359,
+     "mae": 4.0058
+    },
+    "block": {
+     "pairwise": 0.631359,
+     "mae": 4.0058
+    }
+   },
+   "TE": {
+    "pairs": 3347,
+    "rows": 969,
+    "sleeper": {
+     "pairwise": 0.595757,
+     "mae": 2.9636
+    },
+    "shipped": {
+     "pairwise": 0.579922,
+     "mae": 3.1738
+    },
+    "block": {
+     "pairwise": 0.579624,
+     "mae": 3.1663
+    }
+   }
+  },
+  "2023": {
+   "pooled": {
+    "pairs": 57898,
+    "rows": 4639,
+    "sleeper": {
+     "pairwise": 0.645756,
+     "mae": 3.7314
+    },
+    "shipped": {
+     "pairwise": 0.639953,
+     "mae": 3.9386
+    },
+    "block": {
+     "pairwise": 0.640264,
+     "mae": 3.9388
+    }
+   },
+   "QB": {
+    "pairs": 6207,
+    "rows": 515,
+    "sleeper": {
+     "pairwise": 0.62349,
+     "mae": 5.4053
+    },
+    "shipped": {
+     "pairwise": 0.630256,
+     "mae": 5.8483
+    },
+    "block": {
+     "pairwise": 0.630256,
+     "mae": 5.8483
+    }
+   },
+   "RB": {
+    "pairs": 14274,
+    "rows": 1180,
+    "sleeper": {
+     "pairwise": 0.652235,
+     "mae": 3.7698
+    },
+    "shipped": {
+     "pairwise": 0.647471,
+     "mae": 4.0712
+    },
+    "block": {
+     "pairwise": 0.647471,
+     "mae": 4.0712
+    }
+   },
+   "WR": {
+    "pairs": 34477,
+    "rows": 1994,
+    "sleeper": {
+     "pairwise": 0.651536,
+     "mae": 3.6848
+    },
+    "shipped": {
+     "pairwise": 0.644691,
+     "mae": 3.8022
+    },
+    "block": {
+     "pairwise": 0.644691,
+     "mae": 3.8022
+    }
+   },
+   "TE": {
+    "pairs": 2940,
+    "rows": 950,
+    "sleeper": {
+     "pairwise": 0.593537,
+     "mae": 2.8741
+    },
+    "shipped": {
+     "pairwise": 0.568367,
+     "mae": 3.0248
+    },
+    "block": {
+     "pairwise": 0.57449,
+     "mae": 3.0259
+    }
+   }
+  },
+  "2024": {
+   "pooled": {
+    "pairs": 60236,
+    "rows": 4678,
+    "sleeper": {
+     "pairwise": 0.643469,
+     "mae": 3.7906
+    },
+    "shipped": {
+     "pairwise": 0.632496,
+     "mae": 4.0393
+    },
+    "block": {
+     "pairwise": 0.63233,
+     "mae": 4.0362
+    }
+   },
+   "QB": {
+    "pairs": 6357,
+    "rows": 518,
+    "sleeper": {
+     "pairwise": 0.627655,
+     "mae": 5.6254
+    },
+    "shipped": {
+     "pairwise": 0.62498,
+     "mae": 6.1601
+    },
+    "block": {
+     "pairwise": 0.62498,
+     "mae": 6.1601
+    }
+   },
+   "RB": {
+    "pairs": 13268,
+    "rows": 1226,
+    "sleeper": {
+     "pairwise": 0.675987,
+     "mae": 3.8063
+    },
+    "shipped": {
+     "pairwise": 0.658049,
+     "mae": 4.1315
+    },
+    "block": {
+     "pairwise": 0.658049,
+     "mae": 4.1315
+    }
+   },
+   "WR": {
+    "pairs": 36774,
+    "rows": 1952,
+    "sleeper": {
+     "pairwise": 0.636754,
+     "mae": 3.7604
+    },
+    "shipped": {
+     "pairwise": 0.628297,
+     "mae": 3.9183
+    },
+    "block": {
+     "pairwise": 0.628297,
+     "mae": 3.9183
+    }
+   },
+   "TE": {
+    "pairs": 3837,
+    "rows": 982,
+    "sleeper": {
+     "pairwise": 0.621579,
+     "mae": 2.8633
+    },
+    "shipped": {
+     "pairwise": 0.59682,
+     "mae": 3.0461
+    },
+    "block": {
+     "pairwise": 0.594214,
+     "mae": 3.0315
+    }
+   }
+  },
+  "2025": {
+   "pooled": {
+    "pairs": 60813,
+    "rows": 4800,
+    "sleeper": {
+     "pairwise": 0.654202,
+     "mae": 3.7683
+    },
+    "shipped": {
+     "pairwise": 0.641705,
+     "mae": 3.8809
+    },
+    "block": {
+     "pairwise": 0.641327,
+     "mae": 3.8798
+    }
+   },
+   "QB": {
+    "pairs": 6433,
+    "rows": 520,
+    "sleeper": {
+     "pairwise": 0.602985,
+     "mae": 5.5168
+    },
+    "shipped": {
+     "pairwise": 0.595368,
+     "mae": 6.2439
+    },
+    "block": {
+     "pairwise": 0.595368,
+     "mae": 6.2439
+    }
+   },
+   "RB": {
+    "pairs": 16834,
+    "rows": 1255,
+    "sleeper": {
+     "pairwise": 0.682369,
+     "mae": 4.0187
+    },
+    "shipped": {
+     "pairwise": 0.669063,
+     "mae": 4.1216
+    },
+    "block": {
+     "pairwise": 0.669063,
+     "mae": 4.1216
+    }
+   },
+   "WR": {
+    "pairs": 32486,
+    "rows": 1997,
+    "sleeper": {
+     "pairwise": 0.654713,
+     "mae": 3.5407
+    },
+    "shipped": {
+     "pairwise": 0.639291,
+     "mae": 3.5471
+    },
+    "block": {
+     "pairwise": 0.639291,
+     "mae": 3.5471
+    }
+   },
+   "TE": {
+    "pairs": 5060,
+    "rows": 1028,
+    "sleeper": {
+     "pairwise": 0.622332,
+     "mae": 3.0203
+    },
+    "shipped": {
+     "pairwise": 0.625099,
+     "mae": 3.0401
+    },
+    "block": {
+     "pairwise": 0.620553,
+     "mae": 3.0353
+    }
+   }
+  }
+ },
+ "verdict": {
+  "positions": {
+   "TE": {
+    "folds_better_on_both": 1,
+    "folds": 6,
+    "passes": false,
+    "mean_pairwise_delta": 0.000577,
+    "mean_mae_delta": -0.0086
+   }
+  },
+  "pooled_not_worse_every_fold": false
+ },
+ "passed": [],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "cb12cedb6342",
+ "module_blob": "ca646257aa78",
+ "helpers_blob": "fe3ec0b475ee",
+ "head": "c234e193f583",
+ "run_at": "2026-11-02T04:19:15+00:00"
+}
