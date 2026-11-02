@@ -84,3 +84,26 @@ priors read 2025 participation, which is published; 2027 needs nflverse's
 2026 participation.
 
 ## Result
+
+Run 2026-11-02T03:53:01+00:00 at `eeaf832` (one scored run; `runs/DEF-05.csv`).
+Pairwise (among all defenses in a week) and MAE on DEF rows:
+
+| fold | shipped | DEF-05 |
+|---|---|---|
+| 2019 | 60.23%, 5.248 | 59.98%, 5.246 |
+| 2020 | 60.30%, 4.638 | 60.81%, 4.643 |
+| 2021 | 60.28%, 4.801 | 60.05%, 4.841 |
+| 2022 | 59.26%, 4.335 | 59.69%, 4.319 |
+| 2023 | 60.72%, 4.835 | 60.46%, 4.792 |
+| 2024 | 64.66%, 4.461 | 65.45%, 4.438 |
+| 2025 | 62.01%, 4.588 | 61.63%, 4.592 |
+
+**Fails.** Better on both metrics in 2 of 7 folds (2022, 2024); mean change
++0.09 points of pairwise, -0.0048 MAE. (The defense folds have no pooled
+numbers; the JSON's `pooled_not_worse_every_fold: true` is vacuous.) Pressure
+and sack-or-hit rates per dropback, for this rush and for the line it faces,
+move the defense numbers by -0.37 to +0.79 points of pairwise and -0.043 to
++0.040 of MAE, but in no consistent direction: ordering is better in three
+folds and worse in four, error better in four and worse in three. Over the
+per-game sack counts already in the set, they read as noise on about 450
+defense-weeks a fold. Not shipped, not a contender.
