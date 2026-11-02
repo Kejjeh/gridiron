@@ -54,3 +54,23 @@ Record-only contender for two live weeks (ground rule 3), then a
 DECISIONS.md row. Nothing serves after the week-14 board.
 
 ## Result
+
+Run 2026-11-02T04:20:12+00:00 at `d8847b6` (one scored run; `runs/DEF-09.csv`).
+Pairwise (all defenses in a week) and MAE on the defense rows:
+
+| fold | shipped | DEF-09 |
+|---|---|---|
+| 2019 | 60.23%, 5.248 | 60.09%, 5.247 |
+| 2020 | 60.30%, 4.638 | 60.07%, 4.642 |
+| 2021 | 60.28%, 4.801 | 60.07%, 4.795 |
+| 2022 | 59.26%, 4.335 | 59.08%, 4.332 |
+| 2023 | 60.72%, 4.835 | 60.87%, 4.836 |
+| 2024 | 64.66%, 4.461 | 64.51%, 4.463 |
+| 2025 | 62.01%, 4.588 | 61.99%, 4.594 |
+
+**Fails.** Better on both metrics in 0 of 7 folds; mean change -0.11 points
+of pairwise, +0.0007 MAE. It orders defenses worse in six folds (by 1 to
+13 pairs of 5,222 to 6,178) and better only in 2023, and its error is lower
+only in 2019, 2021 and 2022. The opposing play-caller's tempo adds nothing
+to the opponent's implied points, sacks allowed and giveaways. Not
+shipped, not a contender.
