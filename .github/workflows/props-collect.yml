@@ -1,0 +1,240 @@
+name: Prop market collector
+
+# Snapshots player-prop markets from The Odds API (free tier) before each
+# NFL kickoff, for the record-only `market_v1` contender and the book
+# ranking (docs/research/PROPS_COLLECTOR.md; owner decisions of 2026-11-02 in
+# docs/research/MODEL_ROADMAP.md). Off until the owner sets the repository
+# variable GRIDIRON_PROPS_ENABLED to exactly `true`.
+#
+# What is public here, stated so nobody has to infer it: this repository,
+# its run logs, its run artifacts and its Actions caches are all public
+# (a cache can be restored by any workflow run on the default branch, and by
+# a pull request run from a fork through the base branch's caches). The
+# provider's terms forbid redistributing its data ("Do not resell,
+# repackage, or redistribute our data as a standalone data product";
+# "downloadable files" is named as prohibited) and allow "Calculating and
+# displaying values you derive from our data". So:
+#   * raw responses and the per-book table are NEVER committed, uploaded as
+#     an artifact, printed to the log or cached in the clear. They ride an
+#     Actions cache only as one file encrypted with openssl (AES-256-CBC,
+#     PBKDF2, 200,000 iterations) under the secret GRIDIRON_ODDS_ARCHIVE_KEY,
+#     which no fork run receives. Without that secret nothing raw is kept
+#     between runs, and the step summary says so;
+#   * only values derived from them (expected stat lines by gsis id, counts,
+#     the credit ledger) are cached in the clear, under their own key prefix,
+#     where the dashboard workflow restores them read-only;
+#   * the log prints counts and credits only: no player, no name, no line,
+#     no price, and never the key (scripts/ingest/pull_props.py scrubs every
+#     message; tests/test_pull_props.py pins it).
+# This workflow has no upload-artifact step, never runs on pull_request, and
+# gives the API key only to the one step that calls the API.
+#
+# Credits. 500 a month on the free plan; a game's snapshot costs at most 6
+# (six core markets on one region; unique markets returned x regions). The
+# collector refuses a call that would eat the reserve the rest of the
+# month's core snapshots need, and buys the five secondary markets only with
+# slack above it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      rank_books:
+        # The cloud archive can be decrypted only inside a run (an Actions
+        # cache cannot be downloaded), so a person asks for the ranking here.
+        description: 'Also rank the books on the decrypted archive (aggregate grades to the summary)'
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # Hourly at :41, off the quarter hours and clear of the dashboard's
+    # 7/22/37/52 and the sync's :17. A game is due in the 150 minutes before
+    # its kickoff, so two or three runs fall inside every window even when
+    # GitHub delays one; a cron says when a job is QUEUED, not when it runs.
+    - cron: '41 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gridiron-props
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: vars.GRIDIRON_PROPS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: src
+      PROPS_DIR: data/research/cache/props
+      VAULT_DIR: .props-vault
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      # Derived values only (public by design): the week files, the credit
+      # ledger, the schedule copy. A unique key never hits, so this restores
+      # the newest entry under the prefix (the rolling-cache pattern).
+      - name: Restore the derived consensus
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: data/research/cache/props/derived
+          key: gridiron-props-derived-${{ github.run_id }}
+          restore-keys: |
+            gridiron-props-derived-
+
+      # Whether the archive key exists, as a step output: a secret cannot be
+      # read in a step's `if:`, and it must not sit in the job's env.
+      - name: Check for the archive key
+        id: vaultkey
+        env:
+          GRIDIRON_ODDS_ARCHIVE_KEY: ${{ secrets.GRIDIRON_ODDS_ARCHIVE_KEY }}
+        run: |
+          if [ -n "$GRIDIRON_ODDS_ARCHIVE_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore the encrypted raw archive
+        if: steps.vaultkey.outputs.present == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .props-vault
+          key: gridiron-props-vault-${{ github.run_id }}
+          restore-keys: |
+            gridiron-props-vault-
+
+      # The key reaches openssl as the NAME of an environment variable
+      # (-pass env:...), never as an argument a process listing could show.
+      # pipefail: a failing openssl must fail the pipeline even when tar
+      # exits cleanly. A file that does not decrypt (a re-created key, a
+      # damaged blob) must not stop collecting, because a snapshot missed
+      # now can never be bought back. So the step removes whatever it
+      # half-extracted and fails with state=unreadable, and
+      # continue-on-error lets the run collect and save the derived values
+      # exactly as with no key. The step's OUTCOME stays 'failure' (only its
+      # conclusion turns 'success'), so the encrypt and rank steps, gated on
+      # outcome == 'success', never replace or read the archive it could not
+      # read. The last step then fails the run, so the problem stays in
+      # sight (docs/research/PROPS_COLLECTOR.md says how to recover).
+      - name: Decrypt the raw archive
+        id: decrypt
+        if: steps.vaultkey.outputs.present == 'true'
+        continue-on-error: true
+        env:
+          GRIDIRON_ODDS_ARCHIVE_KEY: ${{ secrets.GRIDIRON_ODDS_ARCHIVE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PROPS_DIR"
+          if [ ! -f "$VAULT_DIR/raw.tar.gz.enc" ]; then
+            echo "state=empty" >> "$GITHUB_OUTPUT"
+          elif openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:GRIDIRON_ODDS_ARCHIVE_KEY -in "$VAULT_DIR/raw.tar.gz.enc" | tar -xzf - -C "$PROPS_DIR" --no-same-owner; then
+            echo "state=restored" >> "$GITHUB_OUTPUT"
+          else
+            rm -rf "$PROPS_DIR/raw"
+            echo "state=unreadable" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Install the approved dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      # The only step that holds the API key. Counts and credits only.
+      # GRIDIRON_PROPS_RESET_DAY (optional repository variable): the quota's
+      # reset day as the provider's account page shows it; the script reads
+      # it as untrusted text and accepts only a bare day 1-28.
+      - name: Collect the games that are due
+        id: collect
+        env:
+          GRIDIRON_ODDS_API_KEY: ${{ secrets.GRIDIRON_ODDS_API_KEY }}
+          GRIDIRON_PROPS_RESET_DAY: ${{ vars.GRIDIRON_PROPS_RESET_DAY }}
+        run: python scripts/ingest/pull_props.py
+
+      # pipefail: a tar that fails half-way must not leave openssl to encrypt
+      # a truncated stream that would then replace the good archive.
+      - name: Encrypt the raw archive
+        id: encrypt
+        if: always() && steps.vaultkey.outputs.present == 'true' && steps.decrypt.outcome == 'success' && steps.collect.outputs.raw_changed == 'true'
+        env:
+          GRIDIRON_ODDS_ARCHIVE_KEY: ${{ secrets.GRIDIRON_ODDS_ARCHIVE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$VAULT_DIR"
+          tar -czf - -C "$PROPS_DIR" raw | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:GRIDIRON_ODDS_ARCHIVE_KEY -out "$VAULT_DIR/raw.tar.gz.enc.part"
+          mv "$VAULT_DIR/raw.tar.gz.enc.part" "$VAULT_DIR/raw.tar.gz.enc"
+
+      - name: Save the encrypted raw archive
+        id: savevault
+        if: always() && steps.encrypt.outcome == 'success'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .props-vault
+          key: gridiron-props-vault-${{ github.run_id }}
+
+      - name: Save the derived consensus
+        if: always() && steps.collect.outputs.derived_changed == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: data/research/cache/props/derived
+          key: gridiron-props-derived-${{ github.run_id }}
+
+      # A person's request only. Aggregate grades per book and market
+      # (derived values: no player, no single line, no price) go to the
+      # summary; the season's box scores come from nflverse.
+      - name: Rank the books (aggregate grades only)
+        id: rank
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.rank_books && steps.decrypt.outcome == 'success'
+        continue-on-error: true
+        run: python scripts/research/book_ranking.py --markdown >> "$GITHUB_STEP_SUMMARY"
+
+      # The runner is discarded anyway; the plaintext goes first regardless.
+      - name: Remove the plaintext raw files
+        if: always()
+        run: rm -rf "$PROPS_DIR/raw" "$VAULT_DIR/raw.tar.gz.enc.part"
+
+      - name: Report counts and credits
+        if: always()
+        env:
+          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
+          VAULT_KEY_PRESENT: ${{ steps.vaultkey.outputs.present }}
+          DECRYPT_OUTCOME: ${{ steps.decrypt.outcome }}
+          DECRYPT_STATE: ${{ steps.decrypt.outputs.state }}
+          ENCRYPT_OUTCOME: ${{ steps.encrypt.outcome }}
+          SAVE_VAULT_OUTCOME: ${{ steps.savevault.outcome }}
+          RANK_OUTCOME: ${{ steps.rank.outcome }}
+        run: |
+          {
+            echo '### Prop market collector'
+            echo "- collect step: **${COLLECT_OUTCOME}**"
+            if [ "${VAULT_KEY_PRESENT}" = "true" ] && [ "${DECRYPT_OUTCOME}" = "failure" ]; then
+              echo '- raw archive: **did not decrypt** (a changed GRIDIRON_ODDS_ARCHIVE_KEY or a damaged file), so it was left in the cache as it was and nothing raw from this run is kept. This run still collected and saved the derived values, as with no key. It fails at its last step, and so will every run until the archive is fixed (docs/research/PROPS_COLLECTOR.md, When something breaks)'
+            elif [ "${VAULT_KEY_PRESENT}" = "true" ]; then
+              echo "- raw archive: encrypted in the Actions cache (restored: ${DECRYPT_STATE:-not attempted}; re-encrypted this run: ${ENCRYPT_OUTCOME}; saved: ${SAVE_VAULT_OUTCOME})"
+            else
+              echo '- raw archive: **no GRIDIRON_ODDS_ARCHIVE_KEY secret, so nothing raw is kept between runs**; only the derived values are'
+            fi
+            if [ "${RANK_OUTCOME}" != "skipped" ] && [ -n "${RANK_OUTCOME}" ]; then
+              echo "- book ranking (asked for by hand): **${RANK_OUTCOME}**"
+            fi
+            echo '- counts and credits only: this log, the artifacts and the caches of this repository are public'
+            echo ''
+          } >> "$GITHUB_STEP_SUMMARY"
+          python scripts/ingest/pull_props.py summary >> "$GITHUB_STEP_SUMMARY"
+
+      # Last, after everything above has run and the summary is written.
+      # Collecting went on without the archive. This failure is what keeps
+      # it in sight: every run fails here until the old key is back or the
+      # vault caches are deleted.
+      - name: Fail the run if the raw archive did not decrypt
+        if: always() && steps.decrypt.outcome == 'failure'
+        run: |
+          echo "::error title=Prop archive::The encrypted raw archive did not decrypt. This run still collected and saved the derived values and left the archive as it was. See docs/research/PROPS_COLLECTOR.md, When something breaks."
+          exit 1

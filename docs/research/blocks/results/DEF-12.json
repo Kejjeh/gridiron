@@ -1,0 +1,226 @@
+{
+ "block": "DEF-12",
+ "title": "Return units: kick and punt return yards over the league per return, shrunk, and return touchdowns per game (season to date, prior season)",
+ "columns": {
+  "DEF": [
+   "ret_yoe",
+   "ret_yoe_prior",
+   "ret_td_pg",
+   "ret_td_pg_prior"
+  ]
+ },
+ "model_columns": {
+  "DEF": [
+   "ret_yoe",
+   "ret_yoe_prior",
+   "ret_td_pg",
+   "ret_td_pg_prior"
+  ]
+ },
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "coverage": {
+  "DEF": {
+   "ret_yoe": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "ret_yoe_prior": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "ret_td_pg": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "ret_td_pg_prior": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   }
+  }
+ },
+ "folds": {
+  "2019": {
+   "DEF": {
+    "pairs": 5222,
+    "rows": 397,
+    "sleeper": {
+     "pairwise": 0.592493,
+     "mae": 5.3309
+    },
+    "shipped": {
+     "pairwise": 0.60226,
+     "mae": 5.2483
+    },
+    "block": {
+     "pairwise": 0.604366,
+     "mae": 5.2512
+    }
+   }
+  },
+  "2020": {
+   "DEF": {
+    "pairs": 5683,
+    "rows": 416,
+    "sleeper": {
+     "pairwise": 0.597572,
+     "mae": 4.7362
+    },
+    "shipped": {
+     "pairwise": 0.603027,
+     "mae": 4.6382
+    },
+    "block": {
+     "pairwise": 0.605666,
+     "mae": 4.635
+    }
+   }
+  },
+  "2021": {
+   "DEF": {
+    "pairs": 6178,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.601651,
+     "mae": 4.8669
+    },
+    "shipped": {
+     "pairwise": 0.602784,
+     "mae": 4.8013
+    },
+    "block": {
+     "pairwise": 0.603108,
+     "mae": 4.7994
+    }
+   }
+  },
+  "2022": {
+   "DEF": {
+    "pairs": 6083,
+    "rows": 446,
+    "sleeper": {
+     "pairwise": 0.571922,
+     "mae": 4.3794
+    },
+    "shipped": {
+     "pairwise": 0.592635,
+     "mae": 4.3345
+    },
+    "block": {
+     "pairwise": 0.593293,
+     "mae": 4.3326
+    }
+   }
+  },
+  "2023": {
+   "DEF": {
+    "pairs": 6179,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.589901,
+     "mae": 4.7938
+    },
+    "shipped": {
+     "pairwise": 0.607218,
+     "mae": 4.8348
+    },
+    "block": {
+     "pairwise": 0.603496,
+     "mae": 4.838
+    }
+   }
+  },
+  "2024": {
+   "DEF": {
+    "pairs": 6168,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.642023,
+     "mae": 4.4408
+    },
+    "shipped": {
+     "pairwise": 0.646563,
+     "mae": 4.4608
+    },
+    "block": {
+     "pairwise": 0.643482,
+     "mae": 4.4636
+    }
+   }
+  },
+  "2025": {
+   "DEF": {
+    "pairs": 6138,
+    "rows": 448,
+    "sleeper": {
+     "pairwise": 0.610297,
+     "mae": 4.5081
+    },
+    "shipped": {
+     "pairwise": 0.620072,
+     "mae": 4.5878
+    },
+    "block": {
+     "pairwise": 0.617791,
+     "mae": 4.5991
+    }
+   }
+  }
+ },
+ "verdict": {
+  "positions": {
+   "DEF": {
+    "folds_better_on_both": 3,
+    "folds": 7,
+    "passes": false,
+    "mean_pairwise_delta": -0.00048,
+    "mean_mae_delta": 0.0019
+   }
+  },
+  "pooled_not_worse_every_fold": true
+ },
+ "passed": [],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "f0d09914bef7",
+ "module_blob": "f37334fb2189",
+ "helpers_blob": "bddbdc05d170",
+ "head": "774c3dfa5cdb",
+ "run_at": "2026-11-02T04:22:53+00:00"
+}

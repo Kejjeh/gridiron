@@ -1,0 +1,7 @@
+[
+ {"season": 2019, "team": "LAC", "role": "OPC", "name": "Ken Whisenhunt", "accept": false, "why": "the cited PDF's quote does not name him or the play-caller"},
+ {"season": 2019, "team": "PIT", "role": "OPC", "name": "Randy Fichtner", "accept": true, "why": "page blocks scripts; read 2026-11-02: 'likely to once again call the plays ... in 2020', after his second season as OC"},
+ {"season": 2020, "team": "LV", "role": "DC", "name": "Rod Marinelli", "accept": true, "why": "the article reports the defensive coordinator's firing and that Marinelli 'will take over on an interim basis'"},
+ {"season": 2023, "team": "DET", "role": "OPC", "name": "Ben Johnson", "accept": true, "why": "page blocks scripts; read 2026-11-02: 'led by play-caller and coordinator Ben Johnson', dated Nov 15, 2023"},
+ {"season": 2023, "team": "PIT", "role": "OC", "name": "Matt Canada", "accept": true, "why": "the same page: 'promoted to offensive coordinator of the Steelers' (2021) and fired Nov 21, 2023"}
+]

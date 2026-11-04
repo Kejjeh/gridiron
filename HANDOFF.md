@@ -4,6 +4,58 @@ Current state and next step only. The running log through the Game Day,
 Radar, Action Desk and publication releases moved to
 `docs/memory/handoff_history.md` on 2026-10-01 (provenance, not current).
 
+## Model roadmap executed (2026-11-02)
+
+The owner said "execute all phases now" (read as approval of the roadmap's
+four decisions). Phases 0-2 ran on 2026-11-02; the rest is time-gated. Every
+idea and result: `docs/research/blocks/RESULTS.md` (generated:
+`PYTHONPATH=src python scripts/research/block_summary.py --write`). Process:
+`docs/research/blocks/README.md`; integrity: `scripts/research/audit_blocks.py`.
+
+- **Nothing new serves.** 58 feature blocks were pre-registered and scored by
+  `scripts/research/block_runner.py` (it reproduces the shipped seven-fold
+  numbers); none beats the shipped set in every fold. A bug hunt over the
+  near misses fixed three shared helpers (`fb26c4b`); the 14 blocks that read
+  them were re-run once (`432deda`) and still fail. Round 2 (`ROUND2.md`, five
+  declared post-hoc combinations, re-selected on the corrected results
+  before any round-2 score): RB-R2 cleared all seven folds, then was worse on
+  both metrics on 2026 weeks 4-7 (`holdout_2026.json`); the other four fail
+  history.
+- **Distributions (workstream D):** RB-13 and TE-10 pass history AND their
+  frozen 2026 weeks 4-7 holdouts (`RB-13-2026.md`, `TE-10-2026.md`): RECORD-ONLY
+  contenders. K-03 passes history and fails its holdout (P(win) Brier
+  worse); DEF-03 fails history. On 2026 a refitted, wider normal took 96% (RB)
+  and 91% (TE) of their P(win) gain, so a serving decision weighs them against
+  simply refitting the page's sd.
+- **Week 1-3 priors:** WR-10 passes 2019-2025 and fails its frozen 2026 test
+  (`WR-10-2026.md`); QB-12 and TE-13 fail. 2027 work.
+- **Built:** the play-caller table (`data/reference/play_callers.csv`,
+  `docs/research/PLAY_CALLERS.md`; nothing reads it), the TE/K/DEF streaming
+  lists (`gridiron.streaming`, in `ros_rankings.py`), the prop collector,
+  record-only (`docs/research/PROPS_COLLECTOR.md`), `DATA_INVENTORY.md`.
+- **Next, in order (time-gated):**
+  1. Props: the owner creates a free The Odds API key and sets it in `.env`
+     and as the Actions secret `GRIDIRON_ODDS_API_KEY`, adds the secret
+     `GRIDIRON_ODDS_ARCHIVE_KEY` and the variable `GRIDIRON_PROPS_ENABLED=true`,
+     and this branch reaches `main` (a scheduled workflow runs only there).
+     Week 9 starts Thu 5 Nov (01:15 UTC Fri). The owner's key works (checked
+     2026-11-02 on the free event list: 493 credits left after one name
+     call). It sits only in that session's gitignored `.env`; a later cloud
+     session has it only if the owner adds `GRIDIRON_ODDS_API_KEY` to the
+     environment's settings. Name table: 26 exact rows from week 8's Monday
+     game; one provider spelling (SEA WR, gsis `00-0037156`) awaits the
+     owner's manual row; team-defense entries stay unmatched. Week 9 seeds
+     once its weekly rosters are published: `pull_props.py names --week 9`
+     (1 credit a game), then `odds_names.py propose --week 9`, run locally.
+  2. RB-13 and TE-10 live check: weeks 9 and 10 (`P7_LIVE.md`, pre-registered
+     before week 9). Score it after week 10 is final; a serving decision is a
+     DECISIONS row, compared against refitting the page's sd.
+  3. Book ranking after 4+ collected weeks; the market contender graded
+     weekly, record-only.
+  4. No serving change after the week-14 board (ground rule 8).
+  5. Offseason: re-test on the full 2026 season, 2026 participation once
+     published, `returner_v2`, a redesigned WR-10 for 2027.
+
 ## Free agents the radar cannot rank are named (2026-10-21)
 
 Week 7's miss: a 2025 RB8 with no 2026 game (exempt list) was dropped by

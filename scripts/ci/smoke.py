@@ -65,8 +65,10 @@ IMPORTS = [
     "gridiron.shadow",
     "gridiron.models.advanced",
     "gridiron.ros",
+    "gridiron.streaming",
     "gridiron.radar",
     "gridiron.theme",
+    "gridiron.props",
 ]
 
 # Glob patterns, so newly added hygiene/contract tests join the smoke set on
@@ -117,6 +119,14 @@ PATTERNS = [
     "test_advanced_model.py",
     "test_k_def.py",
     "test_ros.py",
+    # the prop market: math, identity, the collector (the key is never
+    # logged) and the book ranking; the board renders in
+    # test_market_contender.py run with the full suite
+    "test_props.py",
+    "test_pull_props.py",
+    "test_odds_names.py",
+    "test_book_ranking.py",
+    "test_streaming.py",
 ]
 
 # Anti-vacuity floor: a glob typo must not silently shrink the smoke set.
