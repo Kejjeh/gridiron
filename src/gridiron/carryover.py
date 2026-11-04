@@ -517,6 +517,15 @@ INPUT_MAX_AGE_DAYS = 21
 #: sentence would reach the owner cut off in the middle of a word. Freshness
 #: prints it as "not refreshed", never as REFRESH FAILED: nothing was tried.
 CARRIED_FORWARD = ing.CARRIED_FORWARD
+#: Files beside the manifest that are not sources — the advanced model's
+#: inputs (gridiron.models.advanced.INPUT_DIR, a folder with its own
+#: meta.json) and the shadow projections (gridiron.shadow.SHADOW_FILE). Both
+#: gate nothing and refresh on their own clocks, so a run that cannot carry
+#: them refetches about nine nflverse files and loses the last-good copy a
+#: bad upstream day needs. They travel as SIDECARS: copied as they stand,
+#: laid down only into a cache that does not have them, never restamped.
+SIDECAR_DIR = "model_inputs"
+SIDECAR_FILES = ("shadow_projections.json",)
 
 
 #: The fields `ing.Entry` is built from. Read off the dataclass rather than
@@ -678,7 +687,9 @@ def publish_inputs(cache_dir: Path, store: Path, *, season: int,
                      f"another season's inputs are not this season's history"),))
 
     files = _cache_files(manifest)
-    total = manifest.path.stat().st_size + sum(p.stat().st_size for p in files.values())
+    sidecars = _sidecars(cache_dir)
+    total = (manifest.path.stat().st_size + sum(p.stat().st_size for p in files.values())
+             + sum(p.stat().st_size for p in sidecars))
     if len(files) > INPUT_MAX_FILES:
         return CarryoverReport("publish-inputs", season, (),
                                note=f"not carried: the cache holds {len(files)} "
@@ -732,6 +743,7 @@ def publish_inputs(cache_dir: Path, store: Path, *, season: int,
         except OSError as exc:
             verdicts.append(Verdict(PLAYER_MAP_LEDGER, False,
                                     f"could not be stored ({type(exc).__name__})"))
+    verdicts.extend(_publish_sidecars(cache_dir, target))
     # The manifest goes LAST. Until it lands, the stored directory has no
     # index and a concurrent restore reads nothing rather than half a cache.
     shutil.copy2(manifest.path, target / manifest.path.name)
@@ -739,7 +751,7 @@ def publish_inputs(cache_dir: Path, store: Path, *, season: int,
                             "stored; every as_of inside it is unchanged"))
     # Anything in the store the manifest no longer points at is a leftover
     # from a previous shape of the cache. Dropping it keeps the carry bounded.
-    keepers = {p.name for p in files.values()} | {manifest.path.name}
+    keepers = {p.name for p in files.values()} | {manifest.path.name} | set(SIDECAR_FILES)
     if carried_ledger:
         keepers.add(PLAYER_MAP_LEDGER)
     dropped = 0
@@ -749,6 +761,120 @@ def publish_inputs(cache_dir: Path, store: Path, *, season: int,
             dropped += 1
     note = f"dropped {dropped} file(s) the manifest no longer lists" if dropped else ""
     return CarryoverReport("publish-inputs", season, tuple(verdicts), note)
+
+
+def _sidecars(cache_dir: Path) -> list[Path]:
+    """Every sidecar file present beside a cache (the model-inputs folder's
+    files and the shadow projections)."""
+    out: list[Path] = []
+    folder = Path(cache_dir) / SIDECAR_DIR
+    if folder.is_dir():
+        out.extend(p for p in sorted(folder.iterdir()) if p.is_file())
+    for name in SIDECAR_FILES:
+        f = Path(cache_dir) / name
+        if f.is_file():
+            out.append(f)
+    return out
+
+
+def _publish_sidecars(cache_dir: Path, target: Path) -> list[Verdict]:
+    """Copy the sidecars into the store as they stand. The model-inputs folder
+    is replaced wholesale, so a stale file from an earlier shape of the folder
+    is never half of a new one."""
+    verdicts: list[Verdict] = []
+    folder = Path(cache_dir) / SIDECAR_DIR
+    dest = Path(target) / SIDECAR_DIR
+    if folder.is_dir() and any(p.is_file() for p in folder.iterdir()):
+        try:
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            shutil.copytree(folder, dest)
+            verdicts.append(Verdict(SIDECAR_DIR + "/", True,
+                                    "stored as the last-good model inputs, as fetched"))
+        except OSError as exc:
+            verdicts.append(Verdict(SIDECAR_DIR + "/", False,
+                                    f"could not be stored ({type(exc).__name__})"))
+    for name in SIDECAR_FILES:
+        f = Path(cache_dir) / name
+        if not f.is_file():
+            continue
+        try:
+            shutil.copy2(f, Path(target) / name)
+            verdicts.append(Verdict(name, True, "stored as the last-good copy, as fetched"))
+        except OSError as exc:
+            verdicts.append(Verdict(name, False, f"could not be stored ({type(exc).__name__})"))
+    return verdicts
+
+
+def _restore_sidecars(source: Path, cache_dir: Path, *, season: int, now: datetime,
+                      max_age_days: int) -> tuple[int, list[Verdict]]:
+    """Lay the carried sidecars into a cache that does not have them. The
+    model-inputs folder is accepted only when its meta.json names this season
+    and a fetch time that is neither in the future nor older than
+    `max_age_days`; the shadow file carries its own week and is read by
+    `gridiron.shadow.read_shadow`, which checks season and week itself."""
+    verdicts: list[Verdict] = []
+    laid = 0
+    src_dir = Path(source) / SIDECAR_DIR
+    dst_dir = Path(cache_dir) / SIDECAR_DIR
+    if src_dir.is_dir():
+        if dst_dir.exists():
+            verdicts.append(Verdict(SIDECAR_DIR + "/", False,
+                                    "this run already has its own model inputs; the "
+                                    "carried ones are not used"))
+        else:
+            why = _sidecar_meta_problem(src_dir / "meta.json", season=season, now=now,
+                                        max_age_days=max_age_days)
+            if why:
+                verdicts.append(Verdict(SIDECAR_DIR + "/", False, why))
+            else:
+                try:
+                    shutil.copytree(src_dir, dst_dir)
+                    laid += 1
+                    verdicts.append(Verdict(SIDECAR_DIR + "/", True,
+                                            "laid down as the last-good model inputs; their "
+                                            "own fetched_at stands and decides the refresh"))
+                except OSError as exc:
+                    verdicts.append(Verdict(SIDECAR_DIR + "/", False,
+                                            f"could not be laid down ({type(exc).__name__})"))
+    for name in SIDECAR_FILES:
+        src = Path(source) / name
+        if not src.is_file():
+            continue
+        dst = Path(cache_dir) / name
+        if dst.exists():
+            verdicts.append(Verdict(name, False, "this run already has its own copy; the "
+                                                 "carried one is not used"))
+            continue
+        try:
+            shutil.copy2(src, dst)
+            laid += 1
+            verdicts.append(Verdict(name, True, "laid down as the last-good copy; its own "
+                                                "stamp stands"))
+        except OSError as exc:
+            verdicts.append(Verdict(name, False, f"could not be laid down ({type(exc).__name__})"))
+    return laid, verdicts
+
+
+def _sidecar_meta_problem(meta_path: Path, *, season: int, now: datetime,
+                          max_age_days: int) -> str:
+    """Why a carried model-inputs folder is refused, or '' when it passes."""
+    try:
+        meta = json.loads(meta_path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return "the carried model inputs have no readable meta.json; refused"
+    if not isinstance(meta, dict) or _as_int(meta.get("season")) != _as_int(season):
+        return (f"the carried model inputs are season {meta.get('season')!r} if anything, "
+                f"not {season}; refused")
+    at = _as_utc(meta.get("fetched_at"))
+    if at is None:
+        return "the carried model inputs carry no fetched_at; refused"
+    if at > now + STAMP_TOLERANCE:
+        return "the carried model inputs are stamped in the future; refused"
+    if now - at > timedelta(days=max_age_days):
+        return (f"the carried model inputs are {(now - at).days} days old, past the "
+                f"{max_age_days}-day limit; refused")
+    return ""
 
 
 def inspect_inputs(store: Path, *, season: int, now: datetime,
@@ -966,9 +1092,13 @@ def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
                                 f"laid down as last-good {entry.name}, pulled "
                                 f"{entry.as_of}, marked NOT REFRESHED by this run"))
     verdicts.extend(_restore_ledger(source, cache_dir, now))
+    laid, side = _restore_sidecars(source, cache_dir, season=season, now=now,
+                                   max_age_days=max_age_days)
+    verdicts.extend(side)
     if not carried:
         return CarryoverReport("restore-inputs", season, tuple(verdicts),
-                               note="nothing was laid down")
+                               note=(f"no source was laid down; {laid} sidecar(s) were"
+                                     if laid else "nothing was laid down"))
     merged = dict(local.entries)
     merged.update(carried)
     ing.Manifest(cache_dir, merged, season).save()
@@ -976,4 +1106,5 @@ def restore_inputs(store: Path, cache_dir: Path, *, season: int, now: datetime,
         "restore-inputs", season, tuple(verdicts),
         note=f"{len(carried)} source(s) laid down from the last good run and "
              f"marked NOT REFRESHED; the page will date them to when they were "
-             f"pulled and withhold every action resting on them")
+             f"pulled and withhold every action resting on them"
+             + (f"; {laid} sidecar(s) laid down with their own stamps" if laid else ""))

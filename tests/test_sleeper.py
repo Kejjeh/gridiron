@@ -70,6 +70,36 @@ def test_fetch_is_injectable_so_the_adapter_runs_offline(league_snapshot):
     assert all(url.startswith(S.BASE) for url in calls)
 
 
+def test_transactions_ride_in_the_snapshot_and_a_failure_never_loses_it(league_snapshot):
+    tx = [{"transaction_id": "t1", "type": "free_agent", "status": "complete",
+           "drops": {"501": 3}, "adds": None, "status_updated": 1, "metadata": {"x": 1}}]
+
+    def fake(url: str, fail: bool = False):
+        if url.endswith("/state/nfl"):
+            return league_snapshot["state"]
+        if url.endswith("/rosters"):
+            return league_snapshot["rosters"]
+        if url.endswith("/users"):
+            return league_snapshot["users"]
+        if "/matchups/" in url:
+            return league_snapshot["matchups"]
+        if "/transactions/" in url:
+            if fail:
+                raise OSError("boom")
+            return tx
+        return league_snapshot["league"]
+
+    snap = S.SleeperReadOnly("L1", fetch=fake).snapshot()
+    block = snap["transactions"]
+    assert block["weeks"] == [1, 2, 3] and block["error"] == ""
+    # the leg advances at Wednesday's run, a day after state.week: read around it
+    assert S.SleeperReadOnly("L1", fetch=fake).recent_transactions(7)["weeks"] == [5, 6, 7, 8]
+    assert block["rows"][0]["drops"] == {"501": 3} and "metadata" not in block["rows"][0]
+    snap = S.SleeperReadOnly("L1", fetch=lambda u: fake(u, fail=True)).snapshot()
+    assert snap["rosters"] and snap["transactions"]["rows"] == []
+    assert "OSError" in snap["transactions"]["error"]
+
+
 def test_a_missing_endpoint_degrades_to_empty_not_a_crash():
     client = S.SleeperReadOnly("L1", fetch=lambda url: None)
     assert client.rosters() == [] and client.league() == {} and client.players() == {}
@@ -148,3 +178,15 @@ def test_league_id_resolution_prefers_the_environment(monkeypatch):
 def test_no_credential_is_read_anywhere_in_the_adapter():
     """Sleeper's read API needs no auth; a cookie here would be a smell."""
     assert not re.search(r"espn_s2|swid|cookie|api_key|token", SOURCE, re.I)
+
+
+def test_find_owner_id_is_id_first_and_refuses_an_ambiguous_name():
+    from gridiron.sleeper import find_owner_id
+    snap = {"users": [{"user_id": "1", "display_name": "Josh"},
+                      {"user_id": "2", "display_name": "josh"},
+                      {"user_id": "3", "display_name": "Dana"}]}
+    assert find_owner_id(snap, "3") == "3"                       # an id wins outright
+    assert find_owner_id(snap, "dana") == "3"                    # one exact name, any case
+    assert find_owner_id(snap, "Josh") is None                   # two users share it: nobody
+    assert find_owner_id(snap, "") is None and find_owner_id({}, "Dana") is None
+    assert find_owner_id({"users": [None, "x"]}, "Dana") is None  # junk rows are skipped

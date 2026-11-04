@@ -144,7 +144,9 @@ def read_shadow(directory: Path, *, season: int, week: int) -> dict | None:
     players = blob.get("players")
     if not isinstance(players, Mapping):
         return None
-    clean = {normalize_id(k): {"points": _num(v.get("points"))}
+    clean = {normalize_id(k): {"points": _num(v.get("points")),
+                               **({"position": v["position"]}
+                                  if v.get("position") in POSITIONS else {})}
              for k, v in players.items() if isinstance(v, Mapping)}
     blob["players"] = {k: v for k, v in clean.items()
                        if k and v["points"] is not None}

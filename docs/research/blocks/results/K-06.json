@@ -1,0 +1,215 @@
+{
+ "block": "K-06",
+ "title": "Long field goals: his team's share of attempts from 50+ over the league (season to date, prior season), and his makes over expected by distance (slow prior)",
+ "columns": {
+  "K": [
+   "fg50_share_oe",
+   "fg50_share_prior_oe",
+   "k_fg_oe"
+  ]
+ },
+ "model_columns": {
+  "K": [
+   "fg50_share_oe",
+   "fg50_share_prior_oe",
+   "k_fg_oe"
+  ]
+ },
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "coverage": {
+  "K": {
+   "fg50_share_oe": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "fg50_share_prior_oe": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   },
+   "k_fg_oe": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   }
+  }
+ },
+ "folds": {
+  "2019": {
+   "K": {
+    "pairs": 3941,
+    "rows": 349,
+    "sleeper": {
+     "pairwise": 0.551129,
+     "mae": 3.3419
+    },
+    "shipped": {
+     "pairwise": 0.553159,
+     "mae": 3.3312
+    },
+    "block": {
+     "pairwise": 0.548845,
+     "mae": 3.3447
+    }
+   }
+  },
+  "2020": {
+   "K": {
+    "pairs": 5011,
+    "rows": 393,
+    "sleeper": {
+     "pairwise": 0.512073,
+     "mae": 3.6825
+    },
+    "shipped": {
+     "pairwise": 0.580323,
+     "mae": 3.5705
+    },
+    "block": {
+     "pairwise": 0.574336,
+     "mae": 3.5754
+    }
+   }
+  },
+  "2021": {
+   "K": {
+    "pairs": 5487,
+    "rows": 424,
+    "sleeper": {
+     "pairwise": 0.551485,
+     "mae": 3.5946
+    },
+    "shipped": {
+     "pairwise": 0.56643,
+     "mae": 3.5481
+    },
+    "block": {
+     "pairwise": 0.556224,
+     "mae": 3.581
+    }
+   }
+  },
+  "2022": {
+   "K": {
+    "pairs": 5602,
+    "rows": 430,
+    "sleeper": {
+     "pairwise": 0.540521,
+     "mae": 3.4999
+    },
+    "shipped": {
+     "pairwise": 0.536594,
+     "mae": 3.5074
+    },
+    "block": {
+     "pairwise": 0.546948,
+     "mae": 3.5025
+    }
+   }
+  },
+  "2023": {
+   "K": {
+    "pairs": 5764,
+    "rows": 435,
+    "sleeper": {
+     "pairwise": 0.540597,
+     "mae": 3.6101
+    },
+    "shipped": {
+     "pairwise": 0.553262,
+     "mae": 3.6442
+    },
+    "block": {
+     "pairwise": 0.559334,
+     "mae": 3.6284
+    }
+   }
+  },
+  "2024": {
+   "K": {
+    "pairs": 5706,
+    "rows": 433,
+    "sleeper": {
+     "pairwise": 0.532597,
+     "mae": 3.8065
+    },
+    "shipped": {
+     "pairwise": 0.582369,
+     "mae": 3.7214
+    },
+    "block": {
+     "pairwise": 0.585349,
+     "mae": 3.711
+    }
+   }
+  },
+  "2025": {
+   "K": {
+    "pairs": 5526,
+    "rows": 427,
+    "sleeper": {
+     "pairwise": 0.541621,
+     "mae": 3.8593
+    },
+    "shipped": {
+     "pairwise": 0.573109,
+     "mae": 3.8102
+    },
+    "block": {
+     "pairwise": 0.583786,
+     "mae": 3.7877
+    }
+   }
+  }
+ },
+ "verdict": {
+  "positions": {
+   "K": {
+    "folds_better_on_both": 4,
+    "folds": 7,
+    "passes": false,
+    "mean_pairwise_delta": 0.001368,
+    "mean_mae_delta": -0.0003
+   }
+  },
+  "pooled_not_worse_every_fold": true
+ },
+ "passed": [],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "f6ba73b2e77d",
+ "module_blob": "1ee6f3dd3226",
+ "helpers_blob": "bddbdc05d170",
+ "head": "3e72bd3a5329",
+ "run_at": "2026-11-02T04:20:13+00:00"
+}

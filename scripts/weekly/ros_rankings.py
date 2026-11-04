@@ -1,13 +1,19 @@
 """ros_rankings.py — rest-of-season rankings for every position, with who holds whom.
 
     PYTHONPATH=src python scripts/weekly/ros_rankings.py [--week 4] [--nflverse]
-        [--top 40] [--out data/outputs/review/]
+        [--top 40] [--stream 12-14] [--out data/outputs/review/]
 
 Ranks every QB, RB, WR, TE, K and team defense by projected league points
 from `--week` through week 17 (`gridiron.ros`), with the playoff weeks
 (15-17) on their own, and marks each player MINE, FA, or the manager who
 holds him. Writes `ros_weekNN.md` and `ros_weekNN.csv` to `--out`
 (data/outputs/review/, gitignored — they name the owner's players, rule #10).
+
+The markdown also carries a `## Streaming plan` (`gridiron.streaming`,
+roadmap TE-09, K-13, DEF-13): TE, K and DEF week by week over `--stream`
+(default: the first week and the next two) — my best option or why there is
+none (BYE, OUT, UNKNOWN), the top free agents, and hold vs stream. The same
+ROS lines, no new number; planning, not a move.
 
 Inputs:
   default     the season cache only (offline): box scores, snaps, schedule,
@@ -21,25 +27,31 @@ Inputs:
 What it is not: a trade chart. A ROS number is points, not ΔP(win) (rule
 #7) — a start/sit or add still goes through the page. Injury: a player
 ruled Out for `--week` on the official injury report is credited 0 that
-week only; IR and longer absences are FLAGGED from the player map, never
-guessed into the number (rule #11).
+week only; a player on a reserve list per the official weekly roster is 0
+for the first four games of the stint (the NFL minimum) and FLAGGED after;
+the player map's IR tag and longer absences are flags, never guessed into
+the number (rule #11).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+import traceback
+from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd
 
 from gridiron import ingest as ing
 from gridiron import ros as R
+from gridiron import streaming as S
 from gridiron.ids import Crosswalk, nflverse_team, sleeper_gsis_overlay
 from gridiron.league_config import MY_SLEEPER_USERNAME, SEASON_YEAR
 from gridiron.models import advanced as A
 from gridiron.paths import OUTPUTS
 from gridiron.usage import player_weeks
+from gridiron.sleeper import find_owner_id
 
 OUT_DIR = OUTPUTS / "review"
 POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
@@ -48,12 +60,6 @@ POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
 DEPTH = {"QB": 30, "RB": 60, "WR": 72, "TE": 30, "K": 24, "DEF": 32}
 
 
-def find_owner_id(snapshot: dict, owner: str) -> str | None:
-    for u in snapshot.get("users") or []:
-        if str(u.get("user_id")) == str(owner) \
-                or str(u.get("display_name") or "").lower() == str(owner).lower():
-            return str(u.get("user_id"))
-    return None
 
 
 def load_cache(directory: Path, season: int) -> dict:
@@ -100,15 +106,47 @@ def out_for_week(injuries: pd.DataFrame | None, players: dict, crosswalk: Crossw
     return out, flag
 
 
+def stream_weeks(text: str) -> tuple[int, ...]:
+    """`--stream` weeks: "14", "12-14" or "12,14"."""
+    out: list[int] = []
+    for part in str(text).split(","):
+        lo, sep, hi = part.strip().partition("-")
+        try:
+            a = int(lo)
+            b = int(hi) if sep else a
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"weeks as 14, 12-14 or 12,14 — not {text!r}") from None
+        if b < a:
+            raise argparse.ArgumentTypeError(f"an empty week range: {part.strip()!r}")
+        out.extend(range(a, b + 1))
+    return tuple(out)
+
+
+def streaming_section(table: pd.DataFrame, weeks: Sequence[int] | None = None) -> list[str]:
+    """The `## Streaming plan` lines (`gridiron.streaming`). A failure is
+    reported in the section, never raised: the rankings still get written."""
+    try:
+        lines = S.markdown(S.build(table, weeks=weeks))
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[ros] streaming plan failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return ["## Streaming plan", "", f"Not built: {type(exc).__name__}: {exc}.", ""]
+    return lines + ["Other weeks: `--stream 12-14` (default: this table's first week and "
+                    "the next two).", ""]
+
+
 def render(table: pd.DataFrame, *, week: int, status: str, depth: dict,
-           built_from: str) -> str:
+           built_from: str, stream: Sequence[str] = ()) -> str:
     lines = [f"# Rest-of-season rankings — from week {week} through week {R.HORIZON_END}",
              "", f"Weekly rates: {status}.", f"Inputs: {built_from}.",
              f"ROS = projected league points over the games left (byes from the "
              f"schedule); playoffs = weeks {R.PLAYOFF_WEEKS[0]}-{R.PLAYOFF_WEEKS[-1]}. "
              "Points, not ΔP(win) — a lineup call still goes through the page. "
-             "Out this week = 0 this week only; IR / longer absences are flagged, "
-             "never guessed. `depth N` = not first on the depth chart before the week: "
+             "Out this week = 0 this week only; a reserve-list stint on the weekly "
+             f"roster = 0 for its first {R.IR_MIN_GAMES} games (the NFL minimum) and a flag "
+             "after that; the player map's IR tag is a flag only. `depth N` = not first on "
+             "the depth chart before the week: "
              "the number assumes he keeps playing — a shared or lost job is flagged, "
              "not priced.", ""]
     mine = table.loc[table["held_by"] == "MINE"].sort_values(["position", "pos_rank"])
@@ -125,6 +163,7 @@ def render(table: pd.DataFrame, *, week: int, status: str, depth: dict,
                 + (f"{best['name']} #{best['pos_rank']} ({best['ros']:.1f})" if best is not None
                    else "—") + " |")
         lines.append("")
+    lines += list(stream)
     for pos in POSITIONS:
         g = table.loc[table["position"] == pos].head(depth.get(pos, 40))
         if len(g) == 0:
@@ -142,13 +181,7 @@ def render(table: pd.DataFrame, *, week: int, status: str, depth: dict,
 
 
 def _flag(r) -> str:
-    bits = []
-    st = str(r.get("injury") or "").upper()
-    if st and st != "NAN":
-        bits.append(st)
-    dr = r.get("depth_rank")
-    if dr == dr and dr is not None and int(dr) > 1:
-        bits.append(f"depth {int(dr)}")
+    bits = S.row_flags(r)        # one wording for the tables and the streaming plan
     return f" ({'; '.join(bits)})" if bits else ""
 
 
@@ -164,6 +197,9 @@ def main(argv=None) -> int:
     ap.add_argument("--nflverse", action="store_true",
                     help="stats, schedule, injuries and model inputs from nflverse")
     ap.add_argument("--top", type=int, default=None, help="rows per position")
+    ap.add_argument("--stream", type=stream_weeks, default=None, metavar="WEEKS",
+                    help="weeks of the TE/K/DEF streaming plan: 14, 12-14 or 12,14 "
+                         "(default: the first week and the next two)")
     ap.add_argument("--out", type=Path, default=OUT_DIR)
     ap.add_argument("--print", action="store_true", help="also print the tables")
     args = ap.parse_args(argv)
@@ -207,7 +243,8 @@ def main(argv=None) -> int:
     out_ids, flags = out_for_week(cache["injuries"], players, crosswalk, week)
     table, status = R.build_table(weeks=weeks, schedule=cache["schedule"],
                                   injuries=cache["injuries"], inputs=cache["inputs"],
-                                  week=week, positions=positions, teams=teams, out=out_ids)
+                                  week=week, positions=positions, teams=teams, out=out_ids,
+                                  reserve=(cache["inputs"] or {}).get("reserve"))
     if len(table) == 0:
         print(f"Nothing to rank: {status}", file=sys.stderr)
         return 2
@@ -217,7 +254,8 @@ def main(argv=None) -> int:
     depth = {p: args.top for p in POSITIONS} if args.top else DEPTH
     if pm_at:
         built_from += f"; player map (ids, teams, injury flags) as of {pm_at}"
-    md = render(table, week=week, status=status, depth=depth, built_from=built_from)
+    md = render(table, week=week, status=status, depth=depth, built_from=built_from,
+                stream=streaming_section(table, args.stream))
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / f"ros_week{week:02d}.md").write_text(md, encoding="utf-8")
     table.drop(columns=["weeks"]).to_csv(args.out / f"ros_week{week:02d}.csv", index=False)

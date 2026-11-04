@@ -68,3 +68,16 @@ def league_snapshot() -> dict:
 def sleeper_players() -> dict:
     return json.loads(
         (FIXTURES / "sleeper_players_small.json").read_text(encoding="utf-8"))
+
+
+@pytest.fixture(autouse=True)
+def _no_shipped_pwin_calibration(monkeypatch, tmp_path_factory):
+    """Synthetic boards are tested against the raw closed form: the shipped
+    P(win) calibration (src/gridiron/models/pwin_calibration.json) is real
+    evidence about real leagues, not about fixtures. A test that wants a
+    calibration writes its own file and points `CALIBRATION_PATH` at it;
+    tests/test_pwin_calibration.py checks the shipped file directly."""
+    from gridiron import winprob
+
+    missing = tmp_path_factory.getbasetemp() / "no_pwin_calibration.json"
+    monkeypatch.setattr(winprob, "CALIBRATION_PATH", missing)

@@ -87,6 +87,13 @@ _HARNESS = r"""<!doctype html><html><head><meta charset="utf-8"><title>check</ti
       // the meta refresh navigates the frame once more
       var t0 = Date.now();
       while (Date.now() - t0 < 4000 && !/gameday_latest\.html$/.test(f.contentWindow.location.pathname)) await wait(50);
+      // The path flips when the new document COMMITS, before its scripts
+      // run; reading the page's API then raced a slow runner. Wait for the
+      // load to finish and the script's API to appear (a script that never
+      // runs still fails below, after the wait).
+      var t2 = Date.now();
+      while (Date.now() - t2 < 10000 && (f.contentDocument.readyState !== 'complete'
+             || !f.contentWindow.gridironGameDay)) await wait(50);
       var doc = f.contentDocument;
       R.steps.push({page: 'root', landed: f.contentWindow.location.pathname, title: doc.title,
         fit: fit(doc), links: links(doc)});

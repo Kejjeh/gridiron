@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import json
 import shutil
 import sys
@@ -65,22 +66,48 @@ FIELDS = ("season", "week", "archive", "archive_built", "graded", "ungradeable",
           "shootout_n", "shootout_pairs",
           "page_pairwise", "baseline_v1_pairwise", "sleeper_pairwise", "blend_pairwise",
           "stack_pairwise", "page_mae", "baseline_v1_mae", "sleeper_mae", "blend_mae",
-          "stack_mae",
+          "stack_mae", "adv_v1_pairwise", "adv_v1_mae",
+          # the prop market (record-only), scored on the players it covers;
+          # mkt_* are the page and Sleeper on exactly those players
+          "market_v1_pairwise", "market_v1_mae", "mkt_n", "mkt_pairs",
+          "mkt_page_pairwise", "mkt_page_mae", "mkt_sleeper_pairwise", "mkt_sleeper_mae",
           # kickers and team defenses, graded apart (their points never
           # share a scale with a receiver's): pairs within the position
           "k_n", "k_pairs", "k_page_pairwise", "k_baseline_v1_pairwise",
           "k_sleeper_pairwise", "k_stack_pairwise",
+          "k_mkt_n", "k_mkt_pairs", "k_mkt_page_pairwise", "k_mkt_sleeper_pairwise",
+          "k_mkt_market_v1_pairwise",
           "def_n", "def_pairs", "def_page_pairwise", "def_sleeper_pairwise",
-          "def_stack_pairwise", "graded_at")
+          "def_stack_pairwise",
+          # P(win) on every league matchup the board recorded (counts and
+          # means only): the live check of the calibration
+          "pwin_n", "pwin_brier", "pwin_logloss", "pwin_raw_brier", "pwin_raw_logloss",
+          "pwin_fav_stated", "pwin_fav_won",
+          "graded_at")
+#: The P(win) ledger columns, in FIELDS order.
+PWIN_FIELDS = ("pwin_n", "pwin_brier", "pwin_logloss", "pwin_raw_brier", "pwin_raw_logloss",
+               "pwin_fav_stated", "pwin_fav_won")
 
 #: The systems the weekly shoot-out scores on identical players:
-#:   page         the projection the page used (advanced_v1 when it ran)
+#:   page         the projection the page used (stack_v1 where Sleeper's
+#:                pre-kickoff number was in, advanced_v1 otherwise)
 #:   baseline_v1  the model before advanced stats (record `contenders`)
+#:   adv_v1       advanced_v1 alone, no outside number (record `contenders`;
+#:                boards before 2026-10-15 carry it only as `page`)
 #:   sleeper      Sleeper's pre-kickoff projection (record `shadow`)
 #:   blend        (page + sleeper) / 2
 #:   stack        advanced + Sleeper (record `contenders`)
+#:   market_v1    the player-prop market, record-only (record `contenders`;
+#:                boards from 2026-11-02 with a derived prop file)
 #: A system an archive does not carry is simply absent from that week.
-SYSTEMS = ("page", "baseline_v1", "sleeper", "blend", "stack")
+#: market_v1 covers only players with props, so it is NOT required of every
+#: player in the main shoot-out (that would shrink the page's own grade to
+#: the market's players); it is scored in a second pass on the players it
+#: covers, with the page and Sleeper on exactly those players (`mkt_*`).
+SYSTEMS = ("page", "baseline_v1", "adv_v1", "sleeper", "blend", "stack", "market_v1")
+MARKET = "market_v1"
+#: Contenders the main shoot-out requires of every scored player when present.
+MAIN_CONTENDERS = ("baseline_v1", "adv_v1", "stack")
 #: Pairs are formed only among players the shadow projected at least this
 #: high — the same "fantasy-relevant" cut as the 2025 backtest.
 SHOOTOUT_MIN = 5.0
@@ -116,7 +143,11 @@ def week_archives(root: Path, season: int, week: int) -> list[tuple[datetime, Pa
         stamp = archive_stamp(path)
         try:
             blob = read_archive(path)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            # Said, not skipped in silence: grading a different archive than
+            # the one the page froze would weaken rule #7 without a trace.
+            print(f"[grade] archive {path.name} not readable ({type(exc).__name__}: {exc}); "
+                  f"skipped", file=sys.stderr)
             continue
         if stamp is not None and int(blob.get("week") or -1) == week:
             out.append((stamp, path, blob))
@@ -194,9 +225,60 @@ def actual_key(p: Mapping[str, object]) -> str:
     return str(p.get("gsis_id") or "")
 
 
+def league_pwin(archive: Mapping[str, object],
+                actuals: Mapping[str, float]) -> dict | None:
+    """Every league matchup the board recorded with a P(win), scored by what
+    its recorded starters actually put up (`actuals`, league points; a
+    starter with no stat line scored 0, which is what a lineup gets from a
+    player who did not play).
+
+    The starters are the ones set when the board was built, so this grades
+    the FORMULA on those lineups, not the league's final result after later
+    lineup changes. A matchup is skipped when a starter has no key (an
+    unresolved id) or the two totals tie. None when the board recorded no
+    league matchups (boards before 2026-10-15)."""
+    rows = archive.get("league_matchups")
+    if not isinstance(rows, list) or not rows:
+        return None
+    eps = 1e-6
+    n = skipped = fav_won = 0
+    brier = logloss = raw_brier = raw_logloss = fav_stated = 0.0
+    for m in rows:
+        if not isinstance(m, Mapping):
+            skipped += 1
+            continue
+        p, raw = m.get("pwin"), m.get("pwin_raw")
+        sides = m.get("starters")
+        if p is None or raw is None or not isinstance(sides, list) or len(sides) != 2 \
+                or any(not (s or {}).get("key") for side in sides for s in side):
+            skipped += 1
+            continue
+        totals = [sum(float(actuals.get(str(s["key"]), 0.0)) for s in side) for side in sides]
+        if totals[0] == totals[1]:
+            skipped += 1
+            continue
+        y = 1.0 if totals[0] > totals[1] else 0.0
+        p, raw = float(p), float(raw)
+        n += 1
+        brier += (p - y) ** 2
+        raw_brier += (raw - y) ** 2
+        logloss -= math.log(min(max(p if y else 1 - p, eps), 1 - eps))
+        raw_logloss -= math.log(min(max(raw if y else 1 - raw, eps), 1 - eps))
+        fav = max(p, 1 - p)
+        fav_stated += fav
+        fav_won += int((p >= 0.5) == bool(y))
+    if not n:
+        return {"pwin_n": 0, "skipped": skipped}
+    return {"pwin_n": n, "pwin_brier": round(brier / n, 4), "pwin_logloss": round(logloss / n, 4),
+            "pwin_raw_brier": round(raw_brier / n, 4),
+            "pwin_raw_logloss": round(raw_logloss / n, 4),
+            "pwin_fav_stated": round(fav_stated / n, 4), "pwin_fav_won": fav_won,
+            "skipped": skipped}
+
+
 def shootout(archive: Mapping[str, object], actuals: Mapping[str, float], *,
              min_proj: float = SHOOTOUT_MIN,
-             positions: Sequence[str] = SKILL) -> dict | None:
+             positions: Sequence[str] = SKILL, market: bool = False) -> dict | None:
     """Every system the archive carries, on the SAME players, against actual
     points: MAE, and the start/sit success rate — over every pair at one
     position (both Sleeper-projected >= `min_proj`, actuals not tied), the
@@ -204,7 +286,12 @@ def shootout(archive: Mapping[str, object], actuals: Mapping[str, float], *,
 
     Scored players: Sleeper number captured before their kickoff, a page
     projection that was not withheld, an actual, and a number from every
-    system present. Returns None when the archive carries no shadow."""
+    system present. Returns None when the archive carries no shadow.
+
+    `market=True` is the market pass: the same scoring with `market_v1`
+    required too, so it runs on the players the market covers (None when the
+    archive carries no market number for this group). The main pass never
+    requires it."""
     shadow = archive.get("shadow") or {}
     sp = shadow.get("players") if isinstance(shadow, Mapping) else None
     if not sp:
@@ -217,10 +304,14 @@ def shootout(archive: Mapping[str, object], actuals: Mapping[str, float], *,
     cont = archive.get("contenders") or {}
     # a contender joins when it covers this position group at all (the old
     # baseline never projected a team defense, so it sits DEF out)
-    extra = {k: cont.get(k) or {} for k in ("baseline_v1", "stack")
-             if isinstance(cont, Mapping) and group & set(cont.get(k) or {})}
-    systems = ["page"] + [k for k in ("baseline_v1",) if k in extra] + ["sleeper", "blend"] \
-        + [k for k in ("stack",) if k in extra]
+    wanted = MAIN_CONTENDERS + ((MARKET,) if market else ())
+    extra = {k: cont.get(k) or {} for k in wanted
+             if isinstance(cont, Mapping) and isinstance(cont.get(k), Mapping)
+             and group & set(cont.get(k) or {})}
+    if market and MARKET not in extra:
+        return None
+    systems = ["page"] + [k for k in ("baseline_v1", "adv_v1") if k in extra] \
+        + ["sleeper", "blend"] + [k for k in ("stack", MARKET) if k in extra]
     rows, seen = [], set()
     for sid, p in people:
         sid = str(sid or "")
@@ -275,15 +366,51 @@ def special_shootouts(archive: Mapping[str, object],
     return out
 
 
+def market_shootouts(archive: Mapping[str, object],
+                     actuals: Mapping[str, float]) -> dict[str, dict]:
+    """The market passes: skill positions together and kickers apart (team
+    defenses have no market contender). Empty when the board carried none."""
+    out = {}
+    skill = shootout(archive, actuals, market=True)
+    if skill:
+        out["skill"] = skill
+    k = shootout(archive, actuals, min_proj=0.0, positions=SPECIAL["k"], market=True)
+    if k:
+        out["k"] = k
+    return out
+
+
+def market_fields(market: Mapping[str, Mapping[str, object]] | None) -> dict[str, object]:
+    """The ledger's market columns from `market_shootouts` ('' when absent)."""
+    skill = (market or {}).get("skill") or {}
+    k = (market or {}).get("k") or {}
+
+    def val(blob, key):
+        v = blob.get(key)
+        return "" if v is None else v
+    return {"market_v1_pairwise": val(skill, "market_v1_pairwise"),
+            "market_v1_mae": val(skill, "market_v1_mae"),
+            "mkt_n": val(skill, "n"), "mkt_pairs": val(skill, "pairs"),
+            "mkt_page_pairwise": val(skill, "page_pairwise"), "mkt_page_mae": val(skill, "page_mae"),
+            "mkt_sleeper_pairwise": val(skill, "sleeper_pairwise"),
+            "mkt_sleeper_mae": val(skill, "sleeper_mae"),
+            "k_mkt_n": val(k, "n"), "k_mkt_pairs": val(k, "pairs"),
+            "k_mkt_page_pairwise": val(k, "page_pairwise"),
+            "k_mkt_sleeper_pairwise": val(k, "sleeper_pairwise"),
+            "k_mkt_market_v1_pairwise": val(k, "market_v1_pairwise")}
+
+
 def aggregate(grade: Grade, season: int, archive: Path, built: datetime,
               shoot: Mapping[str, object] | None = None,
-              special: Mapping[str, Mapping[str, object]] | None = None) -> dict:
+              special: Mapping[str, Mapping[str, object]] | None = None,
+              league: Mapping[str, object] | None = None,
+              market: Mapping[str, Mapping[str, object]] | None = None) -> dict:
     agree, n = grade.agreement()
     d_agree, d_n = direction(grade)
     extra = {}
     for f in FIELDS:
         g, _, key = f.partition("_")
-        if g in SPECIAL and key:
+        if g in SPECIAL and key and not key.startswith("mkt_"):
             v = ((special or {}).get(g) or {}).get(key)
             extra[f] = "" if v is None else v
     return {"season": season, "week": grade.week, "archive": archive.name,
@@ -298,8 +425,11 @@ def aggregate(grade: Grade, season: int, archive: Path, built: datetime,
             "shootout_n": (shoot or {}).get("n", ""),
             "shootout_pairs": (shoot or {}).get("pairs", ""),
             **{f"{s}_{m}": "" if (shoot or {}).get(f"{s}_{m}") is None
-               else shoot[f"{s}_{m}"] for s in SYSTEMS for m in ("pairwise", "mae")},
+               else shoot[f"{s}_{m}"] for s in SYSTEMS if s != MARKET
+               for m in ("pairwise", "mae")},
             **extra,
+            **market_fields(market),
+            **{f: "" if (league or {}).get(f) is None else league[f] for f in PWIN_FIELDS},
             "graded_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
 
@@ -347,6 +477,8 @@ def shootout_line(rows: Sequence[Mapping[str, object]]) -> str:
     pairs = sum(int(r["shootout_pairs"]) for r in done)
     rate = {}
     for sname in SYSTEMS:
+        if sname == MARKET:
+            continue                     # its own players and pairs: the clause below
         have = [r for r in done if str(r.get(f"{sname}_pairwise") or "") not in ("", "None")]
         n = sum(int(r["shootout_pairs"]) for r in have)
         if n:
@@ -354,6 +486,18 @@ def shootout_line(rows: Sequence[Mapping[str, object]]) -> str:
                               for r in have) / n
     line = ("; start/sit shoot-out over " + f"{pairs} pairs in {len(done)} week(s): "
             + ", ".join(f"{k} {v:.1%}" for k, v in rate.items()))
+    mk = [r for r in rows if str(r.get("mkt_pairs") or "0") not in ("", "0")]
+    if mk:
+        n = sum(int(r["mkt_pairs"]) for r in mk)
+        parts = []
+        for label, col in ((MARKET, "market_v1_pairwise"), ("page", "mkt_page_pairwise"),
+                           ("sleeper", "mkt_sleeper_pairwise")):
+            got = [r for r in mk if str(r.get(col) or "") not in ("", "None")]
+            k = sum(int(r["mkt_pairs"]) for r in got)
+            if k:
+                parts.append(f"{label} {sum(float(r[col]) * int(r['mkt_pairs']) for r in got) / k:.1%}")
+        line += (f"; {MARKET} (record-only) on the {n} pairs it covers in {len(mk)} week(s): "
+                 + ", ".join(parts))
     for g in SPECIAL:
         have = [r for r in rows if str(r.get(f"{g}_pairs") or "0") not in ("", "0")]
         if not have:
@@ -478,14 +622,21 @@ def run_finished(args: argparse.Namespace) -> int:
         grade = grade_archive(archive, actuals, observed={})
         shoot = shootout(archive, actuals)
         special = special_shootouts(archive, actuals)
+        market = market_shootouts(archive, actuals)
+        league = league_pwin(archive, actuals)
         d_agree, d_n = direction(grade)
         agree, n = grade.agreement()
+        mk = market.get("skill") or {}
         print(f"[grade] week {week}: graded the board built {built.isoformat()}: "
               f"{sum(1 for c in grade.comparisons if c.status == 'graded')} comparison(s), "
               f"direction {d_agree}/{d_n}, endorsed {agree}/{n}"
-              + (f", shoot-out {shoot['pairs']} pair(s)" if shoot and shoot.get("pairs") else ""))
+              + (f", shoot-out {shoot['pairs']} pair(s)" if shoot and shoot.get("pairs") else "")
+              + (f", {MARKET} on {mk['pairs']} pair(s)" if mk.get("pairs") else "")
+              + (f", P(win) on {league['pwin_n']} league matchup(s)" if league and league.get("pwin_n")
+                 else ""))
         if not args.no_save:
-            rows = upsert(ledger_path, aggregate(grade, season, pin, built, shoot, special))
+            rows = upsert(ledger_path, aggregate(grade, season, pin, built, shoot, special, league,
+                                                 market))
     if rows:
         t = grading.report_card(rows, season).totals()
         print(f"[grade] season to date over {t['weeks']} graded week(s): projection direction "
@@ -581,6 +732,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print("shoot-out: this archive carries no pre-kickoff shadow projections\n")
     special = special_shootouts(archive, actuals)
+    market = market_shootouts(archive, actuals)
+    for g, res in market.items():
+        if res.get("pairs"):
+            print(f"{MARKET} (record-only) on the {res['n']} {'skill' if g == 'skill' else 'K'} "
+                  f"player(s) / {res['pairs']} pairs it covers: "
+                  + ", ".join(f"{s} {res[f'{s}_pairwise']:.1%}" for s in res["systems"]))
+    league = league_pwin(archive, actuals)
+    if league and league.get("pwin_n"):
+        print(f"P(win) on {league['pwin_n']} league matchup(s): favourites given "
+              f"{league['pwin_fav_stated']:.0%} on average won {league['pwin_fav_won']}; "
+              f"Brier {league['pwin_brier']:.3f} (raw formula {league['pwin_raw_brier']:.3f}), "
+              f"log loss {league['pwin_logloss']:.3f} ({league['pwin_raw_logloss']:.3f})")
+    elif league is None:
+        print("P(win): this board recorded no league matchups (boards before 2026-10-15)")
     for g, res in special.items():
         if res.get("pairs"):
             print(f"{g.upper()} shoot-out on {res['n']} / {res['pairs']} pairs: "
@@ -590,7 +755,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"- {n}")
     if not args.no_save:
         rows = upsert(args.grades_dir / f"season{season}.csv",
-                      aggregate(grade, season, path, built, shoot, special))
+                      aggregate(grade, season, path, built, shoot, special, league, market))
         print(f"\n{season_line(rows)}")
         print(f"[grade] saved to {args.grades_dir / f'season{season}.csv'}", file=sys.stderr)
     return 0

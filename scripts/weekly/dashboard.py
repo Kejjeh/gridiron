@@ -11,7 +11,9 @@ any number, and ABSTAINS — per row, per section — wherever the inputs
 cannot support a number.
 
 The projections are the rule #5 BASELINE and are labelled so on the page.
-P(win) is the closed form from gridiron.winprob, labelled UNCALIBRATED.
+P(win) is the closed form from gridiron.winprob under its tested calibration:
+CALIBRATED (a tested factor applied), TESTED (tested, no factor needed), or
+UNCALIBRATED when nothing tested is on file.
 """
 from __future__ import annotations
 
@@ -19,12 +21,13 @@ import argparse
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 
 from gridiron import ingest as ing
+from gridiron import props
 from gridiron import ros
 from gridiron.dashboard import build_dashboard
 from gridiron.freshness import WeekContext
@@ -37,7 +40,7 @@ from gridiron.scoring import ScoringCoverage, scoring_coverage
 from gridiron.models import advanced as adv_model
 from gridiron.shadow import read_shadow
 from gridiron.usage import player_weeks, weeks_present
-from gridiron.sleeper import player_map_status_note
+from gridiron.sleeper import find_owner_id, player_map_status_note
 
 #: Every source this dashboard READS (same rule as report.py: if a value
 #: from a source reaches the page, its as-of line is on the page).
@@ -107,6 +110,26 @@ def kickoffs_for(schedule: pd.DataFrame | None, week: int) -> list[datetime]:
 ROS_DEPTH = {"QB": 30, "RB": 60, "WR": 72, "TE": 30, "K": 24, "DEF": 32}
 
 
+def watch_reserve(inputs: dict | None, week: int, now: datetime) -> dict:
+    """The NFL reserve list for the free-agent watch, with the roster week it
+    is from — only from model inputs young enough for the model itself to
+    use (`advanced.MAX_INPUT_AGE_DAYS`); otherwise unknown, never stale."""
+    unknown = {"nfl_reserve": None, "nfl_reserve_week": None}
+    meta = (inputs or {}).get("meta") or {}
+    try:
+        fetched = datetime.fromisoformat(str(meta.get("fetched_at")))
+    except (TypeError, ValueError):
+        return unknown
+    if fetched.tzinfo is None or now - fetched > timedelta(days=adv_model.MAX_INPUT_AGE_DAYS):
+        return unknown
+    frame = inputs.get("reserve")
+    ids = adv_model.reserve_ids(frame, week)
+    if ids is None:
+        return unknown
+    return {"nfl_reserve": ids,
+            "nfl_reserve_week": int(frame.loc[frame["week"] <= int(week), "week"].max())}
+
+
 def ros_block(*, weeks, schedule, injuries, directory, season, week, players, crosswalk,
               snapshot, owner_id, teams) -> dict:
     """The record's `ros` block: ranked rest-of-season lines by position.
@@ -123,11 +146,12 @@ def ros_block(*, weeks, schedule, injuries, directory, season, week, players, cr
             wk = injuries.loc[(injuries["week"] == week)
                               & (injuries["report_status"].astype(str).str.upper() == "OUT")]
             out_ids = {str(g) for g in wk["gsis_id"].dropna()}
+        inputs = adv_model.load_inputs(directory, season)
         table, status = ros.build_table(
             weeks=None if weeks is None else weeks.loc[weeks["week"] < week],
-            schedule=schedule, injuries=injuries,
-            inputs=adv_model.load_inputs(directory, season), week=week,
-            positions=positions, teams=teams, out=out_ids)
+            schedule=schedule, injuries=injuries, inputs=inputs, week=week,
+            positions=positions, teams=teams, out=out_ids,
+            reserve=(inputs or {}).get("reserve"))
         if len(table) == 0:
             return {"status": status, "players": []}
         table = ros.ownership(table, snapshot=snapshot, players=players,
@@ -135,25 +159,20 @@ def ros_block(*, weeks, schedule, injuries, directory, season, week, players, cr
         keep = (table["pos_rank"] <= table["position"].map(ROS_DEPTH).fillna(30)) \
             | (table["held_by"] == "MINE")
         cols = ["sleeper_id", "gsis_id", "name", "position", "team", "held_by", "pos_rank",
-                "ros", "ros_pg", "playoff", "games_left", "byes", "method", "next_week"]
+                "ros", "ros_pg", "playoff", "games_left", "byes", "method", "next_week",
+                "reserve_since"]
         return {"status": status, "from_week": week, "through_week": ros.HORIZON_END,
                 "playoff_weeks": list(ros.PLAYOFF_WEEKS),
                 "note": "points, not ΔP(win): for holds, drops and trades; the page "
                         "still makes every lineup call",
                 "players": table.loc[keep, cols].to_dict("records")}
     except Exception as exc:                                  # noqa: BLE001
+        import traceback
+        print(f"[ros] rankings failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return {"status": f"ROS rankings failed: {type(exc).__name__}: {exc}", "players": []}
 
 
-def find_owner_id(snapshot: dict, owner: str) -> str | None:
-    """The ONE place a human handle is used; it resolves to an id at once."""
-    owner = str(owner)
-    for u in snapshot.get("users") or []:
-        if str(u.get("user_id")) == owner:
-            return owner
-        if str(u.get("display_name") or "").lower() == owner.lower():
-            return str(u.get("user_id"))
-    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -179,6 +198,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--grades-dir", type=Path, default=None,
                     help="season grade ledger folder for the report card "
                          "(default data/ledger/grades)")
+    ap.add_argument("--props-root", type=Path, default=None,
+                    help="the prop collector's derived folder (record-only market_v1 "
+                         "contender; default <cache root>/props/derived)")
     args = ap.parse_args(argv)
 
     if not SETTINGS_VERIFIED:
@@ -251,15 +273,31 @@ def main(argv: list[str] | None = None) -> int:
         gid = crosswalk.gsis(sid)
         if gid and isinstance(rec, dict) and rec.get("team"):
             teams[gid] = nflverse_team(rec.get("team"))
+    adv_inputs = adv_model.load_inputs(directory, state_season)
     advanced = adv_model.build_context(
-        weeks=weeks, inputs=adv_model.load_inputs(directory, state_season),
-        injuries=injuries, schedule=schedule, week=report_week, teams=teams)
+        weeks=weeks, inputs=adv_inputs,
+        injuries=injuries, schedule=schedule, week=report_week, teams=teams, now=now)
 
     owner_id = find_owner_id(snapshot, args.owner)
     if owner_id is None:
         print(f"Owner {args.owner!r} not found in the cached league users.",
               file=sys.stderr)
         return 2
+
+    # The prop market's derived consensus for this week (the props-collect
+    # workflow's cache, restored read-only), for the record-only market_v1
+    # contender. A file for another season or week, or an unreadable one, is
+    # no file. It never reaches the page's numbers.
+    props_root = args.props_root or (
+        props.DERIVED_ROOT if args.cache_root is None
+        else Path(args.cache_root) / props.DERIVED_ROOT.relative_to(props.RESEARCH_CACHE))
+    market_blob = props.read_derived(props_root, state_season, report_week)
+    market, market_error = None, ""
+    if market_blob is not None:
+        try:
+            market = props.MarketWeek(market_blob)
+        except Exception as exc:  # noqa: BLE001 — record-only: never stops the board
+            market_error = type(exc).__name__
 
     dash = build_dashboard(
         context=ctx, sources=sources, snapshot=snapshot, sleeper_players=players,
@@ -272,7 +310,12 @@ def main(argv: list[str] | None = None) -> int:
         # Sleeper's projection for the same players, recorded for weekly
         # grading only — not a manifest source, gates nothing (gridiron.shadow).
         shadow=read_shadow(directory, season=state_season, week=report_week),
-        advanced=advanced)
+        advanced=advanced,
+        # The free-agent watch only (gridiron.notable): last season's box
+        # scores and who is on an NFL reserve list. Neither feeds a projection.
+        prior_weekly=(adv_inputs or {}).get("prior_weekly"),
+        market=market,
+        **watch_reserve(adv_inputs, report_week, now))
 
     # The report card: every graded week of the season, from the ledger the
     # grading step keeps (counts only). Read after the build, so the archive
@@ -287,6 +330,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{ctx.headline()} | evidence boundary wk{ctx.evidence_boundary}")
     print("DEGRADED" if dash.degraded else "All inputs current.")
     print(f"projection model: {advanced.status}")
+    detail = (dash.contenders or {}).get("market_v1_detail") or {}
+    if market_error:
+        said = f"week-{report_week} prop file unreadable ({market_error})"
+    elif market is None:
+        said = f"no week-{report_week} prop file"
+    elif detail.get("error"):
+        said = str(detail["error"])
+    else:
+        said = (f"{detail.get('projected', 0)} player(s) from "
+                f"{detail.get('snapshot_games', 0)} game snapshot(s)")
+    print(f"market contender (record-only): {said}")
     for n in dash.notes:
         print(f"  - {n}")
     print(f"projected roster rows: {sum(1 for p in dash.roster if p.projected)}/{len(dash.roster)}")
@@ -294,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
     if m is None:
         print(f"matchup: {dash.matchup_reason}")
     else:
-        pw = "abstained" if m.pwin is None else f"{m.pwin:.0%} (UNCALIBRATED)"
+        pw = "abstained" if m.pwin is None else f"{m.pwin:.0%} ({m.calibration.short})"
         print(f"matchup vs roster #{m.opponent_roster_id}: {m.my_mean:.1f}±{m.my_sd:.1f} "
               f"vs {m.opp_mean:.1f}±{m.opp_sd:.1f}; P(win) {pw}")
     print(f"start/sit: {dash.plan.abstained or f'current {dash.plan.current_points:.1f}, best legal {dash.plan.best_points:.1f}, {len(dash.plan.alternatives)} alternative(s)'}")

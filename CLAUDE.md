@@ -25,9 +25,10 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
 - Decision board (offline): `PYTHONPATH=src python scripts/weekly/dashboard.py
   --write`; scenarios + phone-fit check: `scripts/weekly/dashboard_scenarios.py
   --screenshot`. Freshness GATES actions (`gridiron.gating`), locks are
-  three-valued, absence is NEVER a bye unless the schedule declares one, and
-  the board is built in the cloud every 15 min (best effort, never real
-  time) with its records AND last-good inputs carried between runs by
+  three-valued, absence is NEVER a bye unless the schedule declares one or
+  proves it by count (`lineup.proven_byes`: whole season present), and the
+  board is built in the cloud every 15 min (best effort, never real time)
+  with its records AND last-good inputs carried between runs by
   `gridiron.carryover` (an Actions cache, not durable storage). The repo and
   the personalised pages are PUBLIC by owner decision (2026-09-21):
   `gridiron.publication` packages exactly two allowlisted HTML files for

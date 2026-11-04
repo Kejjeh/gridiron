@@ -21,6 +21,7 @@ pass found, each pinned by a reproduction written before its fix.
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import json
 import re
 import sys
@@ -310,3 +311,183 @@ def test_the_build_check_reads_its_own_page_and_compares_instants():
     assert "res.stamp>OWN" not in js and "Date.parse(res.stamp)" in js
     assert "'online'" in js
     assert "still usable" not in js
+
+
+# ---------------------------------------------- the matchup's own expiry
+
+def test_the_win_probability_expires_with_the_evidence_it_rests_on(tmp_path):
+    """The P(win) block used to carry no expiry: the moves beside it read
+    EXPIRED on the reader's clock while '55%' stayed up as if current."""
+    html = _render(tmp_path, "complete")
+    block = re.search(r'<div class="pwin"([^>]*)>', html)
+    assert block, "the matchup numbers sit in one gated block"
+    attrs = block.group(1)
+    assert 'data-gated=""' in attrs
+    # the matchup gate's own sources (league snapshot, designations) expire at
+    # midnight ET in this fixture, the same instant as the page's moves
+    assert 'data-valid-until="2026-09-27T04:00:00+00:00"' in attrs
+    assert "data-expire-text=\"EXPIRED — the " in attrs and "P(win)" in attrs
+    body = html[block.end():html.index("</details></div>", block.end())]
+    assert '<span class="vstate"></span>' in body and "win probability" in body
+    assert "LAST KNOWN" not in body
+    # the first-screen copy of the margin carries the same expiry
+    panel = re.search(r'<p class="pwin"([^>]*)><b>Matchup:</b>(.*?)</p>', html, re.S)
+    assert panel and 'data-valid-until="2026-09-27T04:00:00+00:00"' in panel.group(1)
+    assert '<span class="vstate"></span>' in panel.group(2)
+    # every rendering of the matchup means sits under a gated or held element
+    assert html.count("<b>Matchup:</b>") == 1
+
+
+def test_the_matchup_keeps_its_own_expiry_when_the_page_has_none(tmp_path):
+    """Damaged kickoff rows close the lineup/waiver gates (no page expiry),
+    while the matchup's own evidence is fresh: the block keeps its time."""
+    html = _render(tmp_path, "partial_schedule")
+    assert '<meta name="gridiron-valid-until"' not in html
+    block = re.search(r'<div class="pwin"([^>]*)>', html)
+    assert block and 'data-valid-until="' in block.group(1) and 'data-gated=""' in block.group(1)
+
+
+def test_the_held_matchup_names_what_actually_closed_its_gate(tmp_path):
+    html = _render(tmp_path, "missing")
+    held = re.search(r'<div class="pwin" data-held="([^"]*)"', html)
+    if held is None:
+        pytest.skip("no matchup view in this scenario")
+    assert "box scores" in held.group(1)
+
+
+def test_a_win_probability_built_on_stale_inputs_is_marked_last_known(tmp_path):
+    html = _render(tmp_path, "stale")
+    block = re.search(r'<div class="pwin"([^>]*)>', html)
+    assert block and "data-held=" in block.group(1) and "data-gated" not in block.group(1)
+    body = html[block.end():html.index("</details></div>", block.end())]
+    assert "<b>LAST KNOWN</b>" in body and "(last known) win probability" in body
+
+
+NODE = shutil.which("node") or ("/opt/node22/bin/node" if Path("/opt/node22/bin/node").exists()
+                                else None)
+
+_VALIDITY_RUNNER = r"""
+const fs = require('fs');
+const [,, jsPath] = process.argv;
+function el(attrs){ const a = Object.assign({}, attrs), v = {textContent:''};
+  return {getAttribute(k){ return k in a ? a[k] : null; }, setAttribute(k, x){ a[k] = String(x); },
+          removeAttribute(k){ delete a[k]; }, hasAttribute(k){ return k in a; },
+          querySelector(q){ return q === '.vstate' ? v : null; }, attrs: a, vstate: v}; }
+const meta = el({content: '2026-09-27T04:00:00Z', 'data-why': 'why'});
+const page = el({'data-gated': '', 'data-expire-text': 'page expired'});
+const later = el({'data-gated': '', 'data-valid-until': '2026-09-27T10:00:00Z', 'data-expire-text': 'own expired'});
+const earlier = el({'data-gated': '', 'data-valid-until': '2026-09-27T01:00:00Z', 'data-expire-text': 'own expired'});
+const ungated = el({'data-valid-until': '2026-09-27T01:00:00Z'});
+const nodes = [page, later, earlier, ungated];
+global.document = {querySelector(q){ return q.indexOf('gridiron-valid-until') >= 0 ? meta : null; },
+  querySelectorAll(q){ return q.indexOf('data-live-count') >= 0 ? [] : nodes.slice(0, 3); },
+  getElementById(){ return null; }, addEventListener(){}, hidden: false};
+global.window = {}; global.setInterval = function(){};
+const noMeta = process.argv[3] === 'nometa';
+const box = {hidden: true}, head = {textContent: ''}, text = {textContent: ''};
+if (noMeta) { document.querySelector = function(){ return null; };
+  document.getElementById = function(id){ return id === 'validity' ? box : id === 'validity-head' ? head : id === 'validity-text' ? text : null; }; }
+eval(fs.readFileSync(jsPath, 'utf8'));
+const out = {};
+for (const [k, t] of [['t0', '2026-09-27T00:00:00Z'], ['t1', '2026-09-27T02:00:00Z'],
+                      ['t2', '2026-09-27T05:00:00Z'], ['t3', '2026-09-27T11:00:00Z']]) {
+  window.gridironValidity.tick(Date.parse(t));
+  out[k] = {page: page.attrs['data-live'] || '', later: later.attrs['data-live'] || '',
+            earlier: earlier.attrs['data-live'] || '', text: later.vstate.textContent,
+            banner: noMeta ? (box.hidden ? '' : head.textContent + ' | ' + text.textContent) : null};
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="no Node runtime on this machine")
+def test_an_element_with_its_own_evidence_expires_on_its_own_instant(tmp_path):
+    import subprocess
+    js = tmp_path / "validity.js"
+    js.write_text(theme.VALIDITY_JS, "utf-8")
+    runner = tmp_path / "run.js"
+    runner.write_text(_VALIDITY_RUNNER, "utf-8")
+    proc = subprocess.run([NODE, str(runner), str(js)], capture_output=True, text=True,
+                          encoding="utf-8", timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["t0"] == {"page": "", "later": "", "earlier": "", "text": "", "banner": None}
+    assert got["t1"]["earlier"] == "expired" and not got["t1"]["page"] and not got["t1"]["later"]
+    # past the page's instant but not the element's own: the element stays current
+    assert got["t2"]["page"] == "expired" and got["t2"]["later"] == ""
+    assert got["t3"]["later"] == "expired" and got["t3"]["text"] == "own expired"
+
+
+@pytest.mark.skipif(NODE is None, reason="no Node runtime on this machine")
+def test_an_element_that_expires_on_its_own_raises_the_banner_without_a_page_expiry(tmp_path):
+    import subprocess
+    js = tmp_path / "validity.js"
+    js.write_text(theme.VALIDITY_JS, "utf-8")
+    runner = tmp_path / "run.js"
+    runner.write_text(_VALIDITY_RUNNER, "utf-8")
+    proc = subprocess.run([NODE, str(runner), str(js), "nometa"], capture_output=True,
+                          text=True, encoding="utf-8", timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["t0"]["banner"] == ""
+    # no page meta: the gated element with no time of its own never expires...
+    assert got["t3"]["page"] == ""
+    # ...the ones with their own time do, and the banner says so
+    assert got["t1"]["earlier"] == "expired" and got["t1"]["banner"].startswith(
+        "Evidence expired for 1 item(s) on this page.")
+    assert "own expired" in got["t3"]["banner"] and "2 item(s)" in got["t3"]["banner"]
+
+
+# ------------------------------------------------ live free-agent counts
+
+def test_the_first_screen_free_agent_count_is_a_live_counter(tmp_path):
+    """The side panel's 'N improve this week's lineup' was fixed at build
+    time: after kickoff the radar's own counter fell to 0 while it stayed."""
+    html = _render(tmp_path, "complete")
+    panel = re.search(r"<b>Free agents:</b>(.*?)</p>", html, re.S)
+    assert panel and 'data-live-count="LINEUP">2</b> improve this week' in panel.group(1)
+    assert html.count('data-live-count="LINEUP"') == 2      # the panel and the radar KPI
+
+
+_COUNT_RUNNER = r"""
+const fs = require('fs');
+const [,, jsPath] = process.argv;
+function el(attrs, cls){ const a = Object.assign({}, attrs), c = new Set(cls || []), v = {textContent: ''};
+  return {getAttribute(k){ return k in a ? a[k] : null; }, setAttribute(k, x){ a[k] = String(x); },
+          removeAttribute(k){ delete a[k]; }, hasAttribute(k){ return k in a; },
+          querySelector(q){ return q === '.vstate' ? v : null; }, attrs: a, textContent: '',
+          classList: {toggle(n, on){ if (on) c.add(n); else c.delete(n); }, has(n){ return c.has(n); }}}; }
+const rows = [0, 1].map(i => el({'data-deadline': '2026-09-27T17:00:00Z', 'data-verdict': 'LINEUP',
+  'data-verdict-built': 'LINEUP', 'data-lapse-verdict': 'LOCKED', 'data-lapse-text': 'locked'}));
+const panel = el({'data-live-count': 'LINEUP'}, ['lime']); panel.textContent = '2';
+const kpi = el({'data-live-count': 'LINEUP'}, ['lime']); kpi.textContent = '2';
+global.document = {querySelector(){ return null; }, getElementById(){ return null; }, addEventListener(){}, hidden: false,
+  querySelectorAll(q){
+    if (q.indexOf('data-live-count') >= 0) return [panel, kpi];
+    const m = q.match(/^li\.rrow\[data-verdict="([^"]+)"\]$/);
+    if (m) return rows.filter(r => r.attrs['data-verdict'] === m[1]);
+    return rows; }};
+global.window = {}; global.setInterval = function(){};
+eval(fs.readFileSync(jsPath, 'utf8'));
+const out = {};
+for (const [k, t] of [['before', '2026-09-27T16:00:00Z'], ['after', '2026-09-27T17:05:00Z']]) {
+  window.gridironValidity.tick(Date.parse(t));
+  out[k] = {panel: panel.textContent, kpi: kpi.textContent, lime: panel.classList.has('lime')};
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="no Node runtime on this machine")
+def test_the_live_counts_fall_and_lose_their_highlight_when_the_moves_lock(tmp_path):
+    import subprocess
+    js = tmp_path / "validity.js"
+    js.write_text(theme.VALIDITY_JS, "utf-8")
+    runner = tmp_path / "count.js"
+    runner.write_text(_COUNT_RUNNER, "utf-8")
+    proc = subprocess.run([NODE, str(runner), str(js)], capture_output=True, text=True,
+                          encoding="utf-8", timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["before"] == {"panel": "2", "kpi": "2", "lime": True}
+    assert got["after"] == {"panel": "0", "kpi": "0", "lime": False}

@@ -1,0 +1,131 @@
+{
+ "kind": "sd_scale",
+ "k": 1.0,
+ "bar_cleared": false,
+ "raw_tested": true,
+ "k_tested": 1.15,
+ "rule": "k from the synthetic fit seasons; cleared when it beats k=1 on held-out synthetic seasons on log loss AND Brier, and is no worse on this league's matchups. raw_tested (k=1, label TESTED) when it does not clear, the held-out synthetic margin z-SD is in [0.9, 1.1], and on this league a k fit on the other seasons does not beat k=1 on the held-out season and the margin z-SD is in [0.9, 1.1]",
+ "synthetic": {
+  "n_fit": 10751,
+  "fit_seasons": [
+   2019,
+   2020,
+   2021,
+   2022
+  ],
+  "n_test": 8060,
+  "test_seasons": [
+   2023,
+   2024,
+   2025
+  ],
+  "k_ci": [
+   1.0,
+   1.31
+  ],
+  "test_brier": 0.23695,
+  "test_brier_raw": 0.23673,
+  "test_logloss": 0.66646,
+  "test_logloss_raw": 0.66601,
+  "test_margin_z_sd": 1.0746,
+  "skill_mean": "advanced_v1 refit leave-one-season-out (the page's mean without Sleeper's number; out of sample for every row)",
+  "improvement_ci": {
+   "logloss": [
+    -0.00198,
+    0.0003
+   ],
+   "brier": [
+    -0.0009,
+    0.00011
+   ],
+   "share_reps_better_both": 0.138
+  },
+  "baseline_mean_k": {
+   "k": 1.08,
+   "k_ci": [
+    0.97,
+    1.2
+   ],
+   "test": {
+    "raw": {
+     "n": 8064,
+     "logloss": 0.67454,
+     "brier": 0.24079,
+     "z_sd": 1.0729
+    },
+    "calibrated": {
+     "n": 8064,
+     "logloss": 0.67381,
+     "brier": 0.24049,
+     "z_sd": 0.9934
+    }
+   },
+   "improvement_ci": {
+    "logloss": [
+     -0.00031,
+     0.0018
+    ],
+    "brier": [
+     -0.00013,
+     0.00077
+    ],
+    "share_reps_better_both": 0.896
+   },
+   "bar_cleared": true,
+   "note": "the first run's setup; the page never sums baseline skill means"
+  },
+  "dnp_sensitivity_k": 1.21,
+  "def_mean_source": "advanced DEF ridge (AdvancedModel.adv['DEF'], fit on [2019, 2020, 2021, 2022, 2023, 2024] + 2025)"
+ },
+ "league_history": {
+  "n": 157,
+  "seasons": [
+   2023,
+   2024,
+   2025
+  ],
+  "skill_mean": "advanced_v1 leave-one-season-out",
+  "k_grid_point": 1.15,
+  "brier": 0.22796,
+  "brier_raw": 0.22775,
+  "logloss": 0.64604,
+  "logloss_raw": 0.64556,
+  "margin_z_sd": 1.0364,
+  "loso_pooled": {
+   "logloss_raw": 0.64556,
+   "logloss_k": 0.65426,
+   "brier_raw": 0.22775,
+   "brier_k": 0.23166
+  },
+  "fav_stated": 0.623,
+  "fav_won": 0.6624,
+  "k_mle": 1.02,
+  "k_ci": [
+   0.8,
+   1.75
+  ],
+  "outcome_label": "sleeper",
+  "n_excluded": 8,
+  "baseline_mean_check": {
+   "k_mle": 1.05,
+   "raw": {
+    "logloss": 0.64311,
+    "brier": 0.22672,
+    "zsd": 1.0418
+   },
+   "loso_pooled": {
+    "logloss_raw": 0.6431,
+    "logloss_k": 0.64348,
+    "brier_raw": 0.22672,
+    "brier_k": 0.22691
+   }
+  }
+ },
+ "doc": "docs/research/PWIN_CALIBRATION.md",
+ "scripts": [
+  "scripts/research/pwin_calibration.py",
+  "scripts/research/pwin_league_history.py",
+  "scripts/research/pwin_calibration_save.py"
+ ],
+ "written": "2026-10-15T20:09:56+00:00"
+}

@@ -64,8 +64,10 @@ suggestions and listed separately with the reason, for a human to price.
 snapshot proves one thing — this id appears on no roster's `players` list at
 the snapshot's as-of. It does not say whether the player is a free agent or
 sitting on waivers, when he was dropped, or whether a claim is already in on
-him. Sleeper carries that in the transactions feed, which this repo does not
-pull. So eligibility is reported as UNVERIFIED with its evidence and the
+him. The snapshot carries this league's last three transaction legs
+(`SleeperReadOnly.recent_transactions`, read by `gridiron.notable`), which
+date a recent drop; the waiver clock itself and pending claims are not in
+them. So eligibility is reported as UNVERIFIED with its evidence and the
 league's own waiver configuration, and no upgrade on this board ever says
 "add now" (rule #11: no accessor makes the wrong call easy).
 
@@ -251,8 +253,8 @@ class Eligibility:
     """What the cache can and cannot prove about adding this player.
 
     Never "addable". The snapshot proves absence from every roster at one
-    instant; the waiver clock, pending claims and the drop that put him there
-    live in Sleeper's transactions feed, which this repo does not pull.
+    instant; the waiver clock and pending claims are not in any feed this
+    repo reads (a recent drop is: `gridiron.notable`).
     """
 
     state: str                        # always "UNVERIFIED" from cache alone
@@ -270,7 +272,8 @@ WAIVER_RULE = (
     f"league waivers are {WAIVER_TYPE.upper()} with a {WAIVER_BUDGET}-unit budget "
     f"and a {WAIVER_CLEAR_DAYS}-day clear period (verified league settings). A "
     f"player dropped inside that window is ON WAIVERS, not a free agent — and "
-    f"nothing in this cache says when any of these players was dropped."
+    f"this cache dates only drops made in this league in the last two weeks "
+    f"(the Notable free agents list)."
 )
 
 

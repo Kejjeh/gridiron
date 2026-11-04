@@ -61,16 +61,18 @@ DEPTH = ["depth_rank"]
 SETS = {"core": [], "+practice": PRACTICE, "+depth": DEPTH, "+both": PRACTICE + DEPTH}
 
 
+from research_common import load_script  # noqa: E402
+
+
 def _bt():
-    spec = importlib.util.spec_from_file_location(
-        "projection_backtest", REPO_ROOT / "scripts" / "research" / "projection_backtest.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["projection_backtest"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_script("projection_backtest", "scripts/research/projection_backtest.py")
 
 
-def season_table(season: int, cw: Crosswalk, bt) -> pd.DataFrame:
+def season_table(season: int, cw: Crosswalk, bt, *, reserve_lag: bool = False) -> pd.DataFrame:
+    """One row per scored player-week with every feature. `reserve_lag` adds
+    `reserve_pickup_lag`: the reserve-list feature read from the roster of
+    the week BEFORE (what a build that runs before the week's rosters are
+    posted would see)."""
     import nflreadpy as nfl
     weekly = nfl.load_player_stats([season], summary_level="week").to_pandas()
     weekly = weekly.loc[(weekly["season_type"] == "REG") & weekly["position"].isin(A.POSITIONS)]
@@ -84,10 +86,32 @@ def season_table(season: int, cw: Crosswalk, bt) -> pd.DataFrame:
                               for k in A.NGS_COLUMNS})
     practice = A.practice_from_injuries(nfl.load_injuries([season]).to_pandas())
     depth = A.depth_from_charts(nfl.load_depth_charts([season]).to_pandas(), sched)
-    hist = A.history_frame(frame, xfp, ngs)
+    reserve = A.reserve_from_rosters(nfl.load_rosters_weekly([season]).to_pandas())
+    offense = A.offense_history(nfl.load_team_stats([season], summary_level="week").to_pandas())
+
+    def pfr_frame(kind):
+        try:
+            return nfl.load_pfr_advstats([season], stat_type=kind, summary_level="week").to_pandas()
+        except Exception as exc:                                  # noqa: BLE001
+            print(f"  {season}: PFR {kind} unavailable ({type(exc).__name__})", file=sys.stderr)
+            return None
+    pfr = A.pfr_from_advstats({k: pfr_frame(k) for k in A.PFR_COLUMNS})
+    try:
+        routes = A.routes_from_participation(nfl.load_participation([season]).to_pandas(),
+                                             nfl.load_pbp([season]).to_pandas())
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"  {season}: participation unavailable ({type(exc).__name__})", file=sys.stderr)
+        routes = None
+    hist = A.history_frame(frame, xfp, ngs, pfr, routes)
     feats = []
     for w in sorted(rows["week"].unique()):
-        f = A.features_as_of(hist, int(w), schedule=sched, practice=practice, depth=depth)
+        f = A.features_as_of(hist, int(w), schedule=sched, practice=practice, depth=depth,
+                             reserve=reserve, offense=offense)
+        if reserve_lag:
+            lag = A.role_features(hist.loc[hist["week"] < int(w)].sort_values("week"), set(),
+                                  A.reserve_ids(reserve, int(w) - 1))
+            f = f.merge(lag[["gsis_id", "reserve_pickup"]].rename(
+                columns={"reserve_pickup": "reserve_pickup_lag"}), on="gsis_id", how="left")
         feats.append(f.drop(columns=["position", "team"]).assign(week=int(w)))
     out = rows.merge(pd.concat(feats), on=["gsis_id", "week"], how="left")
     sl = bt.sleeper_projections(season, sorted(out["week"].unique().tolist()), cw)

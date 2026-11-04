@@ -14,7 +14,10 @@ committed fixtures (invented league, invented owner). Pins:
      P(win) abstains — nothing is filled in;
   6. the archive is what the page showed, and grading it leaks nothing;
   7. --anonymous keeps the league name off the page; the stdout summary
-     never names a player.
+     never names a player;
+  8. ABSENCE IS NOT A BYE: a team with no game row and no declared bye is
+     UNKNOWN — its players abstain (no projected 0), stale schedule or
+     fresh; Out still withholds at 0; a declared bye is withheld at 0.
 """
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ import importlib.util
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -262,7 +265,7 @@ def test_protected_players_are_named_on_the_page_not_silently_dropped(tmp_path):
     for row in rec["protected_from_drop"]:
         assert row["reason"]
     # eligibility is never asserted from the cache
-    assert "UNVERIFIED" in html and "transactions feed" in html
+    assert "UNVERIFIED" in html and "Sleeper player card" in html
     assert "Add now" not in html
 
 
@@ -547,3 +550,228 @@ def test_the_archive_this_run_wrote_is_content_addressed(tmp_path):
     stem = files[0].stem
     assert re.fullmatch(r"week03_\d{8}T\d{6}Z_[0-9a-f]{8}", stem), stem
     assert rec["week"] == 3
+
+
+def test_a_tested_calibration_relabels_the_win_probability_and_logs_the_league(tmp_path, monkeypatch):
+    from gridiron import winprob
+    cal = tmp_path / "cal.json"
+    cal.write_text(json.dumps({
+        "kind": "sd_scale", "k": 1.15, "bar_cleared": True, "doc": "docs/research/PWIN_CALIBRATION.md",
+        "synthetic": {"n_fit": 900, "fit_seasons": [2019, 2022], "n_test": 700,
+                      "test_seasons": [2023, 2025], "test_brier": 0.231, "test_brier_raw": 0.235},
+        "league_history": {"n": 140, "seasons": [2023, 2025], "brier": 0.22, "brier_raw": 0.23}}),
+        encoding="utf-8")
+    monkeypatch.setattr(winprob, "CALIBRATION_PATH", cal)
+    _, html, rec = render(tmp_path, "complete")
+    m = rec["matchup"]
+    assert m["label"].startswith("CALIBRATED") and m["calibration"]["validated"] is True
+    assert m["calibration"]["k"] == 1.15
+    assert abs(m["pwin"] - 0.5) < abs(m["pwin_raw"] - 0.5)          # pulled toward even
+    assert "CALIBRATED" in html and "before calibration" in html and "NOT validated" not in html
+    assert rec["evaluation"]["pwin_calibrated"] is True
+    # every league matchup is recorded; the owner's is the page's own view
+    lm = rec["league_matchups"]
+    assert lm and all(len(x["roster_ids"]) == 2 for x in lm)
+    own = [x for x in lm if m["opponent_roster_id"] in x["roster_ids"]]
+    assert len(own) == 1
+    o = own[0]
+    p_mine = o["pwin"] if o["roster_ids"][1] == m["opponent_roster_id"] else round(1 - o["pwin"], 4)
+    assert p_mine == m["pwin"]
+
+
+def test_a_test_that_found_no_factor_shows_the_raw_number_labelled_tested(tmp_path, monkeypatch):
+    from gridiron import winprob
+    cal = tmp_path / "cal.json"
+    cal.write_text(json.dumps({
+        "kind": "sd_scale", "k": 1.0, "k_tested": 1.03, "bar_cleared": False, "raw_tested": True,
+        "doc": "docs/research/PWIN_CALIBRATION.md",
+        "synthetic": {"n_fit": 900, "fit_seasons": [2019, 2022], "n_test": 700,
+                      "test_seasons": [2023, 2025], "test_logloss": 0.667, "test_logloss_raw": 0.666},
+        "league_history": {"n": 140, "seasons": [2023, 2025], "fav_stated": 0.62, "fav_won": 0.64}}),
+        encoding="utf-8")
+    monkeypatch.setattr(winprob, "CALIBRATION_PATH", cal)
+    _, html, rec = render(tmp_path, "complete")
+    m = rec["matchup"]
+    assert m["label"].startswith("TESTED") and m["calibration"]["badge"] == "TESTED"
+    assert m["pwin"] == m["pwin_raw"]                               # no factor applied
+    assert "TESTED" in html and "UNCALIBRATED" not in html
+    assert "before calibration" not in html and "NOT validated" not in html
+    assert "tested, no correction" in html
+    assert rec["evaluation"]["pwin_calibrated"] is True
+
+
+# ------------------------------------------------- absence is never a bye
+
+def _render_with_schedule(tmp_path: Path, tag: str, edit, *, schedule_age=None,
+                          players=None) -> dict:
+    """The complete scenario with its week-3 schedule edited, re-recorded in
+    the manifest at the same as-of (so freshness is unchanged) unless
+    `schedule_age` re-dates it; `players` edits the Sleeper player map."""
+    import pandas as pd
+    from gridiron import ingest as ing
+    root = tmp_path / tag
+    SCN.build_scenario(root, "complete", now=NOW)
+    directory = ing.season_cache(2026, root)
+    sched = edit(pd.read_parquet(directory / "schedules.parquet"))
+    sched.to_parquet(directory / "schedules.parquet", index=False)
+    m = ing.Manifest.load(directory, 2026)
+    e = m.get("schedules")
+    m.record("schedules", path=directory / "schedules.parquet", rows=len(sched), source=e.source,
+             weeks=sorted({int(w) for w in sched["week"].dropna()}),
+             as_of=(NOW - schedule_age) if schedule_age else datetime.fromisoformat(e.as_of))
+    m.save()
+    if players:
+        path = directory / "sleeper_players.json"
+        blob = json.loads(path.read_text("utf-8"))
+        players(blob)
+        path.write_text(json.dumps(blob), "utf-8")
+    out = tmp_path / "out" / tag
+    assert CLI.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
+                     "--out-dir", str(out), "--archive-root", str(tmp_path / "arch" / tag),
+                     "--now", NOW.isoformat()]) == 0
+    return json.loads((out / "dashboard_latest.json").read_text("utf-8"))
+
+
+def _without_team(sched, team: str):
+    week3 = sched["week"] == 3
+    return sched.loc[~(week3 & ((sched["home_team"] == team) | (sched["away_team"] == team)))]
+
+
+def test_a_team_with_no_game_row_is_unknown_in_the_projection_not_a_bye(tmp_path):
+    """CLAUDE.md: absence is NEVER a bye unless the schedule declares one.
+    The projection used to read a missing row as 'BYE week: projected 0' while
+    the lock layer, for the same player, said UNKNOWN."""
+    rec = _render_with_schedule(tmp_path, "gap", lambda s: _without_team(s, "CHI"))
+    p = next(x for x in rec["roster"] if x["team"] == "CHI" and x["lineup"] == "START")
+    assert p["projected"] is None and not p["withheld"], "unknown, not a projected 0"
+    why = " ".join(p["reasons"])
+    assert "no week-3 game row" in why and "not a bye" in why and "BYE week" not in why
+    assert p["lock_known"] is False                    # the lock layer agrees
+    # an unprojected non-DEF starter: P(win) abstains rather than counting a guessed 0
+    assert rec["matchup"]["pwin"] is None
+
+
+def test_a_bye_the_schedule_declares_is_still_projected_zero(tmp_path):
+    import pandas as pd
+
+    def declare(s):
+        s = _without_team(s, "CHI")
+        row = {c: None for c in s.columns}
+        row.update(week=3, home_team="CHI", away_team="", game_type="BYE", season=2026)
+        return pd.concat([s, pd.DataFrame([row])], ignore_index=True)
+
+    rec = _render_with_schedule(tmp_path, "declared", declare)
+    p = next(x for x in rec["roster"] if x["team"] == "CHI" and x["lineup"] == "START")
+    assert p["projected"] == 0 and p["withheld"]
+    assert any("BYE week (the schedule declares or proves it)" in r for r in p["reasons"])
+    assert p["lock_known"] is True and "BYE" in p["lock_note"]
+
+
+def test_a_stale_schedule_does_not_turn_a_missing_row_into_a_game(tmp_path):
+    """Freshness gates actions; it does not decide which teams have a game.
+    A stale frame that carries the week still has no row for CHI."""
+    from datetime import timedelta
+    rec = _render_with_schedule(tmp_path, "stale_gap", lambda s: _without_team(s, "CHI"),
+                                schedule_age=timedelta(days=10))
+    assert any(src.startswith("schedules") and "STALE" in src for src in rec["sources"])
+    p = next(x for x in rec["roster"] if x["team"] == "CHI" and x["lineup"] == "START")
+    assert p["projected"] is None and "no week-3 game row" in " ".join(p["reasons"])
+    assert rec["matchup"]["pwin"] is None
+
+
+def test_out_on_a_team_with_no_game_row_is_still_withheld_at_zero(tmp_path):
+    """A designation that already rules him out wins over the schedule gap."""
+    def out(blob):
+        blob["6790"]["injury_status"] = "Out"
+    rec = _render_with_schedule(tmp_path, "out_gap", lambda s: _without_team(s, "CHI"),
+                                players=out)
+    p = next(x for x in rec["roster"] if x["sleeper_id"] == "6790")
+    assert p["projected"] == 0 and p["withheld"]
+    assert any("designated Out" in r for r in p["reasons"])
+
+
+def test_a_free_agent_on_a_team_with_no_game_row_is_not_projected(tmp_path):
+    rec = _render_with_schedule(tmp_path, "pool_gap", lambda s: _without_team(s, "CHI"))
+    fa = next(x for x in rec["radar"]["pool"] if x["team"] == "CHI")
+    assert fa["projected"] is None, "the waiver pool follows the same rule as the roster"
+    note = next(n for n in rec["notes"] if "no week-3 game row" in n)
+    assert "not projected (no guessed 0)" in note and "except a team defense" in note
+
+
+def test_a_team_defense_with_no_game_row_is_left_out_and_named(tmp_path):
+    rec = _render_with_schedule(tmp_path, "def_gap", lambda s: _without_team(s, "SEA"))
+    d = next(x for x in rec["roster"] if x["position"] == "DEF" and x["lineup"] == "START")
+    assert d["team"] == "SEA" and d["projected"] is None
+    assert any("no week-3 game row" in r for r in d["reasons"])
+    m = rec["matchup"]
+    assert m["pwin"] is not None and "SEA DST" in m["pwin_reason"]
+
+
+# ---------------------------------------------------------------------------
+# 9. A free agent the radar cannot rank is still named (gridiron.notable)
+# ---------------------------------------------------------------------------
+def test_an_unprojected_league_drop_is_named_on_the_first_screen(tmp_path, no_network):
+    rc, html, rec = render(tmp_path, "notable")
+    assert rc == 0
+    sid = SCN._RETURNER[0]
+    assert all(str(c["id"]) != sid for c in rec["radar"]["candidates"]), \
+        "no number of ours, so the radar cannot rank him"
+    n = next(x for x in rec["watch"]["notable"] if x["id"] == sid)
+    assert n["ours"] is None and "no admissible box scores" in n["ours_note"]
+    assert n["market"] == SCN._RETURNER[5] and n["dropped_by"] == 2
+    assert n["waiver_phase"] == "WAIVERS" and "claims only, until about Sun 27 Sep 00:00 UTC" \
+        in n["waiver"] and "bid" not in n["waiver"].lower()
+    assert any(m["id"] == sid for m in rec["watch"]["market"])
+    desk = html[html.index('id="desk"'):html.index('class="dcard')]
+    assert "notable-alert" in desk and SCN._RETURNER[2] in desk
+
+
+def test_without_transactions_the_page_says_drops_are_unknown(tmp_path, no_network):
+    _, html, rec = render(tmp_path, "complete")
+    assert rec["watch"]["notable"] == []
+    assert any("drops UNKNOWN" in x for x in rec["watch"]["notes"])
+    assert "drops UNKNOWN" in html and "notable-alert\"" not in html
+    assert "recent drops are UNKNOWN" in html and "was dropped by a team in this league" \
+        not in html, "an empty list never claims nobody was dropped when drops are unknown"
+    assert "Last season's starters cannot be checked" in html \
+        and "Nobody in the pool was a starter last season" not in html
+
+
+def _render_with_model_inputs(tmp_path, kind, *, age):
+    """The `notable` scenario plus a model-inputs folder fetched `age` before
+    the render, holding an NFL reserve list (week 3) and last season's box
+    scores for the invented returner."""
+    import pandas as pd
+    from gridiron import ingest as ing
+    from gridiron.models import advanced as A
+    root = tmp_path / kind
+    SCN.build_scenario(root, "notable", now=NOW)
+    gid = SCN._RETURNER[1]
+    empty = {"xfp": pd.DataFrame(columns=["gsis_id", "week", "xfp"]),
+             "ngs": pd.DataFrame(columns=["gsis_id", "week"]),
+             "depth": pd.DataFrame(columns=["week", "gsis_id", "depth_rank"])}
+    prior = pd.DataFrame([{"player_id": gid, "position": "RB", "team": "CAR", "week": w,
+                           "season_type": "REG", "rushing_yards": 110, "receptions": 4,
+                           "receiving_yards": 35} for w in range(1, 10)])
+    A.write_inputs(ing.season_cache(2026, root), 2026,
+                   {**empty, "reserve": pd.DataFrame({"week": [3], "gsis_id": [gid]}),
+                    "prior_weekly": prior}, NOW - age)
+    out = tmp_path / "out" / kind
+    assert CLI.main(["--cache-root", str(root), "--owner", "fixture_owner", "--write",
+                     "--out-dir", str(out), "--no-archive", "--now", NOW.isoformat()]) == 0
+    html = (out / "dashboard_latest.html").read_text("utf-8")
+    return html, json.loads((out / "dashboard_latest.json").read_text("utf-8"))
+
+
+def test_the_nfl_reserve_list_and_last_season_reach_the_page(tmp_path, no_network):
+    """build_dashboard's own `reserve` (the owner's IR slots) once shadowed
+    the NFL list, so the label never showed; fresh inputs now reach the
+    page, with the roster week, and stale ones are unknown, not shown."""
+    html, rec = _render_with_model_inputs(tmp_path, "fresh", age=timedelta(hours=1))
+    n = next(x for x in rec["watch"]["notable"] if x["id"] == SCN._RETURNER[0])
+    assert "on an NFL reserve list (RES/EXE, week-3 roster)" in n["status"]
+    assert any("a starter last season (2025 RB1" in w for w in n["why"])
+    assert rec["watch"]["prior_loaded"] is True and "week-3 roster" in html
+    _, rec = _render_with_model_inputs(tmp_path, "stale", age=timedelta(days=15))
+    n = next(x for x in rec["watch"]["notable"] if x["id"] == SCN._RETURNER[0])
+    assert "reserve list" not in n["status"]

@@ -20,7 +20,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ESPN league auth (cookies) — used only by gridiron.espn
+    # ESPN league auth (cookies). Kept for an ESPN league; NO code reads
+    # them today — the league is on Sleeper and gridiron/espn.py was removed
+    # as dead on 2026-10-01.
     espn_league_id: int | None = None
     espn_s2: str | None = None
     espn_swid: str | None = None
@@ -28,7 +30,8 @@ class Settings(BaseSettings):
     # Sleeper needs no auth; just the league id if the league lives there.
     sleeper_league_id: str | None = None
 
-    # Betting lines provider (pick one early — see bootstrap doc §3)
+    # The Odds API (free plan): read only by the prop collector,
+    # scripts/ingest/pull_props.py, which never prints it.
     odds_api_key: str | None = None
     # OddsPapi (gridiron.oddspapi): historical player props. GitHub secret
     # GRIDIRON_ODDSPAPI_KEY; read only by scripts/ingest/backfill_oddspapi_props.py.

@@ -1,6 +1,6 @@
 """Read-only Sleeper adapter — the ONE place the league is talked to.
 
-`espn.py` says a Sleeper league gets a sibling module; this is it. The league
+The league connector (the ESPN module it was once a sibling of is gone). The league
 lives on Sleeper (league_config.PLATFORM) and Sleeper's read API needs no
 auth, so nothing here reads a credential.
 
@@ -115,6 +115,35 @@ class SleeperReadOnly:
     def matchups(self, week: int) -> list[dict]:
         return self._fetch(f"{BASE}/league/{self.league_id}/matchups/{int(week)}") or []
 
+    def transactions(self, week: int) -> list[dict]:
+        """The league's transactions for one Sleeper week ("leg"): adds,
+        drops, waiver claims, trades, with their timestamps. Public, GET."""
+        return self._fetch(f"{BASE}/league/{self.league_id}/transactions/{int(week)}") or []
+
+    def recent_transactions(self, week: int) -> dict:
+        """The league's transactions in the legs around `week` (week-2 to
+        week+1), trimmed to what the board reads (who moved whom, and when).
+        Sleeper files each transaction under the league's leg, which
+        advances at the weekly waiver run — about a day AFTER `state.week`
+        did in 2026 — so two legs read on a Tuesday missed every drop since
+        the previous Wednesday. Three back cover about 12.5 days or more;
+        the leg after `week` (empty until it opens) removes the dependence
+        on which of the two advances first. Never raises: a failed read is
+        an `error`, so the league snapshot it rides in is never lost to it,
+        and the board says the drops are UNKNOWN rather than none."""
+        weeks = [w for w in range(int(week) - 2, int(week) + 2) if w >= 1]
+        keep = ("transaction_id", "type", "status", "roster_ids", "adds", "drops",
+                "created", "status_updated", "leg")
+        rows: list[dict] = []
+        try:
+            for w in weeks:
+                for t in self.transactions(w) or []:
+                    if isinstance(t, dict):
+                        rows.append({k: t.get(k) for k in keep})
+        except Exception as exc:                                   # noqa: BLE001
+            return {"weeks": weeks, "rows": [], "error": f"{type(exc).__name__}: {exc}"[:200]}
+        return {"weeks": weeks, "rows": rows, "error": ""}
+
     def players(self) -> dict:
         """The full NFL player map (5-16 MB). Bulk — cache it, never commit
         it (rule #10). ONE attempt: Sleeper asks for this call at most once a
@@ -147,6 +176,7 @@ class SleeperReadOnly:
             "users": self.users(),
             "rosters": self.rosters(),
             "matchups": self.matchups(wk),
+            "transactions": self.recent_transactions(wk),
         }
 
 
@@ -158,9 +188,33 @@ def resolve_league_id() -> str:
         from gridiron.config import get_settings
 
         configured = get_settings().sleeper_league_id
-    except Exception:  # pydantic-settings absent or .env unreadable
+    except Exception as exc:  # pydantic-settings absent or .env unreadable  # noqa: BLE001
+        # Said, not swallowed: an override that is being ignored is the kind
+        # of silence that costs a week (the cloud build once installed
+        # everything but pydantic-settings).
+        import sys
+        print(f"[sleeper] league-id override not read ({type(exc).__name__}: {exc}); "
+              f"using the verified constant", file=sys.stderr)
         configured = None
     return str(configured or SLEEPER_LEAGUE_ID)
+
+
+def find_owner_id(snapshot: Mapping[str, object], owner: str) -> str | None:
+    """Resolve the configured owner handle to a Sleeper user id, once, from a
+    league snapshot's `users`. The ONE place a human handle is used (rule #3):
+    an exact user id wins; otherwise an exact, case-insensitive display name
+    that matches exactly ONE user. Two users sharing a display name resolve
+    to nobody, never to the first one listed."""
+    owner = str(owner or "").strip()
+    users = [u for u in (snapshot.get("users") or []) if isinstance(u, dict)]
+    if not owner:
+        return None
+    for u in users:
+        if str(u.get("user_id")) == owner:
+            return owner
+    named = [str(u.get("user_id")) for u in users
+             if str(u.get("display_name") or "").strip().lower() == owner.lower()]
+    return named[0] if len(named) == 1 else None
 
 
 def owner_roster(rosters: list[dict], owner_id: str) -> dict | None:

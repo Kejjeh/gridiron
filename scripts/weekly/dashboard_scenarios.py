@@ -48,6 +48,11 @@ stale, and when inputs are missing. Nothing here reads the real cache.
             five, the owner's roster fills three): a pickup that improves the
             lineup is an add with NO drop, and two such adds are not an
             either/or because both spots are free.
+  notable   the complete cache plus an invented free agent with no game this
+            season, dropped by the opponent 36 hours earlier, whom Sleeper
+            projects: the radar cannot rank him, so the first screen names
+            him (`gridiron.notable`), with the waiver timing, and the "Can't
+            project" list carries Sleeper's number.
 
 Every scenario's rosters carry `taxi: null` like the real league object, and
 (outside open_spot) the league's bench is sized so the owner's active roster
@@ -84,12 +89,13 @@ import pandas as pd
 
 from gridiron import ingest as ing
 from gridiron.paths import REPO_ROOT
+from gridiron.shadow import SOURCE as SHADOW_SOURCE, write_shadow
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
 UTC = timezone.utc
 SCENARIOS = ("complete", "stale", "missing", "partial_schedule", "slate_end",
              "hold", "sparse", "taken", "roster_changed", "next_week", "designations",
-             "open_spot")
+             "open_spot", "notable")
 
 #: Saturday of NFL week 3 in the fixture calendar (games Sun 2026-09-27),
 #: rendered at noon UTC: pregame, nothing locked, waivers cleared.
@@ -109,7 +115,7 @@ SCENARIO_NOW = {"slate_end": NOW_SLATE_END, "taken": NOW_LATER,
 TWO_RUN = ("taken", "roster_changed", "next_week")
 #: The synthetic scenarios that are the `complete` cache with a twist.
 _BASE = {"slate_end": "complete", "hold": "complete", "sparse": "complete",
-         "designations": "complete", "open_spot": "complete",
+         "designations": "complete", "open_spot": "complete", "notable": "complete",
          "taken": "complete", "roster_changed": "complete", "next_week": "complete"}
 
 #: Unrostered fixture players with box scores AND crosswalk rows. Two go to
@@ -117,6 +123,10 @@ _BASE = {"slate_end": "complete", "hold": "complete", "sparse": "complete",
 _OPPONENT = {"9221": ("Jahmyr Gibbs", "RB", "DET"), "9228": ("Bryce Young", "QB", "CAR")}
 _FREE_AGENTS = {"11646": ("Jalen Coker", "WR", "CAR"), "11564": ("Drake Maye", "QB", "NE"),
                 "11560": ("Caleb Williams", "QB", "CHI")}
+#: The `notable` twist's free agent (an invented player): no game this
+#: season, dropped by the opponent 36 hours before the render, projected by
+#: Sleeper — the case the radar cannot rank and `gridiron.notable` names.
+_RETURNER = ("99001", "00-0099001", "Rex Returner", "RB", "CAR", 16.4)
 
 _CHROME_CANDIDATES = (
     os.environ.get("GRIDIRON_CHROME", ""),
@@ -277,6 +287,13 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
             m["players"] = list(mine["players"])
     snapshot["matchups"][1]["starters"] = list(opp["starters"])
     snapshot["matchups"][1]["players"] = list(opp["players"])
+    if twist == "notable":
+        dropped = int((now - timedelta(hours=36)).timestamp() * 1000)
+        snapshot["transactions"] = {"weeks": [2, 3], "error": "", "rows": [{
+            "transaction_id": "fixture-drop-1", "type": "free_agent", "status": "complete",
+            "roster_ids": [int(opp["roster_id"])], "adds": None,
+            "drops": {_RETURNER[0]: int(opp["roster_id"])}, "created": dropped,
+            "status_updated": dropped, "leg": 3}]}
     league_path = directory / "sleeper_league.json"
     league_path.write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
     manifest.record("sleeper_league", path=league_path, rows=len(snapshot["rosters"]),
@@ -285,6 +302,10 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
 
     players = json.loads((FIXTURES / "sleeper_players_small.json").read_text("utf-8"))
     for sid, (name, pos, team) in {**_OPPONENT, **_FREE_AGENTS}.items():
+        players[sid] = {"player_id": sid, "full_name": name, "position": pos, "team": team,
+                        "injury_status": None, "status": "Active", "gsis_id": None}
+    if twist == "notable":
+        sid, _, name, pos, team, _ = _RETURNER
         players[sid] = {"player_id": sid, "full_name": name, "position": pos, "team": team,
                         "injury_status": None, "status": "Active", "gsis_id": None}
     if kind == "stale":
@@ -302,6 +323,16 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
 
     cross_path = directory / "crosswalk.csv"
     cross_path.write_bytes((FIXTURES / "crosswalk_small.csv").read_bytes())
+    if twist == "notable":
+        cw = pd.read_csv(cross_path, dtype=str)
+        sid, gid, name, pos, team, points = _RETURNER
+        cw = pd.concat([cw, pd.DataFrame([{"sleeper_id": sid, "gsis_id": gid, "name": name,
+                                           "position": pos, "team": team}])],
+                       ignore_index=True)
+        cw.to_csv(cross_path, index=False)
+        write_shadow(directory, {"source": SHADOW_SOURCE, "season": season, "week": week,
+                                 "fetched_at": (now - timedelta(hours=1)).isoformat(),
+                                 "players": {sid: {"points": points, "position": pos}}})
     manifest.record("crosswalk", path=cross_path, rows=18, as_of=stamp,
                     source="dynastyprocess db_playerids.csv")
     manifest.save()

@@ -11,6 +11,11 @@ gridiron.sleeper.player_map_budget). `--force` re-pulls everything else.
 Sources
   nflverse (nflreadpy) : weekly player stats, snap counts, schedules, injuries
   Sleeper (read-only)  : NFL state, league, users, rosters, matchups, players
+  advanced-model inputs: expected points, Next Gen Stats, depth charts, team
+                         stats, weekly rosters (gridiron.models.advanced
+                         .fetch_inputs; beside the cache, outside the manifest)
+  shadow projections   : Sleeper's weekly projections for the shoot-out
+                         (gridiron.shadow; outside the manifest, gates nothing)
   dynastyprocess       : the id crosswalk (rule #3)
 
 Every pull is recorded in the season manifest with its as-of timestamp, row
@@ -34,6 +39,7 @@ from pathlib import Path
 
 from gridiron import ingest as ing
 from gridiron.carryover import CARRIED_FORWARD
+from gridiron import grading
 from gridiron.freshness import CADENCES
 from gridiron.ids import CROSSWALK_URL
 from gridiron import livesync as ls
@@ -47,6 +53,8 @@ from gridiron.sleeper import (USER_AGENT, SleeperReadOnly, note_player_map_check
                               read_player_map_history, write_player_map_status)
 
 NFLVERSE_SOURCES = ("weekly_stats", "snap_counts", "schedules", "injuries")
+#: A schedule re-pulled for a late score is tried again no sooner than this.
+SCORE_RETRY_HOURS = 1.0
 
 
 def atomic(path: Path, write) -> None:
@@ -112,6 +120,30 @@ def _current(manifest: ing.Manifest, name: str, now: datetime) -> bool:
     return True
 
 
+def _scores_overdue(manifest: ing.Manifest, now: datetime) -> bool:
+    """A cached schedule whose finished games carry no score is behind the games.
+
+    `grade_week.py --finished` grades a week only once every game of it has a
+    score (`gridiron.grading.week_is_final`). The schedule moves slowly (a
+    168 h cadence, so an 84 h refresh), and a copy pulled on Sunday night sat
+    "current" by age past Monday's game: the week-5 grade waited most of a
+    week for a 272-row re-pull while the box scores were already in. A
+    readable kickoff more than `grading.SCORE_GRACE_HOURS` ago with no score
+    forces the re-pull, at most once per `SCORE_RETRY_HOURS`: a game the feed
+    never scores (postponed, cancelled) must not re-download the schedule on
+    every 15-minute run. An unreadable cache is not overdue; the pull itself
+    reports a frame it cannot read."""
+    entry = manifest.get("schedules")
+    pulled = entry.as_of_dt if entry is not None else None
+    if pulled is not None and (now - pulled).total_seconds() / 3600.0 < SCORE_RETRY_HOURS:
+        return False
+    try:
+        frame = manifest.read_frame("schedules")
+    except Exception:  # noqa: BLE001 — a broken cache file is the pull's problem, not the grader's
+        return False
+    return grading.scores_overdue(frame, now)
+
+
 def pull_nflverse(manifest: ing.Manifest, season: int, now: datetime,
                   force: bool) -> None:
     import nflreadpy as nfl
@@ -128,8 +160,12 @@ def pull_nflverse(manifest: ing.Manifest, season: int, now: datetime,
     }
     for name, (fn, source) in jobs.items():
         if not force and _current(manifest, name, now):
-            print(f"  {name}: cached, skipping")
-            continue
+            if name == "schedules" and _scores_overdue(manifest, now):
+                print("  schedules: current by age, but a finished game still has no "
+                      "score — re-pulled so the week can be graded")
+            else:
+                print(f"  {name}: cached, skipping")
+                continue
         path = manifest.directory / f"{name}.parquet"
         try:
             df = fn()
@@ -272,11 +308,11 @@ def pull_shadow(manifest: ing.Manifest, now: datetime, force: bool, *,
     try:
         blob = shadow.fetch_sleeper(season, week, now=now,
                                     **({"fetch": fetch} if fetch else {}))
+        shadow.write_shadow(directory, blob)      # a write error is this step's too
     except Exception as exc:                                  # noqa: BLE001
         print(f"  shadow_projections: FAILED {type(exc).__name__}: {exc} — the "
               f"page is unaffected (shadow only)", file=sys.stderr)
         return
-    shadow.write_shadow(directory, blob)
     print(f"  shadow_projections: week {week}, {len(blob['players'])} players "
           f"(Sleeper, shadow only)")
 
@@ -292,13 +328,20 @@ def pull_model_inputs(manifest: ing.Manifest, season: int, now: datetime,
         print(f"  model_inputs: fetched under {adv_model.INPUT_REFRESH_HOURS:g} h ago, reused")
         return
     try:
-        frames = adv_model.fetch_inputs(season, loaders=loaders)
+        frames = adv_model.fetch_inputs(
+            season, loaders=loaders,
+            log=lambda m: print(f"  model_inputs: {m} (optional; left unknown)", file=sys.stderr))
+        folder = adv_model.write_inputs(directory, season, frames, now)  # its error is ours
     except Exception as exc:                                  # noqa: BLE001
         print(f"  model_inputs: FAILED {type(exc).__name__}: {exc} — the page "
               f"keeps the baseline projection", file=sys.stderr)
         return
-    adv_model.write_inputs(directory, season, frames, now)
-    print("  model_inputs: " + ", ".join(f"{k} {len(v)} rows" for k, v in frames.items()))
+    # what was WRITTEN (a failed refresh of a final input keeps its last good copy)
+    try:
+        rows = json.loads((folder / adv_model.INPUT_META).read_text("utf-8"))["rows"]
+    except (OSError, ValueError, KeyError):
+        rows = {k: len(v) for k, v in frames.items()}
+    print("  model_inputs: " + ", ".join(f"{k} {n} rows" for k, n in rows.items()))
 
 
 def run_number(text: str | None) -> int | None:
@@ -514,7 +557,10 @@ def main(argv: list[str] | None = None) -> int:
               f"{unscorable} — recorded in the manifest; the report will blank "
               f"the affected points rather than publish a wrong one",
               file=sys.stderr)
-    return 0
+    # The manifest is written either way (last-good data stays usable), but
+    # the exit code tells the truth: a pull with failed sources is not a
+    # success, and the cloud run summary prints this step's outcome.
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -37,7 +37,10 @@ def _schedule(last=17, bye=("CCC", 6)):
             if bye and w == bye[1] and bye[0] in (home, away):
                 continue
             played = w < 4
-            rows.append({"week": w, "game_type": "REG", "home_team": home, "away_team": away,
+            # season 2020's shape (16 games in 17 weeks): CCC's and AAA's
+            # whole seasons are present, so week 6 is a PROVEN bye for both
+            rows.append({"season": 2020, "week": w, "game_type": "REG",
+                         "home_team": home, "away_team": away,
                          "home_score": (30.0 if home == "AAA" else 20.0) if played else None,
                          "away_score": 14.0 if played else None,
                          "roof": "dome" if home == "AAA" else "outdoors"})
@@ -84,9 +87,33 @@ def test_a_week_the_schedule_does_not_cover_is_never_a_bye():
     S = R.Schedule(_schedule(last=8), 4)
     assert S.uncovered == tuple(range(9, 18))
     line = S.project("WR", "CCC", 10.0, adjust=False)
-    assert line.byes == (6,)                                     # only the declared one
-    assert line.games == 13 and line.ros == pytest.approx(130.0)
-    assert dict((v, o) for v, o, _ in line.weeks)[12] == "?"
+    # a frame cut off at week 8 proves no season, so CCC's week-6 gap is not
+    # a bye either: every remaining week counts as played, and is named
+    assert line.byes == () and S.unproven["CCC"] == (6,)
+    assert line.games == 14 and line.ros == pytest.approx(140.0)
+    weeks = dict((v, o) for v, o, _ in line.weeks)
+    assert weeks[12] == "?" and weeks[6] == "?"
+
+
+def test_a_bye_is_counted_only_when_the_schedule_proves_it():
+    """Owner decision 2026-10-16: a count over the team's whole season, not
+    bracketing. Deleting one real game breaks the proof for both teams."""
+    from gridiron.lineup import proven_byes
+    full = _schedule()
+    assert proven_byes(full) == {"AAA": frozenset({6}), "CCC": frozenset({6})}
+    S = R.Schedule(full, 4)
+    assert S.project("WR", "CCC", 10.0, adjust=False).byes == (6,) and not S.unproven
+    # delete one real week-9 game: AAA falls one game short and proves
+    # nothing; CCC is untouched. (BBB/DDD play every week of this toy league,
+    # more games than a real season holds, so they never prove anything.)
+    week9 = full.index[(full["week"] == 9) & (full["home_team"] == "AAA")]
+    cut = full.drop(week9)
+    assert "AAA" not in proven_byes(cut) and proven_byes(cut)["CCC"] == frozenset({6})
+    S2 = R.Schedule(cut, 4)
+    assert S2.project("WR", "AAA", 10.0, adjust=False).byes == ()    # unproven -> played
+    assert S2.unproven["AAA"] == (6, 9)
+    assert proven_byes(full.drop(columns=["season"])) == {}          # no season, no proof
+    assert proven_byes(pd.concat([full, full.iloc[:1]])) .get("AAA") is None   # duplicate
     assert R.team_strength(_schedule().drop(columns=["home_score"]), 4).offense == {}
 
 
@@ -193,6 +220,38 @@ def test_the_table_ranks_by_the_chosen_method_and_zeroes_only_the_out_week():
     assert set(shipped["method"]) <= {"ppg", "base", "adv", "adv_sched", "ros_model"}
     empty, why = R.build_table(weeks=None, schedule=sched, injuries=None, inputs=None, week=5)
     assert empty.empty and "no box scores" in why
+
+
+def test_a_reserve_list_stint_zeroes_the_nfl_minimum_and_flags_the_rest():
+    # wr1 (AAA): ACT weeks 1-3, on injured reserve from week 4; wr2 was on
+    # a reserve list in week 2 only and has been activated since
+    reserve = pd.DataFrame([{"week": 4, "gsis_id": "wr1"}, {"week": 2, "gsis_id": "wr2"}])
+    assert R.reserve_stints(reserve, 5) == {"wr1": 4}
+    assert R.reserve_stints(reserve, 3) == {"wr2": 2}           # last known roster (wk 2) stands
+    assert R.reserve_stints(reserve, 1) == {}                    # nothing known that early
+    assert R.reserve_stints(pd.DataFrame([{"week": 3, "gsis_id": "g"}, {"week": 4, "gsis_id": "g"},
+                                          {"week": 5, "gsis_id": "g"}]), 6) == {"g": 3}
+    assert R.reserve_stints(None, 5) == {}
+    sched = _schedule()
+    S = R.Schedule(sched, 5)
+    assert S.reserve_weeks("AAA", 4) == (5, 7, 8)                # game 4 missed; wk 6 no game
+    assert S.reserve_weeks("CCC", 5) == (5, 7, 8, 9)             # CCC's week-6 bye is not a game
+    assert S.reserve_weeks("AAA", 1) == ()                       # the four games are behind us
+    common = dict(weeks=_weeks(), schedule=sched, injuries=None, inputs=None, week=5,
+                  weights={"choice": {"WR": "ppg", "K": "ppg"}})
+    plain, _ = R.build_table(**common)
+    table, status = R.build_table(**common, reserve=reserve)
+    wr1, wr2 = table.set_index("gsis_id").loc["wr1"], table.set_index("gsis_id").loc["wr2"]
+    p1 = plain.set_index("gsis_id").loc["wr1"]
+    assert wr1["reserve_since"] == 4 and wr2["reserve_since"] != wr2["reserve_since"]  # NaN
+    assert wr1["games_left"] == p1["games_left"] - 3
+    assert wr1["ros"] == pytest.approx(p1["ros"] - 3 * 12.0)     # 3 games zero, week 9 on stands
+    assert wr1["weeks"].startswith("5:BBB:0 7:BBB:0 8:CCC:0 9:BBB:12")
+    assert "1 ranked player(s) on a reserve list" in status and "never guessed" in status
+    # the CLI flags the stint beside the row
+    rr = _load("ros_cli2", "scripts/weekly/ros_rankings.py")
+    assert rr._flag({"injury": "IR", "depth_rank": None, "reserve_since": 4}) \
+        == f" (IR; IR since wk4: {R.IR_MIN_GAMES} games 0)"
 
 
 def test_the_shipped_ros_weights_are_the_cross_validated_ones():

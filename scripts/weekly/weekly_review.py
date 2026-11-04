@@ -229,6 +229,42 @@ def roster_usage(rv: Review) -> list[str]:
     return out + [""]
 
 
+def notable_lines(watch: Mapping[str, object] | None) -> list[str]:
+    """The page's two research lists (`gridiron.notable`): free agents it
+    cannot rank but names anyway, and Sleeper's number where it abstains."""
+    if not isinstance(watch, Mapping):
+        return ["", "**Notable free agents:** not in this record (built before the list "
+                "existed).", ""]
+    out = ["", "**Notable free agents** (last season's starters, this league's recent "
+           "drops — research, not moves):", ""]
+    rows = watch.get("notable") or []
+    if rows:
+        out += ["| player | why | status | ours / Sleeper | waivers |", "|---|---|---|---|---|"]
+        for n in rows:
+            ours = _fmt(n.get("ours")) if n.get("ours") is not None else \
+                f"none ({n.get('ours_note')})"
+            out.append(f"| {'NEW ' if n.get('new') else ''}{n.get('name')} "
+                       f"({n.get('position')}, {n.get('team')}) | {'; '.join(n.get('why') or [])} "
+                       f"| {n.get('status')} | {ours} / {_fmt(n.get('market'))} | "
+                       f"{n.get('waiver')} |")
+    else:
+        out.append("None.")
+    for note in watch.get("notes") or []:
+        out.append(f"_{note}_")
+    out += ["", "**Can't project — Sleeper's number** (we abstain; highest first):", ""]
+    market = watch.get("market") or []
+    if market:
+        out += ["| player | Sleeper | vs my weakest eligible starter | why we abstain |",
+                "|---|---|---|---|"]
+        for m in market[:TOP_N]:
+            out.append(f"| {m.get('name')} ({m.get('position')}, {m.get('team')}) | "
+                       f"{_fmt(m.get('market'))} | {_fmt(m.get('gain'), 2)} | "
+                       f"{m.get('why_unprojected')} |")
+    else:
+        out.append("None.")
+    return out
+
+
 def free_agents(rv: Review, watch: Sequence[str]) -> list[str]:
     out = ["## Free agents", ""]
     page = [c for c in rv.cand.values() if c.get("verdict") in ("LINEUP", "RESEARCH")]
@@ -248,6 +284,7 @@ def free_agents(rv: Review, watch: Sequence[str]) -> list[str]:
                        f"{rv.usage_cell(sid)} |")
     else:
         out.append("None: no available player improves this week's lineup.")
+    out += notable_lines(rv.r.get("watch"))
     risers = [sid for sid in rv.pool if rv.trend(sid) == RISING]
     risers.sort(key=lambda s: -(rv.ppg(s) or 0))
     out += ["", "**Available players whose role is growing** (volume RISING):", ""]

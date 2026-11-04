@@ -90,13 +90,16 @@ def player_weeks(weekly: pd.DataFrame, snaps: pd.DataFrame,
                  rules: ScoringRules = DEFAULT_SCORING) -> pd.DataFrame:
     """One scored, snap-joined row per player-week, gsis-anchored."""
     frame = attach_snaps(score_frame(weekly, rules), snaps, crosswalk)
+    # A stat column the source did not carry is UNKNOWN for every player
+    # (rule #11): NaN, never 0, so a trend or a projection built on it blanks
+    # instead of reading "no carries" into a frame that simply lacked the column.
     for col in ("carries", "targets", "receptions", "receiving_yards",
                 "rushing_yards", "target_share", "air_yards_share", "wopr",
                 "rushing_tds", "receiving_tds", "passing_tds"):
         if col not in frame.columns:
-            frame[col] = 0.0
-    frame["opportunities"] = (frame["carries"].fillna(0)
-                              + frame["targets"].fillna(0))
+            frame[col] = pd.NA
+    frame["opportunities"] = frame[["carries", "targets"]].apply(
+        pd.to_numeric, errors="coerce").sum(axis=1, min_count=1)
     return frame
 
 

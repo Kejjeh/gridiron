@@ -1,0 +1,496 @@
+{
+ "block": "RB-13",
+ "title": "Touchdown-driven outcome spread (Poisson TDs + gamma yardage), RBs",
+ "kind": "distribution",
+ "columns": {
+  "RB": [
+   "td_share_std",
+   "td_games_std",
+   "td_share_prior"
+  ]
+ },
+ "positions": [
+  "RB"
+ ],
+ "lattice": 0.1,
+ "seasons": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "folds_tested": [
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025
+ ],
+ "min_week": 4,
+ "league": {
+  "weeks": [
+   4,
+   17
+  ],
+  "reps": 32,
+  "teams": 12,
+  "top_n": {
+   "QB": 14,
+   "RB": 30,
+   "WR": 34,
+   "TE": 14,
+   "K": 14,
+   "DEF": 14
+  },
+  "flex_pool": 24,
+  "seed": 20261015
+ },
+ "page_sd": {
+  "skill_and_K": "max(baseline x WEEKLY_CV, SD_FLOOR) (tables' sd)",
+  "DEF": 5.96
+ },
+ "coverage": {
+  "RB": {
+   "td_share_std": {
+    "2019": 0.956,
+    "2020": 0.963,
+    "2021": 0.969,
+    "2022": 0.963,
+    "2023": 0.971,
+    "2024": 0.949,
+    "2025": 0.955
+   },
+   "td_games_std": {
+    "2019": 0.956,
+    "2020": 0.963,
+    "2021": 0.969,
+    "2022": 0.964,
+    "2023": 0.971,
+    "2024": 0.949,
+    "2025": 0.955
+   },
+   "td_share_prior": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 1.0,
+    "2024": 1.0,
+    "2025": 1.0
+   }
+  }
+ },
+ "summary": "PASS (RB): lower CRPS than the page's normal in 7/7 folds (mean -0.1718); P(win) Brier 0.23808 vs 0.23812 (-0.000033, 95% CI -0.000133 to +0.000062)",
+ "folds": "RB CRPS 7/7",
+ "fold_results": {
+  "2019": {
+   "rows": 1142,
+   "params": {
+    "a": 1.997,
+    "b": 0.4807,
+    "train_crps": 2.90671
+   },
+   "fitted_normal": {
+    "crps": 3.11123,
+    "pinball_10": 0.7016,
+    "pinball_50": 2.17475,
+    "pinball_90": 1.29829,
+    "inside_10_90": 0.83625
+   },
+   "train_rows": 7270,
+   "page": {
+    "crps": 3.18773,
+    "pinball_10": 0.77091,
+    "pinball_50": 2.17475,
+    "pinball_90": 1.36693,
+    "inside_10_90": 0.66112
+   },
+   "candidate": {
+    "crps": 3.00738,
+    "pinball_10": 0.65757,
+    "pinball_50": 2.07877,
+    "pinball_90": 1.29381,
+    "inside_10_90": 0.80123
+   },
+   "candidate_sd_mean": 5.6622,
+   "page_sd_mean": 4.2658,
+   "crps_delta": -0.1803481797650578,
+   "pwin": {
+    "matchups": 2688,
+    "page": {
+     "brier": 0.23927,
+     "logloss": 0.671161
+    },
+    "candidate": {
+     "brier": 0.239239,
+     "logloss": 0.671083
+    },
+    "fitted_normal": {
+     "brier": 0.239194,
+     "logloss": 0.671003
+    }
+   }
+  },
+  "2020": {
+   "rows": 1154,
+   "params": {
+    "a": 1.9293,
+    "b": 0.4883,
+    "train_crps": 2.90838
+   },
+   "fitted_normal": {
+    "crps": 3.11933,
+    "pinball_10": 0.66919,
+    "pinball_50": 2.18251,
+    "pinball_90": 1.32064,
+    "inside_10_90": 0.84055
+   },
+   "train_rows": 7258,
+   "page": {
+    "crps": 3.18726,
+    "pinball_10": 0.7254,
+    "pinball_50": 2.18251,
+    "pinball_90": 1.37748,
+    "inside_10_90": 0.67071
+   },
+   "candidate": {
+    "crps": 3.00388,
+    "pinball_10": 0.62904,
+    "pinball_50": 2.0763,
+    "pinball_90": 1.31873,
+    "inside_10_90": 0.80156
+   },
+   "candidate_sd_mean": 5.5951,
+   "page_sd_mean": 4.2354,
+   "crps_delta": -0.1833728824924403,
+   "pwin": {
+    "matchups": 2688,
+    "page": {
+     "brier": 0.238787,
+     "logloss": 0.670239
+    },
+    "candidate": {
+     "brier": 0.238709,
+     "logloss": 0.670074
+    },
+    "fitted_normal": {
+     "brier": 0.238744,
+     "logloss": 0.670146
+    }
+   }
+  },
+  "2021": {
+   "rows": 1195,
+   "params": {
+    "a": 1.895,
+    "b": 0.4873,
+    "train_crps": 2.88363
+   },
+   "fitted_normal": {
+    "crps": 3.22526,
+    "pinball_10": 0.70962,
+    "pinball_50": 2.26068,
+    "pinball_90": 1.35683,
+    "inside_10_90": 0.80502
+   },
+   "train_rows": 7217,
+   "page": {
+    "crps": 3.30499,
+    "pinball_10": 0.76033,
+    "pinball_50": 2.26068,
+    "pinball_90": 1.44726,
+    "inside_10_90": 0.65774
+   },
+   "candidate": {
+    "crps": 3.14327,
+    "pinball_10": 0.67557,
+    "pinball_50": 2.19781,
+    "pinball_90": 1.32503,
+    "inside_10_90": 0.76904
+   },
+   "candidate_sd_mean": 5.5211,
+   "page_sd_mean": 4.1208,
+   "crps_delta": -0.16172056855116318,
+   "pwin": {
+    "matchups": 2688,
+    "page": {
+     "brier": 0.238906,
+     "logloss": 0.670355
+    },
+    "candidate": {
+     "brier": 0.238875,
+     "logloss": 0.670289
+    },
+    "fitted_normal": {
+     "brier": 0.238861,
+     "logloss": 0.670253
+    }
+   }
+  },
+  "2022": {
+   "rows": 1260,
+   "params": {
+    "a": 2.0914,
+    "b": 0.464,
+    "train_crps": 2.92689
+   },
+   "fitted_normal": {
+    "crps": 2.98427,
+    "pinball_10": 0.66646,
+    "pinball_50": 2.09488,
+    "pinball_90": 1.21293,
+    "inside_10_90": 0.82143
+   },
+   "train_rows": 7152,
+   "page": {
+    "crps": 3.05961,
+    "pinball_10": 0.73257,
+    "pinball_50": 2.09488,
+    "pinball_90": 1.27657,
+    "inside_10_90": 0.65079
+   },
+   "candidate": {
+    "crps": 2.8942,
+    "pinball_10": 0.62695,
+    "pinball_50": 2.00276,
+    "pinball_90": 1.21778,
+    "inside_10_90": 0.79127
+   },
+   "candidate_sd_mean": 5.4383,
+   "page_sd_mean": 3.9404,
+   "crps_delta": -0.16540788052833008,
+   "pwin": {
+    "matchups": 2686,
+    "page": {
+     "brier": 0.239318,
+     "logloss": 0.671259
+    },
+    "candidate": {
+     "brier": 0.239285,
+     "logloss": 0.671193
+    },
+    "fitted_normal": {
+     "brier": 0.23926,
+     "logloss": 0.67114
+    }
+   }
+  },
+  "2023": {
+   "rows": 1180,
+   "params": {
+    "a": 2.1257,
+    "b": 0.47,
+    "train_crps": 2.94787
+   },
+   "fitted_normal": {
+    "crps": 2.84463,
+    "pinball_10": 0.65887,
+    "pinball_50": 2.03562,
+    "pinball_90": 1.09805,
+    "inside_10_90": 0.87119
+   },
+   "train_rows": 7232,
+   "page": {
+    "crps": 2.90914,
+    "pinball_10": 0.69835,
+    "pinball_50": 2.03562,
+    "pinball_90": 1.15815,
+    "inside_10_90": 0.69068
+   },
+   "candidate": {
+    "crps": 2.7492,
+    "pinball_10": 0.6091,
+    "pinball_50": 1.93402,
+    "pinball_90": 1.11558,
+    "inside_10_90": 0.82966
+   },
+   "candidate_sd_mean": 5.656,
+   "page_sd_mean": 4.0956,
+   "crps_delta": -0.1599359412883802,
+   "pwin": {
+    "matchups": 2687,
+    "page": {
+     "brier": 0.239526,
+     "logloss": 0.6719
+    },
+    "candidate": {
+     "brier": 0.23946,
+     "logloss": 0.671745
+    },
+    "fitted_normal": {
+     "brier": 0.23945,
+     "logloss": 0.67172
+    }
+   }
+  },
+  "2024": {
+   "rows": 1226,
+   "params": {
+    "a": 1.9813,
+    "b": 0.4891,
+    "train_crps": 2.94453
+   },
+   "fitted_normal": {
+    "crps": 2.88981,
+    "pinball_10": 0.66119,
+    "pinball_50": 2.06573,
+    "pinball_90": 1.14766,
+    "inside_10_90": 0.86134
+   },
+   "train_rows": 7186,
+   "page": {
+    "crps": 2.96373,
+    "pinball_10": 0.72179,
+    "pinball_50": 2.06573,
+    "pinball_90": 1.18816,
+    "inside_10_90": 0.67863
+   },
+   "candidate": {
+    "crps": 2.78457,
+    "pinball_10": 0.61142,
+    "pinball_50": 1.95788,
+    "pinball_90": 1.15258,
+    "inside_10_90": 0.823
+   },
+   "candidate_sd_mean": 5.5463,
+   "page_sd_mean": 4.0097,
+   "crps_delta": -0.17916133068558926,
+   "pwin": {
+    "matchups": 2687,
+    "page": {
+     "brier": 0.235027,
+     "logloss": 0.662365
+    },
+    "candidate": {
+     "brier": 0.235121,
+     "logloss": 0.66258
+    },
+    "fitted_normal": {
+     "brier": 0.235141,
+     "logloss": 0.662626
+    }
+   }
+  },
+  "2025": {
+   "rows": 1255,
+   "params": {
+    "a": 2.0603,
+    "b": 0.4681,
+    "train_crps": 2.92868
+   },
+   "fitted_normal": {
+    "crps": 2.96686,
+    "pinball_10": 0.66561,
+    "pinball_50": 2.06078,
+    "pinball_90": 1.25725,
+    "inside_10_90": 0.85259
+   },
+   "train_rows": 7157,
+   "page": {
+    "crps": 3.04229,
+    "pinball_10": 0.71565,
+    "pinball_50": 2.06078,
+    "pinball_90": 1.33046,
+    "inside_10_90": 0.66534
+   },
+   "candidate": {
+    "crps": 2.86956,
+    "pinball_10": 0.60573,
+    "pinball_50": 1.98656,
+    "pinball_90": 1.24729,
+    "inside_10_90": 0.80558
+   },
+   "candidate_sd_mean": 5.3488,
+   "page_sd_mean": 3.8838,
+   "crps_delta": -0.172720780468071,
+   "pwin": {
+    "matchups": 2687,
+    "page": {
+     "brier": 0.235992,
+     "logloss": 0.664438
+    },
+    "candidate": {
+     "brier": 0.235902,
+     "logloss": 0.664227
+    },
+    "fitted_normal": {
+     "brier": 0.235923,
+     "logloss": 0.664269
+    }
+   }
+  }
+ },
+ "bar": {
+  "position": "RB",
+  "crps_folds_better": 7,
+  "folds": 7,
+  "crps_every_fold": true,
+  "mean_crps_delta": -0.17181,
+  "pooled_scores": {
+   "candidate": {
+    "crps": 2.92,
+    "pinball_10": 0.63037,
+    "pinball_50": 2.03228,
+    "pinball_90": 1.23775,
+    "inside_10_90": 0.80302
+   },
+   "fitted_normal": {
+    "crps": 3.01831,
+    "pinball_10": 0.67578,
+    "pinball_50": 2.12365,
+    "pinball_90": 1.24072,
+    "inside_10_90": 0.84118
+   },
+   "page": {
+    "crps": 3.09171,
+    "pinball_10": 0.73184,
+    "pinball_50": 2.12365,
+    "pinball_90": 1.30547,
+    "inside_10_90": 0.66774
+   }
+  },
+  "pwin_pooled": {
+   "matchups": 18811,
+   "page": {
+    "brier": 0.238118,
+    "logloss": 0.668817
+   },
+   "candidate": {
+    "brier": 0.238085,
+    "logloss": 0.668742
+   },
+   "fitted_normal": {
+    "brier": 0.238082,
+    "logloss": 0.668737
+   }
+  },
+  "pwin_brier_delta": -3.339221066575582e-05,
+  "pwin_brier_not_worse": true,
+  "pwin_brier_boot": {
+   "delta_brier": -3.34e-05,
+   "ci95": [
+    -0.0001333,
+    6.16e-05
+   ],
+   "share_boot_not_worse": 0.759,
+   "clusters": 98
+  },
+  "passes": true
+ },
+ "verdict": "PASS RB",
+ "passed": [
+  "RB"
+ ],
+ "tables_digest": "42693a4a57591b37",
+ "prereg_blob": "a39d180fd138",
+ "module_blob": "1d5d97df3e17",
+ "helpers_blob": "1e5b77d1a23a",
+ "harness_blob": "76c30a13bf3b",
+ "head": "9a54bdc8c308",
+ "run_at": "2026-11-02T08:14:28+00:00"
+}

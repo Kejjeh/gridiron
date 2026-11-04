@@ -49,8 +49,8 @@ GRADES = "grades"
 
 #: The systems the weekly shoot-out compares, as the page names them.
 SYSTEM_LABELS: dict[str, str] = {
-    "page": "This page", "baseline_v1": "Old baseline", "sleeper": "Sleeper",
-    "blend": "Page + Sleeper blend", "stack": "Stack",
+    "page": "This page", "baseline_v1": "Old baseline", "adv_v1": "Advanced alone",
+    "sleeper": "Sleeper", "blend": "Page + Sleeper blend", "stack": "Stack",
 }
 
 #: Evening games run past midnight UTC; shifting back six hours files every
@@ -88,6 +88,51 @@ def week_is_final(schedule: pd.DataFrame | None, week: int) -> bool:
     if len(rows) == 0:
         return False
     return bool(rows["home_score"].notna().all() and rows["away_score"].notna().all())
+
+
+#: How long after kickoff a game's score is expected in the schedule feed. A
+#: game runs about three and a half hours and nflverse posts the result within
+#: a few hours of the final whistle; six hours leaves room for overtime and the
+#: feed's own lag without calling a game still in progress "overdue".
+SCORE_GRACE_HOURS = 6.0
+
+
+def scores_overdue(schedule: pd.DataFrame | None, now: datetime,
+                   grace_hours: float = SCORE_GRACE_HOURS) -> bool:
+    """True when some regular-season game kicked off more than `grace_hours`
+    before `now` and still carries no score in `schedule`.
+
+    This is the sign that the cached schedule is behind the games. A week is
+    graded only when every game has a score (`week_is_final`), and a schedule
+    pulled on Sunday night says nothing about Monday's game until it is
+    pulled again; the pull step re-fetches it on this signal instead of
+    waiting out the schedule's slow cadence. A row whose kickoff cannot be
+    read is skipped (absence is never evidence), so a schedule with no
+    readable rows is never overdue.
+    """
+    if schedule is None or len(schedule) == 0:
+        return False
+    if not {"gameday", "gametime", "home_score", "away_score"} <= set(schedule.columns):
+        return False
+    rows = schedule
+    if "game_type" in rows.columns:
+        types = rows["game_type"].astype(str).str.strip().str.upper()
+        rows = rows.loc[types == "REG"]
+    now_utc = now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    cutoff = now_utc - timedelta(hours=float(grace_hours))
+    missing = rows.loc[rows["home_score"].isna() | rows["away_score"].isna()]
+    for row in missing.itertuples():
+        day = str(getattr(row, "gameday", "") or "").strip()
+        time_ = str(getattr(row, "gametime", "") or "").strip()
+        if not day or day.lower() == "nan" or not time_ or time_.lower() == "nan":
+            continue
+        try:
+            kick = pd.Timestamp(f"{day} {time_}", tz="America/New_York")
+        except (ValueError, TypeError):
+            continue
+        if kick.to_pydatetime().astimezone(timezone.utc) <= cutoff:
+            return True
+    return False
 
 
 # ------------------------------------------------------------------- pins
@@ -250,6 +295,11 @@ class ReportCard:
     weeks: tuple[WeekGrade, ...] = ()
     #: system -> (pairs-weighted season rate, pairs)
     shootout: Mapping[str, tuple[float, int]] = field(default_factory=dict)
+    #: P(win) on every graded league matchup, season to date: n, Brier and
+    #: log loss (calibrated and raw), the favourite's average stated chance
+    #: and how many favourites won. Empty until a board that recorded league
+    #: matchups has been graded.
+    pwin: Mapping[str, float] = field(default_factory=dict)
 
     @property
     def any(self) -> bool:
@@ -291,4 +341,26 @@ def report_card(rows: Sequence[Mapping[str, object]], season: int) -> ReportCard
             mae=_f(r.get("projection_mae")), mae_n=_i(r.get("projection_n")),
             pairs=pairs, rates=rates))
     shoot = {s: (hits[s] / pairs_by[s], pairs_by[s]) for s in SYSTEM_LABELS if pairs_by.get(s)}
-    return ReportCard(int(season), tuple(weeks), shoot)
+    return ReportCard(int(season), tuple(weeks), shoot, pwin_totals(rows))
+
+
+def pwin_totals(rows: Sequence[Mapping[str, object]]) -> dict[str, float]:
+    """Season-to-date P(win) check from the ledger's per-week means, each
+    weighted by that week's matchup count. {} when no week has one."""
+    n = 0
+    acc = {"brier": 0.0, "logloss": 0.0, "raw_brier": 0.0, "raw_logloss": 0.0, "fav_stated": 0.0}
+    fav_won = 0
+    for r in rows:
+        k = _i(r.get("pwin_n"))
+        if not k:
+            continue
+        vals = {m: _f(r.get(f"pwin_{m}")) for m in acc}
+        if any(v is None for v in vals.values()):
+            continue
+        n += k
+        for m, v in vals.items():
+            acc[m] += v * k
+        fav_won += _i(r.get("pwin_fav_won"))
+    if not n:
+        return {}
+    return {"n": n, **{m: round(v / n, 4) for m, v in acc.items()}, "fav_won": fav_won}
