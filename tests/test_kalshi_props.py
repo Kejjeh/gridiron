@@ -144,3 +144,35 @@ def test_markets_settled_before_the_archive_cutoff_use_the_per_market_endpoint(t
         MARKETS = keep
     assert rep.games_done == 1 and rep.archived_calls == 1 and len(api.archived) == 1
     assert not any(p.startswith("/markets/candlesticks?") for p in api.paths)
+
+
+def _rsa_key():
+    """A test key, or None where the cryptography library is absent or broken."""
+    try:
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    except BaseException:                       # noqa: BLE001 — a broken native backend panics
+        return None
+
+
+def test_the_signature_follows_kalshis_documented_message():
+    import base64
+
+    import pytest
+    key = _rsa_key()
+    if key is None:
+        pytest.skip("cryptography is not usable here")
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    h = K.Signer("kid-1", key, clock=lambda: 1700000000.123).headers("get", "/markets?series_ticker=X")
+    assert h["KALSHI-ACCESS-KEY"] == "kid-1" and h["KALSHI-ACCESS-TIMESTAMP"] == "1700000000123"
+    key.public_key().verify(base64.b64decode(h["KALSHI-ACCESS-SIGNATURE"]),
+                            b"1700000000123GET/trade-api/v2/markets",
+                            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                        salt_length=padding.PSS.DIGEST_LENGTH), hashes.SHA256())
+
+
+def test_no_key_in_the_environment_means_anonymous(monkeypatch):
+    monkeypatch.delenv("GRIDIRON_KALSHI_KEY_ID", raising=False)
+    monkeypatch.delenv("GRIDIRON_KALSHI_PRIVATE_KEY_PATH", raising=False)
+    assert K.Signer.from_env() is None

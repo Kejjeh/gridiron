@@ -59,6 +59,7 @@ ROOT = RESEARCH_CACHE / "kalshi"
 SINCE = datetime(2025, 9, 1, tzinfo=timezone.utc)
 LEAD_MINUTES = 120
 PAUSE_SECONDS = 1.5
+AUTH_PAUSE_SECONDS = 0.1                      # well inside the Basic tier's read budget
 TRIES = 6
 BATCH = 100                                   # market_tickers per candlestick call (the API's maximum)
 CANDLE_MINUTES = 60
@@ -80,9 +81,52 @@ class KalshiError(Exception):
         self.status = status
 
 
-def http_get(path: str, *, timeout: int = 60) -> dict:
-    req = urllib.request.Request(HOST + path, headers={"User-Agent": USER_AGENT,
-                                                       "Accept": "application/json"})
+class Signer:
+    """Optional API-key auth (docs.kalshi.com, API keys): headers
+    KALSHI-ACCESS-KEY / -TIMESTAMP (ms) / -SIGNATURE, the signature being the
+    base64 of timestamp + method + path (with /trade-api/v2, without the query)
+    signed with the private key: RSA-PSS SHA-256 (salt = digest length) or
+    Ed25519. Read from GRIDIRON_KALSHI_KEY_ID and GRIDIRON_KALSHI_PRIVATE_KEY_PATH
+    (rule #9: never a tracked file). Authenticated reads get Kalshi's documented
+    read budget instead of the much tighter anonymous throttle."""
+
+    def __init__(self, key_id: str, private_key, clock: Callable[[], float] = time.time):
+        self.key_id, self.key, self.clock = key_id, private_key, clock
+
+    @classmethod
+    def from_env(cls) -> "Signer | None":
+        key_id = os.environ.get("GRIDIRON_KALSHI_KEY_ID")
+        path = os.environ.get("GRIDIRON_KALSHI_PRIVATE_KEY_PATH")
+        if not key_id or not path:
+            return None
+        try:
+            from cryptography.hazmat.primitives import serialization
+        except ImportError as exc:
+            raise SystemExit("Kalshi API-key auth needs `pip install cryptography`") from exc
+        key = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
+        return cls(key_id, key)
+
+    def headers(self, method: str, path: str) -> dict[str, str]:
+        import base64
+        ts = str(int(self.clock() * 1000))
+        full = "/trade-api/v2" + path.split("?", 1)[0]
+        msg = (ts + method.upper() + full).encode("utf-8")
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ed25519, padding
+        if isinstance(self.key, ed25519.Ed25519PrivateKey):
+            sig = self.key.sign(msg)
+        else:
+            sig = self.key.sign(msg, padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                                 salt_length=padding.PSS.DIGEST_LENGTH), hashes.SHA256())
+        return {"KALSHI-ACCESS-KEY": self.key_id, "KALSHI-ACCESS-TIMESTAMP": ts,
+                "KALSHI-ACCESS-SIGNATURE": base64.b64encode(sig).decode("ascii")}
+
+
+def http_get(path: str, *, timeout: int = 60, signer: "Signer | None" = None) -> dict:
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    if signer is not None:
+        headers.update(signer.headers("GET", path))
+    req = urllib.request.Request(HOST + path, headers=headers)
     failure = None
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -471,7 +515,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     now = datetime.now(timezone.utc)
     games = schedule_games(load_schedules(range(SINCE.year, now.year + 1)), now)
-    client = Client()
+    signer = Signer.from_env()
+    client = Client(fetch=(lambda path: http_get(path, signer=signer)) if signer else http_get,
+                    pause=AUTH_PAUSE_SECONDS if signer else PAUSE_SECONDS)
+    print(f"[kalshi] {'authenticated (API key)' if signer else 'anonymous: slow; set GRIDIRON_KALSHI_KEY_ID and GRIDIRON_KALSHI_PRIVATE_KEY_PATH for the documented read budget'}")
     rep = fetch(client=client, games=games, series=tuple(args.series or SERIES), root=args.root,
                 max_games=args.max_games, lead=args.lead, refresh_lists=args.refresh_lists)
     for line in rep.lines(client):
