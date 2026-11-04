@@ -446,3 +446,31 @@ summary (by type and count, never by name):
 | `.github/workflows/props-collect.yml` | The hourly cloud collector |
 | `scripts/research/book_ranking.py` | The book ranking |
 | `tests/test_props.py`, `tests/test_pull_props.py`, `tests/test_odds_names.py`, `tests/test_market_contender.py`, `tests/test_book_ranking.py`, `tests/test_workflow_inputs.py` | The tests (fictional players, books and ids) |
+
+## Backfill: past seasons (paid plan, owner's call)
+
+`scripts/ingest/backfill_props.py` buys ONE historical snapshot per past game
+(the six core markets, 120 minutes before the nflverse kickoff, as the live
+collector would have taken it) and stores it where the live collector stores
+its own (`raw/season<Y>/week<NN>/`, marked `"source": "historical"`), so
+`rederive`, `odds_names.py propose` and the book ranking read it unchanged.
+Local only, resumable, and it never spends past `--budget`.
+
+Cost (the v4 guide, read 2026-11-04): historical event odds cost 10 x unique
+markets returned x regions (an empty response is free); a historical event
+list costs 1. Player props exist from 2023-05-03. `estimate` (no key, no
+call) gives, for weeks 1-17 of 2023-2025 and 2026 weeks 1-8:
+
+| scope | games | at most (credits) |
+|---|---|---|
+| 2023, 2024 or 2025, one season | 256 | 15,377 |
+| 2026 weeks 1-8 | 121 | 7,268 |
+| all of it, core markets | 889 | 53,399 (53,751 if every kickoff slot needs its own event list) |
+| all of it, plus kicking points (`--kickers`) | 889 | 62,289 |
+
+Each market a game has no line in takes 10 off. Checked 2026-11-04 with the
+owner's free key: the historical event list works (1 credit) but historical
+event odds answer HTTP 401, so the backfill needs a paid plan (the pricing
+page lists 20K credits for $30 a month and 100K for $59; one month of the
+100K plan covers everything above). Run a probe first:
+`backfill_props.py run --budget 70 --max-games 1`, then the rest.
