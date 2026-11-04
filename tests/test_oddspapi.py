@@ -190,6 +190,36 @@ def test_date_input_is_data(raw):
         SCRIPT.parse_day(raw, "2026-01-01")
 
 
+class _Fixtures:
+    def __init__(self, answers):
+        self.answers = list(answers)
+
+    def fixtures(self, *_a, **_k):
+        a = self.answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+
+def test_an_empty_fixture_window_404_is_skipped_not_fatal():
+    nf = op.OddsPapiError("fixtures: HTTP 404", 404, "NO_FIXTURES")
+    got = SCRIPT.fetch_fixtures(_Fixtures([nf, [{"fixtureId": "x", "startTime": "2026-09-10"}]]),
+                                31, "2026-08-01", "2026-09-15")
+    assert [f["fixtureId"] for f in got] == ["x"]
+
+
+def test_all_windows_empty_is_an_error_not_a_silent_zero():
+    nf = op.OddsPapiError("fixtures: HTTP 404", 404, None)
+    with pytest.raises(op.OddsPapiError):
+        SCRIPT.fetch_fixtures(_Fixtures([nf, nf]), 31, "2026-04-01", "2026-05-15")
+
+
+def test_other_fixture_errors_still_raise():
+    with pytest.raises(op.OddsPapiError):
+        SCRIPT.fetch_fixtures(_Fixtures([op.OddsPapiError("x", 500)]), 31,
+                              "2026-04-01", "2026-04-10")
+
+
 def test_build_long_from_cached_raw(tmp_path):
     (tmp_path / "raw").mkdir()
     with gzip.open(tmp_path / "raw" / "id1__pinnacle.json.gz", "wt", encoding="utf-8") as fh:

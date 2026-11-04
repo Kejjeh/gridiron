@@ -95,11 +95,25 @@ def fetch_fixtures(c: op.Client, tournament_id: int, start: str, end: str) -> li
     seen: dict[str, dict] = {}
     cur = date.fromisoformat(start)
     stop = date.fromisoformat(end)
+    empty: list[str] = []
     while cur <= stop:
         nxt = min(cur + timedelta(days=30), stop + timedelta(days=1))
-        for f in c.fixtures(tournament_id, f"{cur}T00:00:00Z", f"{nxt}T00:00:00Z") or []:
+        try:
+            got = c.fixtures(tournament_id, f"{cur}T00:00:00Z", f"{nxt}T00:00:00Z") or []
+        except op.OddsPapiError as exc:
+            if exc.status != 404:
+                raise
+            # The provider answers 404 for a window with no fixtures (e.g.
+            # the NFL off-season). Logged, not swallowed.
+            empty.append(f"{cur}..{nxt} ({exc.code or '404'})")
+            got = []
+        for f in got:
             seen[str(f["fixtureId"])] = f
         cur = nxt
+    if empty:
+        print(f"fixture windows with nothing (404): {empty}")
+    if not seen:
+        raise op.OddsPapiError(f"no finished NFL fixtures in {start}..{end}: every window 404'd")
     return sorted(seen.values(), key=lambda f: f.get("startTime") or "")
 
 
@@ -112,8 +126,9 @@ def cmd_probe(args) -> int:
     c = client()
     acct = c.account()
     if isinstance(acct, dict):
-        keep = {k: v for k, v in acct.items() if "request" in k.lower() or k in ("plan", "planName")}
-        print(f"account: {keep}")
+        keep = {k: v for k, v in acct.items()
+                if isinstance(v, (int, float)) or k.lower() in ("plan", "planname")}
+        print(f"account (numeric fields): {keep}  keys={sorted(acct)}")
     cat = discover(c)
     print(f"american football sportId={cat['sport_id']}  NFL tournamentId={cat['tournament_id']}")
     print(f"player-prop markets in catalogue: {len(cat['prop_markets'])}")

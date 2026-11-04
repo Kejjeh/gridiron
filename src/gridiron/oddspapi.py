@@ -88,7 +88,13 @@ def _urllib_open(url: str, timeout: float) -> tuple[int, bytes]:
                 body = gzip.decompress(body)
             return resp.status, body
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read() or b""
+        body = exc.read() or b""
+        if body[:2] == b"\x1f\x8b":
+            try:
+                body = gzip.decompress(body)
+            except OSError:
+                pass
+        return exc.code, body
 
 
 @dataclass
