@@ -29,6 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
 BASE_URL = "https://api.oddspapi.io/v4"
@@ -240,29 +241,58 @@ def nfl_season(start_time: str) -> int:
     return year if month >= 3 else year - 1
 
 
-# -- flattening (pure) --------------------------------------------------------
+# -- reduction (pure) ---------------------------------------------------------
+#
+# A finished game's history is every price update from listing to settlement,
+# about 800k entries for one Monday game across three books (probe,
+# 2026-11-04). The backfill keeps, per prop (fixture, book, market, outcome,
+# player): the OPENING price (first pre-kickoff entry) and the CLOSING price
+# (last entry at or before kickoff). In-play entries are counted, never used
+# as a close. A prop with no pre-kickoff entry is dropped and counted.
 
 PROP_COLUMNS = [
-    "season", "fixture_id", "start_time", "home", "away", "bookmaker",
+    "season", "fixture_id", "kickoff", "home", "away", "bookmaker",
     "market_id", "market_name", "line", "outcome_id", "outcome_name",
-    "oddspapi_player_id", "player_name", "created_at", "price_decimal",
-    "limit", "active",
+    "oddspapi_player_id", "player_name",
+    "open_at", "open_price", "close_at", "close_price", "close_limit",
+    "n_updates_pregame", "n_updates_inplay",
 ]
 
 
-def flatten_props(payload: dict, fixture: dict, props: dict[int, dict],
-                  player_names: dict[str, str] | None = None) -> list[dict]:
-    """One row per price observation in a player-prop market.
+def _ts(text: str | None) -> datetime | None:
+    if not text:
+        return None
+    try:
+        t = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def kickoff_of(fixture: dict) -> datetime | None:
+    """The real kickoff when the provider recorded one, else the scheduled one."""
+    return _ts(fixture.get("trueStartTime")) or _ts(fixture.get("startTime"))
+
+
+def reduce_open_close(payload: dict, fixture: dict, props: dict[int, dict],
+                      player_names: dict[str, str] | None = None,
+                      stats: dict | None = None) -> list[dict]:
+    """One row per prop: opening and closing pre-kickoff price.
 
     ``line`` is the market catalogue's handicap: OddsPapi models each line as
     its own market id. ``player_name`` is filled only from a provider map
-    keyed by the same id, never by matching text.
+    keyed by the same id, never by matching text (rule #3).
     """
     names = player_names or {}
-    rows: list[dict] = []
+    kickoff = kickoff_of(fixture)
+    if kickoff is None:
+        raise ValueError(f"fixture {fixture.get('fixtureId')} has no start time")
+    st = stats if stats is not None else {}
+    for k in ("entries", "props", "dropped_no_pregame"):
+        st.setdefault(k, 0)
     start = fixture.get("startTime") or ""
-    books = (payload or {}).get("bookmakers") or {}
-    for book, bdata in books.items():
+    rows: list[dict] = []
+    for book, bdata in ((payload or {}).get("bookmakers") or {}).items():
         for mid_s, mdata in ((bdata or {}).get("markets") or {}).items():
             try:
                 mid = int(mid_s)
@@ -274,26 +304,48 @@ def flatten_props(payload: dict, fixture: dict, props: dict[int, dict],
             for oid_s, odata in ((mdata or {}).get("outcomes") or {}).items():
                 oid = int(oid_s)
                 for pid, entries in ((odata or {}).get("players") or {}).items():
+                    first = last = None
+                    first_t = last_t = None
+                    n_pre = n_in = 0
                     for e in entries or []:
-                        rows.append({
-                            "season": nfl_season(start) if start else None,
-                            "fixture_id": fixture.get("fixtureId"),
-                            "start_time": start,
-                            "home": fixture.get("participant1Name"),
-                            "away": fixture.get("participant2Name"),
-                            "bookmaker": book,
-                            "market_id": mid,
-                            "market_name": market["name"],
-                            "line": market["handicap"],
-                            "outcome_id": oid,
-                            "outcome_name": market["outcomes"].get(oid),
-                            "oddspapi_player_id": str(pid),
-                            "player_name": names.get(str(pid)),
-                            "created_at": e.get("createdAt"),
-                            "price_decimal": e.get("price"),
-                            "limit": e.get("limit"),
-                            "active": e.get("active"),
-                        })
+                        st["entries"] += 1
+                        t = _ts(e.get("createdAt"))
+                        if t is None or e.get("price") is None:
+                            continue
+                        if t > kickoff:
+                            n_in += 1
+                            continue
+                        n_pre += 1
+                        if first_t is None or t < first_t:
+                            first, first_t = e, t
+                        if last_t is None or t >= last_t:
+                            last, last_t = e, t
+                    st["props"] += 1
+                    if last is None:
+                        st["dropped_no_pregame"] += 1
+                        continue
+                    rows.append({
+                        "season": nfl_season(start) if start else None,
+                        "fixture_id": fixture.get("fixtureId"),
+                        "kickoff": kickoff.isoformat(),
+                        "home": fixture.get("participant1Name"),
+                        "away": fixture.get("participant2Name"),
+                        "bookmaker": book,
+                        "market_id": mid,
+                        "market_name": market["name"],
+                        "line": market["handicap"],
+                        "outcome_id": oid,
+                        "outcome_name": market["outcomes"].get(oid),
+                        "oddspapi_player_id": str(pid),
+                        "player_name": names.get(str(pid)),
+                        "open_at": first.get("createdAt"),
+                        "open_price": first.get("price"),
+                        "close_at": last.get("createdAt"),
+                        "close_price": last.get("price"),
+                        "close_limit": last.get("limit"),
+                        "n_updates_pregame": n_pre,
+                        "n_updates_inplay": n_in,
+                    })
     return rows
 
 

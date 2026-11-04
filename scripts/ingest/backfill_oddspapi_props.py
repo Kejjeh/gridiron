@@ -11,12 +11,15 @@ data/research/cache/oddspapi/ (gitignored, rule #10):
 
     catalogue.json             sport/tournament ids, prop-market catalogue
     fixtures.json              finished NFL fixtures in the window
-    raw/<fixture>__<books>.json.gz   one historical-odds payload per call
-    props_long.csv.gz          one row per price observation, prop markets only
+    reduced/<fixture>__<books>.csv.gz  one game's props, opening + closing
+    props_open_close.csv.gz    all games: one row per prop (book, market,
+                               line, outcome, player) with its opening and
+                               closing PRE-KICKOFF price
 
-Resumable: a raw payload already on disk is not fetched again (finished
-fixtures do not change), so a re-run after a timeout continues where the
-last one stopped. /v4/historical-odds is free; the discovery calls
+A game's raw history (~800k price updates for one game, 3 books) is reduced
+in memory and never written. Resumable: a reduced file already on disk is
+not fetched again (finished fixtures do not change), so a re-run after a
+timeout continues where the last one stopped. /v4/historical-odds is free; the discovery calls
 (sports, tournaments, markets, bookmakers, fixtures) are metered — about
 six requests per run, plus one if --player-names is given.
 
@@ -25,7 +28,6 @@ Logs print counts and ids only, never the key (gridiron.oddspapi.redact).
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import re
 import sys
@@ -153,8 +155,8 @@ def cmd_probe(args) -> int:
     return 0
 
 
-def raw_path(out: Path, fixture_id: str, books: list[str]) -> Path:
-    return out / "raw" / f"{fixture_id}__{'+'.join(books)}.json.gz"
+def reduced_path(out: Path, fixture_id: str, books: list[str]) -> Path:
+    return out / "reduced" / f"{fixture_id}__{'+'.join(books)}.csv.gz"
 
 
 def cmd_backfill(args) -> int:
@@ -162,11 +164,12 @@ def cmd_backfill(args) -> int:
     start = parse_day(args.start, op.FIRST_COVERED_DATE)
     end = parse_day(args.end, date.today().isoformat())
     out = Path(args.out)
-    (out / "raw").mkdir(parents=True, exist_ok=True)
+    (out / "reduced").mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + args.max_minutes * 60
 
     c = client()
     cat = discover(c)
+    props = props_of(cat)
     (out / "catalogue.json").write_text(json.dumps(cat, indent=1), "utf-8")
     missing = check_books(c, books)
     if missing:
@@ -174,17 +177,18 @@ def cmd_backfill(args) -> int:
     fixtures = fetch_fixtures(c, cat["tournament_id"], start, end)
     (out / "fixtures.json").write_text(json.dumps(fixtures, indent=1), "utf-8")
     print(f"NFL sportId={cat['sport_id']} tournamentId={cat['tournament_id']} "
-          f"prop markets={len(cat['prop_markets'])} fixtures={len(fixtures)} books={books}")
+          f"prop markets={len(props)} fixtures={len(fixtures)} books={books}")
 
     if args.player_names:
         parts = c.participants(cat["sport_id"]) or {}
         (out / "participants.json").write_text(json.dumps(parts), "utf-8")
 
     fetched = skipped = failed = 0
+    stats: dict = {}
     stopped_early = False
     for i, f in enumerate(fixtures[: args.max_fixtures or None]):
         for group in chunks(books, op.MAX_BOOKMAKERS_PER_HISTORICAL_CALL):
-            p = raw_path(out, str(f["fixtureId"]), group)
+            p = reduced_path(out, str(f["fixtureId"]), group)
             if p.exists():
                 skipped += 1
                 continue
@@ -193,56 +197,64 @@ def cmd_backfill(args) -> int:
                 break
             try:
                 payload = c.historical_odds(f["fixtureId"], group)
+                rows = op.reduce_open_close(payload, f, props, stats=stats)
             except op.QuotaExhausted as exc:
                 print(f"STOP: {exc}")
                 stopped_early = True
                 break
-            except op.OddsPapiError as exc:
+            except (op.OddsPapiError, ValueError) as exc:
                 failed += 1
                 print(f"  fixture {f['fixtureId']} {group}: {exc}")
                 continue
-            tmp = p.with_suffix(".tmp")
-            with gzip.open(tmp, "wt", encoding="utf-8") as fh:
-                json.dump(payload, fh)
+            del payload
+            tmp = p.with_name(p.name + ".tmp")
+            pd.DataFrame(rows, columns=op.PROP_COLUMNS).to_csv(
+                tmp, index=False, compression="gzip")
             tmp.replace(p)
             fetched += 1
         if stopped_early:
             break
-        if (i + 1) % 20 == 0:
-            print(f"  {i + 1}/{len(fixtures)} fixtures  fetched={fetched} cached={skipped}")
+        if (i + 1) % 10 == 0:
+            print(f"  {i + 1}/{len(fixtures)} fixtures  fetched={fetched} cached={skipped} "
+                  f"failed={failed}")
     print(f"historical calls: fetched={fetched} cached={skipped} failed={failed}"
-          + ("  (STOPPED EARLY — re-run to resume)" if stopped_early else ""))
+          + ("  (STOPPED EARLY - re-run to resume)" if stopped_early else ""))
+    if stats:
+        print(f"this run reduced {stats['entries']} price updates to "
+              f"{stats['props'] - stats['dropped_no_pregame']} props "
+              f"({stats['dropped_no_pregame']} in-play-only props dropped)")
 
-    rows = build_long(out, fixtures, props_of(cat))
-    print(f"props_long.csv.gz: {rows} rows")
+    n = build_long(out)
+    print(f"props_open_close.csv.gz: {n} rows")
     return 1 if (failed and not fetched and not skipped) else 0
 
 
-def build_long(out: Path, fixtures: list[dict], props: dict[int, dict]) -> int:
-    by_id = {str(f["fixtureId"]): f for f in fixtures}
+def build_long(out: Path) -> int:
     names: dict[str, str] = {}
     pfile = out / "participants.json"
     if pfile.exists():
         raw = json.loads(pfile.read_text("utf-8"))
         if isinstance(raw, dict):
             names = {str(k): str(v) for k, v in raw.items()}
-    rows: list[dict] = []
-    for p in sorted((out / "raw").glob("*.json.gz")):
-        fid = p.name.split("__", 1)[0]
-        fixture = by_id.get(fid, {"fixtureId": fid})
-        with gzip.open(p, "rt", encoding="utf-8") as fh:
-            payload = json.load(fh)
-        rows.extend(op.flatten_props(payload, fixture, props, names))
-    df = pd.DataFrame(rows, columns=op.PROP_COLUMNS)
-    df.to_csv(out / "props_long.csv.gz", index=False, compression="gzip")
+    parts = [pd.read_csv(p, dtype={"oddspapi_player_id": str, "fixture_id": str})
+             for p in sorted((out / "reduced").glob("*.csv.gz"))]
+    parts = [d for d in parts if len(d)]
+    df = (pd.concat(parts, ignore_index=True) if parts
+          else pd.DataFrame(columns=op.PROP_COLUMNS))
+    # Names only by the provider's own id (rule #3), never by text.
+    df["player_name"] = df["oddspapi_player_id"].map(names)
+    df = df[op.PROP_COLUMNS].sort_values(
+        ["kickoff", "fixture_id", "bookmaker", "market_id", "oddspapi_player_id", "outcome_id"])
+    df.to_csv(out / "props_open_close.csv.gz", index=False, compression="gzip")
     summary = {
         "rows": len(df),
         "fixtures": int(df["fixture_id"].nunique()) if len(df) else 0,
+        "seasons": sorted(int(s) for s in df["season"].dropna().unique()) if len(df) else [],
         "players": int(df["oddspapi_player_id"].nunique()) if len(df) else 0,
         "named_players": int(df.loc[df["player_name"].notna(), "oddspapi_player_id"].nunique())
         if len(df) else 0,
-        "by_market": df["market_name"].value_counts().head(40).to_dict() if len(df) else {},
         "by_bookmaker": df["bookmaker"].value_counts().to_dict() if len(df) else {},
+        "by_market": df["market_name"].value_counts().head(40).to_dict() if len(df) else {},
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=1), "utf-8")
     return len(df)

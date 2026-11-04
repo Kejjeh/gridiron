@@ -1,12 +1,12 @@
 """gridiron.oddspapi: offline. Fake transport, fake clock — no network."""
 from __future__ import annotations
 
-import gzip
 import importlib.util
 import json
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from gridiron import oddspapi as op
@@ -115,14 +115,21 @@ MARKETS = [
 ]
 
 PAYLOAD = {"fixtureId": "id1", "bookmakers": {"pinnacle": {"markets": {
-    "500": {"outcomes": {"501": {"players": {"8812": [
-        {"createdAt": "2026-10-04T12:00:00+00:00", "price": 1.87, "limit": 500, "active": False},
-        {"createdAt": "2026-10-04T16:00:00+00:00", "price": 1.80, "limit": 900, "active": True},
-    ]}}}},
+    "500": {"outcomes": {
+        "501": {"players": {"8812": [
+            {"createdAt": "2026-10-04T16:00:00+00:00", "price": 1.80, "limit": 900, "active": True},
+            {"createdAt": "2026-10-01T12:00:00.123456+00:00", "price": 1.95, "limit": 100},
+            {"createdAt": "2026-10-04T12:00:00+00:00", "price": 1.87, "limit": 500},
+            {"createdAt": "2026-10-04T18:30:00+00:00", "price": 3.10, "limit": 50},  # in play
+        ]}},
+        "502": {"players": {"8812": [
+            {"createdAt": "2026-10-04T17:45:00+00:00", "price": 4.0},  # in play only
+        ]}},
+    }},
     "101": {"outcomes": {"101": {"players": {"0": [{"price": 1.5}]}}}},
 }}}}
 
-FIXTURE = {"fixtureId": "id1", "startTime": "2026-10-04T17:00:00Z",
+FIXTURE = {"fixtureId": "id1", "startTime": "2026-10-04T17:00:00.000Z",
            "participant1Name": "Home", "participant2Name": "Away"}
 
 
@@ -132,18 +139,34 @@ def test_prop_catalogue_is_sport_scoped():
     assert props[500]["outcomes"] == {501: "Over", 502: "Under"}
 
 
-def test_flatten_keeps_only_prop_markets_and_provider_ids():
-    rows = op.flatten_props(PAYLOAD, FIXTURE, op.prop_markets(MARKETS, 14), {"8812": "A Player"})
-    assert len(rows) == 2
+def test_open_is_first_and_close_is_last_pregame_entry():
+    stats: dict = {}
+    rows = op.reduce_open_close(PAYLOAD, FIXTURE, op.prop_markets(MARKETS, 14), stats=stats)
+    assert len(rows) == 1  # the in-play-only Under is dropped, Moneyline is not a prop
     r = rows[0]
     assert list(r) == op.PROP_COLUMNS
+    assert r["open_price"] == 1.95 and r["open_at"].startswith("2026-10-01")
+    assert r["close_price"] == 1.80 and r["close_limit"] == 900
+    assert r["n_updates_pregame"] == 3 and r["n_updates_inplay"] == 1
     assert r["market_id"] == 500 and r["line"] == 54.5 and r["outcome_name"] == "Over"
-    assert r["oddspapi_player_id"] == "8812" and r["player_name"] == "A Player"
-    assert r["season"] == 2026
+    assert r["oddspapi_player_id"] == "8812" and r["season"] == 2026
+    assert stats == {"entries": 5, "props": 2, "dropped_no_pregame": 1}
+
+
+def test_the_real_kickoff_wins_over_the_scheduled_one():
+    late = {**FIXTURE, "trueStartTime": "2026-10-04T18:45:00Z"}
+    rows = op.reduce_open_close(PAYLOAD, late, op.prop_markets(MARKETS, 14))
+    over = next(r for r in rows if r["outcome_id"] == 501)
+    assert over["close_price"] == 3.10  # 18:30 is now pre-kickoff
+
+
+def test_a_fixture_without_a_time_is_refused():
+    with pytest.raises(ValueError):
+        op.reduce_open_close(PAYLOAD, {"fixtureId": "x"}, op.prop_markets(MARKETS, 14))
 
 
 def test_names_only_by_id_never_by_text():
-    rows = op.flatten_props(PAYLOAD, FIXTURE, op.prop_markets(MARKETS, 14), {"A Player": "x"})
+    rows = op.reduce_open_close(PAYLOAD, FIXTURE, op.prop_markets(MARKETS, 14), {"A Player": "x"})
     assert rows[0]["player_name"] is None
 
 
@@ -157,7 +180,7 @@ def test_postseason_games_belong_to_the_prior_season(start, season):
 def test_summary_is_counts_only():
     s = op.summarize(PAYLOAD, op.prop_markets(MARKETS, 14))
     assert s == {"bookmakers": {"pinnacle": {"markets": 2, "prop_markets": 1}},
-                 "prop_markets_seen": 1, "players": 1, "entries": 2}
+                 "prop_markets_seen": 1, "players": 1, "entries": 5}
 
 
 # ----------------------------------------------------------------- the script
@@ -220,13 +243,18 @@ def test_other_fixture_errors_still_raise():
                               "2026-04-01", "2026-04-10")
 
 
-def test_build_long_from_cached_raw(tmp_path):
-    (tmp_path / "raw").mkdir()
-    with gzip.open(tmp_path / "raw" / "id1__pinnacle.json.gz", "wt", encoding="utf-8") as fh:
-        json.dump(PAYLOAD, fh)
+def test_build_long_names_by_id_and_combines_games(tmp_path):
+    (tmp_path / "reduced").mkdir()
+    rows = op.reduce_open_close(PAYLOAD, FIXTURE, op.prop_markets(MARKETS, 14))
+    pd.DataFrame(rows, columns=op.PROP_COLUMNS).to_csv(
+        tmp_path / "reduced" / "id1__pinnacle.csv.gz", index=False, compression="gzip")
+    pd.DataFrame(columns=op.PROP_COLUMNS).to_csv(
+        tmp_path / "reduced" / "id2__pinnacle.csv.gz", index=False, compression="gzip")
     (tmp_path / "participants.json").write_text(json.dumps({"8812": "A Player"}), "utf-8")
-    n = SCRIPT.build_long(tmp_path, [FIXTURE], op.prop_markets(MARKETS, 14))
-    assert n == 2
+    assert SCRIPT.build_long(tmp_path) == 1
+    df = pd.read_csv(tmp_path / "props_open_close.csv.gz", dtype={"oddspapi_player_id": str})
+    assert list(df.columns) == op.PROP_COLUMNS
+    assert df.loc[0, "player_name"] == "A Player"
     summary = json.loads((tmp_path / "summary.json").read_text("utf-8"))
     assert summary["players"] == 1 and summary["named_players"] == 1
 
