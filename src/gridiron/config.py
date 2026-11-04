@@ -30,6 +30,9 @@ class Settings(BaseSettings):
 
     # Betting lines provider (pick one early — see bootstrap doc §3)
     odds_api_key: str | None = None
+    # OddsPapi (gridiron.oddspapi): historical player props. GitHub secret
+    # GRIDIRON_ODDSPAPI_KEY; read only by scripts/ingest/backfill_oddspapi_props.py.
+    oddspapi_key: str | None = None
 
 
 @lru_cache(maxsize=1)

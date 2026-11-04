@@ -1,0 +1,128 @@
+name: OddsPapi props backfill
+
+# Backfills historical NFL player props from OddsPapi into a run artifact.
+# Dispatch-only: no schedule, no pull_request trigger (a fork's PR must never
+# see the secret or the cache). The key reaches Python as an environment
+# value from the GRIDIRON_ODDSPAPI_KEY secret; GitHub masks it in logs and
+# gridiron.oddspapi redacts it from every error message.
+#
+# Coverage is the provider's, not ours: /v4/historical-odds holds fixtures
+# since January 2026 only (2025 postseason + 2026 season). It is free; the
+# ~6 discovery calls per run are metered against the monthly quota.
+#
+# Public repository: the run artifact, the cache and this log are readable by
+# any signed-in GitHub user while retained. They hold market prices and
+# provider player ids — no roster, no credential.
+#
+# Resumable: raw payloads ride an Actions cache, so a run that hits
+# --max-minutes (or the job timeout) is continued by dispatching again.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'probe (discover ids, one sample fixture) or backfill'
+        required: true
+        type: choice
+        options: [probe, backfill]
+        default: probe
+      bookmakers:
+        description: 'Comma-separated bookmaker slugs (max 9; 3 per call)'
+        required: false
+        type: string
+        default: 'pinnacle,draftkings,fanduel'
+      from:
+        description: 'First day, YYYY-MM-DD (blank = 2026-01-01, provider floor)'
+        required: false
+        type: string
+      to:
+        description: 'Last day, YYYY-MM-DD (blank = today)'
+        required: false
+        type: string
+      player_names:
+        description: 'Spend one metered call on /v4/participants for id->name'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oddspapi-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHONPATH: src
+      OUT_DIR: data/research/cache/oddspapi
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the approved dependencies
+        run: python -m pip install --disable-pip-version-check pydantic-settings pandas
+
+      - name: Restore previously fetched raw payloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.OUT_DIR }}/raw
+          key: oddspapi-raw-${{ github.run_id }}
+          restore-keys: |
+            oddspapi-raw-
+
+      - name: Run the OddsPapi client
+        env:
+          GRIDIRON_ODDSPAPI_KEY: ${{ secrets.GRIDIRON_ODDSPAPI_KEY }}
+          MODE: ${{ inputs.mode }}
+          BOOKS: ${{ inputs.bookmakers }}
+          FROM_DAY: ${{ inputs.from }}
+          TO_DAY: ${{ inputs.to }}
+          PLAYER_NAMES: ${{ inputs.player_names }}
+        run: |
+          set -- --bookmakers "$BOOKS"
+          if [ -n "$FROM_DAY" ]; then set -- "$@" --from "$FROM_DAY"; fi
+          if [ -n "$TO_DAY" ]; then set -- "$@" --to "$TO_DAY"; fi
+          if [ "$MODE" = "backfill" ]; then
+            set -- backfill "$@" --max-minutes 50
+            if [ "$PLAYER_NAMES" = "true" ]; then set -- "$@" --player-names; fi
+          else
+            set -- probe "$@"
+          fi
+          python scripts/ingest/backfill_oddspapi_props.py "$@"
+
+      - name: Summarise (counts only)
+        if: always()
+        run: |
+          echo '### OddsPapi props backfill' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$OUT_DIR/summary.json" ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$OUT_DIR/summary.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'No backfill output (probe run, or the run failed before writing).' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the props table
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: oddspapi-props
+          path: |
+            data/research/cache/oddspapi/props_long.csv.gz
+            data/research/cache/oddspapi/summary.json
+            data/research/cache/oddspapi/catalogue.json
+            data/research/cache/oddspapi/fixtures.json
+            data/research/cache/oddspapi/participants.json
+          if-no-files-found: ignore
+          retention-days: 14
