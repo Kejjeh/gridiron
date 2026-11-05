@@ -50,6 +50,12 @@ idea and result: `docs/research/blocks/RESULTS.md` (generated:
   2. RB-13 and TE-10 live check: weeks 9 and 10 (`P7_LIVE.md`, pre-registered
      before week 9). Score it after week 10 is final; a serving decision is a
      DECISIONS row, compared against refitting the page's sd.
+  2b. Kalshi prop history (owner's own Kalshi trading only; PRIVATE):
+     `scripts/ingest/kalshi_props.py fetch`, run on the owner's machine (a
+     cloud container's cache is lost when it is reclaimed). Anonymous access
+     is throttled to a few calls a minute and 2025 needs ~20k per-market
+     archive calls, so set GRIDIRON_KALSHI_KEY_ID and
+     GRIDIRON_KALSHI_PRIVATE_KEY_PATH (a Kalshi API key) first. Resumable.
   3. Book ranking after 4+ collected weeks; the market contender graded
      weekly, record-only.
   4. No serving change after the week-14 board (ground rule 8).

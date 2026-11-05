@@ -95,6 +95,8 @@ from gridiron.weekly import (
 from gridiron.winprob import (RAW as RAW_CALIBRATION, Calibration, load_calibration,
                               matchup_win_prob)
 
+
+BYE_REASON = "BYE week (the schedule declares or proves it): projected 0"
 PWIN_LABEL = RAW_CALIBRATION.label
 
 #: Designations that mean the player will NOT play. "Questionable" and
@@ -638,9 +640,16 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         if game is NO_GAME_ROW and (proj.usable or dst) and \
                 str(note.designation or "").upper() not in WITHHOLD_DESIGNATIONS:
             proj = abstain(no_game_row_reason(team, week), *proj.reasons)
+        # A declared or proven bye is a FACT about this week: 0 points, whether
+        # or not a model had a number for him (a team defense's advanced
+        # projection skips a team with no game, and the baseline has no DEF
+        # model). Leaving him "unknown" kept a bye defense in the lineup and
+        # hid every free-agent defense ("would not change this week's
+        # lineup"). Withheld, he is still protected from the drop list: his
+        # value after the bye stays unpriced.
+        if game is BYE:
+            proj = proj.withheld(BYE_REASON)
         if proj.usable:
-            if game is BYE:
-                proj = proj.withheld("BYE week (the schedule declares or proves it): projected 0")
             desig = str(note.designation or "").upper()
             if desig in WITHHOLD_DESIGNATIONS:
                 proj = proj.withheld(
@@ -734,6 +743,9 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         if game is NO_GAME_ROW and desig not in WITHHOLD_DESIGNATIONS:
             return abstain(no_game_row_reason(team, week))
         if is_dst_id(sid):
+            if game is BYE:
+                return (defense(team) or abstain("no projection for this team defense")
+                        ).withheld(BYE_REASON)
             return defense(team) or abstain("no projection for this team defense")
         if not gid:
             return abstain("sleeper id unresolved against the crosswalk")
@@ -742,8 +754,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
         p = refine(project(evidence.players.get(gid), position=pos, week=week,
                            implied_total=game.implied_total, evidence=evidence),
                    sid, gid, pos, lock_state(team, kickoffs, now).kickoff)
-        if p.usable and game is BYE:
-            p = p.withheld("BYE week (the schedule declares or proves it): projected 0")
+        if game is BYE:
+            p = p.withheld(BYE_REASON)
         if p.usable and desig in WITHHOLD_DESIGNATIONS:
             p = p.withheld(f"designated {rec.get('injury_status')}: projected 0"
                            + ("" if designation_fresh else " (STALE player pull)"))
