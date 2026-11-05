@@ -667,6 +667,28 @@ def test_a_bye_the_schedule_declares_is_still_projected_zero(tmp_path):
     assert p["lock_known"] is True and "BYE" in p["lock_note"]
 
 
+def test_a_team_defense_on_a_declared_bye_is_a_withheld_zero_not_unknown(tmp_path):
+    """2026 week 9: the owner's only DEF was on bye and had no projection at
+    all (the advanced model skips a team with no game; the baseline has no
+    DEF model). Left 'unknown', it stayed in the lineup and every free-agent
+    defense read 'would not change this week's lineup'. A bye is a fact: 0
+    this week, and still protected from the drop list."""
+    import pandas as pd
+
+    def declare(s):
+        s = _without_team(s, "SEA")
+        row = {c: None for c in s.columns}
+        row.update(week=3, home_team="SEA", away_team="", game_type="BYE", season=2026)
+        return pd.concat([s, pd.DataFrame([row])], ignore_index=True)
+
+    rec = _render_with_schedule(tmp_path, "def_bye", declare)
+    d = next(x for x in rec["roster"] if x["position"] == "DEF" and x["team"] == "SEA")
+    assert d["projected"] == 0 and d["withheld"], "a bye defense is 0 this week, not unknown"
+    assert any("BYE week (the schedule declares or proves it)" in r for r in d["reasons"])
+    prot = {p["name"]: p["reason"] for p in rec["protected_from_drop"]}
+    assert "SEA DST" in prot and "will not play this week" in prot["SEA DST"]
+
+
 def test_a_stale_schedule_does_not_turn_a_missing_row_into_a_game(tmp_path):
     """Freshness gates actions; it does not decide which teams have a game.
     A stale frame that carries the week still has no row for CHI."""
