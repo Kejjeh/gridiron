@@ -371,8 +371,35 @@ def _script(step: str) -> str:
     return blocks[0][1]
 
 
-@pytest.mark.skipif(not all(shutil.which(t) for t in ("bash", "openssl", "tar")),
-                    reason="needs bash, openssl and tar")
+def _posix_bash():
+    """A bash that can run this host's workflow scripts, or None.
+
+    On Windows the bash.exe in System32 (and in WindowsApps) is the WSL
+    launcher: it runs in a separate Linux environment, or fails outright with
+    no distro installed, and PowerShell's PATH puts it first. Skip those and
+    take the next bash on PATH, else the Git Bash that ships beside git.exe.
+    """
+    if os.name != "nt":
+        return shutil.which("bash")
+    sysroot = os.path.normcase(os.environ.get("SystemRoot", "C:\\Windows"))
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        nd = os.path.normcase(d)
+        if not d or nd.startswith(sysroot) or "windowsapps" in nd:
+            continue
+        found = shutil.which("bash", path=d)
+        if found:
+            return found
+    git = shutil.which("git")
+    if git:
+        root = Path(git).resolve().parents[1]          # ...\Git\cmd\git.exe -> ...\Git
+        for rel in ("usr/bin/bash.exe", "bin/bash.exe"):
+            if (root / rel).is_file():
+                return str(root / rel)
+    return None
+
+
+@pytest.mark.skipif(not (_posix_bash() and shutil.which("openssl") and shutil.which("tar")),
+                    reason="needs a POSIX bash, openssl and tar")
 def test_the_decrypt_step_restores_refuses_and_never_leaves_a_half_archive(tmp_path):
     """The workflow's own encrypt and decrypt scripts, run with a fictional
     key on fictional files. A good archive round-trips. A wrong key or a
@@ -400,9 +427,15 @@ def test_the_decrypt_step_restores_refuses_and_never_leaves_a_half_archive(tmp_p
     def step(script, key):
         out = tmp_path / "github_output"
         out.write_text("", encoding="utf-8")
-        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
+        bash = _posix_bash()
+        path = os.environ.get("PATH", "/usr/bin:/bin")
+        if os.name == "nt":
+            # Use the tar and openssl that ship with that bash, as /usr/bin
+            # supplies them on Linux; System32 has a different tar.
+            path = os.path.dirname(bash) + os.pathsep + path
+        env = {"PATH": path, "HOME": str(tmp_path),
                "GITHUB_OUTPUT": str(out), "GRIDIRON_ODDS_ARCHIVE_KEY": key, **dirs}
-        done = subprocess.run([shutil.which("bash"), "-e", "-c", script], cwd=tmp_path, env=env,
+        done = subprocess.run([bash, "-e", "-c", script], cwd=tmp_path, env=env,
                               capture_output=True, text=True, timeout=120)
         return done.returncode, out.read_text(encoding="utf-8").strip()
 
