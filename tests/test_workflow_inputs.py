@@ -402,7 +402,7 @@ def test_the_decrypt_step_restores_refuses_and_never_leaves_a_half_archive(tmp_p
         out.write_text("", encoding="utf-8")
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
                "GITHUB_OUTPUT": str(out), "GRIDIRON_ODDS_ARCHIVE_KEY": key, **dirs}
-        done = subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path, env=env,
+        done = subprocess.run([shutil.which("bash"), "-e", "-c", script], cwd=tmp_path, env=env,
                               capture_output=True, text=True, timeout=120)
         return done.returncode, out.read_text(encoding="utf-8").strip()
 
