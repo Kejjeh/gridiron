@@ -73,3 +73,18 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
     that makes the wrong call easy.
 12. Start with 5 skills max (roster-audit, waiver-board, start-sit, matchup,
     decision-log) plus a registry test. Resist premature skill growth.
+
+## Skills for this repo
+
+Load these with the Skill tool when the situation comes up; the user does not need to ask.
+
+| Situation in this repo | Skill |
+|---|---|
+| How the team looks; who is gaining or losing work | `roster-audit` |
+| Who to pick up; the owner sends a ranking screenshot or names free agents | `waiver-board` |
+| Who to start or bench this week; a specific slot | `start-sit` |
+| A week's games are final; "has the advice been any good?" | `decision-log` |
+| A board number, bye, lock or freshness verdict looks wrong; the 15-min cloud build failed | `diagnosing-bugs` |
+| Writing ingest/projection/board code where absence, staleness or a name-match could pass as a real answer (rules 3, 8, 11) | `sop-fail-loud` |
+| A change to a projection system, freshness gate, what counts as a move, or what is published | `sop-owner-decision` |
+| Committing; opening/merging a PR; editing this file (line-ceiling ratchet: detail goes to docs/memory/) | `safe-commit` / `sop-ship-pr` / `sop-project-guide` |

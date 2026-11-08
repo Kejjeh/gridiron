@@ -20,7 +20,9 @@ MEMORY = ROOT / "docs" / "memory"
 #: Hard ceiling. Lower it when the file shrinks; raising it needs a reason
 #: in the same commit, and "I added a rule inline" is not one. The bootstrap
 #: doc caps day-one CLAUDE.md at 150; we start well under.
-MAX_LINES = 75
+#: 2026-11-08: raised 75 -> 90 for the "Skills for this repo" routing table,
+#: which only works auto-loaded (skill descriptions alone fire unreliably).
+MAX_LINES = 90
 
 
 def _text() -> str:
