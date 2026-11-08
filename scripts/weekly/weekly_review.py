@@ -251,6 +251,21 @@ def notable_lines(watch: Mapping[str, object] | None) -> list[str]:
         out.append("None.")
     for note in watch.get("notes") or []:
         out.append(f"_{note}_")
+    out += ["", "**Role openings and starter volume** (usage alone, before any projection "
+            "— research, not moves):", ""]
+    work = watch.get("work")
+    if work is None:
+        out.append("Not in this record (built before the list existed).")
+    elif work:
+        out += ["| player | kind | why | status | ours / Sleeper |", "|---|---|---|---|---|"]
+        for r in work:
+            out.append(f"| {'NEW ' if r.get('alert') else ''}{r.get('name')} "
+                       f"({r.get('position')}, {r.get('team')}) | {r.get('kind')} | "
+                       f"{r.get('why')} | {r.get('status')} | {_fmt(r.get('ours'))} / "
+                       f"{_fmt(r.get('market'))} |")
+    else:
+        out.append("None." if watch.get("work_known", True) else
+                   "UNKNOWN: no box scores this build.")
     out += ["", "**Can't project — Sleeper's number** (we abstain; highest first):", ""]
     market = watch.get("market") or []
     if market:

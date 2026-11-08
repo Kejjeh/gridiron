@@ -25,7 +25,16 @@ description: Compare free agents against the owner's roster using three kinds of
        PYTHONPATH=src python scripts/weekly/weekly_review.py --record <record> \
            --ranks <csv> [--ranks <csv> ...] --watch "<Name>,<POS>" [...]
 
-5. Report one compact table: player, add/drop (or no-drop), this week's
+5. Read the review's **Role openings and starter volume** table FIRST
+   (`gridiron.openings`: pool players with a starter's snaps and
+   opportunities, and pool players behind a role vacated this week by an
+   Out/IR/Doubtful designation, a release or a trade). Every row there is a
+   candidate whatever its rest-of-season rank: a projection is late to both
+   (2026 week 9: KC Concepcion Jr. at 81% snaps and 8 opportunities a game
+   ranked WR52; Audric Estime behind a released lead back ranked RB57; both
+   scored like starters). Rank receivers by targets and snap share before
+   projection (rule #6). On Fridays, after designations, re-run it.
+6. Report one compact table: player, add/drop (or no-drop), this week's
    lineup change from the page, actual usage (ppg, trend), outside rank or
    value, the major caveat, and the exact Sleeper check. Then say plainly
    which move you would make and why, weighing:

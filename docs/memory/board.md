@@ -9,6 +9,16 @@ CONDITIONAL (availability UNVERIFIED); the Free Agent Radar (`gridiron.radar`,
 under the Action Desk) verdicts every projected pool player; rollover = "no
 comparison".
 
+Usage before projections (2026-11-08, `gridiron.openings`, own list
+`#work` under the radar, own first-screen alert): every pool player whose
+last 3 games average a starter's snaps AND opportunities (RB 40%/10, WR
+65%/6, TE 60%/4), and the 2 pool players highest on Sleeper's depth chart
+behind a role vacated THIS week (recent work, last line within 2 weeks, by a
+player Sleeper designates Out/IR/PUP/SUS/NA/Doubtful — never Questionable —
+or lists on another team or none). Ids through the crosswalk only. A row
+alerts 48 h from first seen against a comparable record carrying
+`work_since`; a legacy record alerts nothing.
+
 A free agent the radar cannot rank is still NAMED (2026-10-21,
 `gridiron.notable`, docs/research/RETURNER_BACKTEST.md): last season's
 starters (league ppg rank within LAST season's position, 4+ games) and drops

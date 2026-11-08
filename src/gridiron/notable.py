@@ -48,7 +48,7 @@ scores are keyed by nflverse `player_id` (gsis).
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -61,6 +61,8 @@ from gridiron.lineup import Player, eligible
 # A feed with fewer players than this at a position is a failed fetch, not a
 # ranking (the floor `feed_absence` uses).
 from gridiron.models.advanced import FEED_MIN_PER_POSITION
+from gridiron.openings import (find_vacancies, lines_by_player, opening_reasons,
+                               volume_reason)
 from gridiron.usage import score_frame
 
 #: A "starter last season" by league points per game, within position.
@@ -74,6 +76,8 @@ ALERT_HOURS = 48
 #: first-seen times carry to the next build).
 NOTABLE_CAP = 12
 MARKET_CAP = 15
+#: Rows of the role-and-volume list shown before "and N more".
+WORK_CAP = 12
 #: Sleeper runs this league's waivers at about 03:15 Eastern on the waiver
 #: day (every claim in the league's history processed 07:15-07:17 UTC on a
 #: Wednesday); 03:20 keeps a build in between from calling it done.
@@ -465,6 +469,9 @@ class PreviousWatch:
     pool: frozenset[str] | None = None
     pool_since: Mapping[str, datetime] = field(default_factory=dict)
     generated: datetime | None = None
+    #: The previous build's usage rows ("sleeper id:kind" -> first seen, or
+    #: None when unknown). None when that record predates the list.
+    work_since: Mapping[str, datetime | None] | None = None
 
     @classmethod
     def from_record(cls, record: Mapping[str, object] | None) -> "PreviousWatch":
@@ -481,12 +488,48 @@ class PreviousWatch:
             generated = None
         if generated is not None and generated.tzinfo is None:
             generated = None
+        ws = w.get("work_since")
+        work_since = None
+        if isinstance(ws, Mapping):
+            known = _times(ws)
+            work_since = {str(k): known.get(str(k)) for k in ws}
         return cls(pool=ids or None, pool_since=_times(w.get("pool_since")),
-                   generated=generated)
+                   generated=generated, work_since=work_since)
 
     def comparable(self, now: datetime) -> bool:
         return (self.pool is not None and self.generated is not None
                 and timedelta(0) < now - self.generated <= PREVIOUS_MAX_GAP)
+
+
+@dataclass(frozen=True)
+class WorkRow:
+    """A pool player named on USAGE, not on any projection (`gridiron.openings`):
+    `kind` is "opening" (behind a role vacated this week) or "volume" (already
+    a starter's snaps and opportunities). `weight` orders the list: the
+    vacated opportunities a game, or his own."""
+
+    player: Player
+    kind: str
+    why: str
+    weight: float
+    ours: float | None
+    market: float | None
+    status: str
+    versus: str = ""
+    first_seen: datetime | None = None
+    alert: bool = False
+
+    @property
+    def key(self) -> str:
+        return f"{normalize_id(self.player.sleeper_id)}:{self.kind}"
+
+    def record(self) -> dict:
+        return {"id": self.player.sleeper_id, "gsis_id": self.player.gsis_id,
+                "name": self.player.name, "position": self.player.position,
+                "team": self.player.team, "kind": self.kind, "why": self.why,
+                "weight": round(self.weight, 2), "ours": self.ours, "market": self.market,
+                "status": self.status, "versus": self.versus, "alert": self.alert,
+                "first_seen": _iso(self.first_seen)}
 
 
 @dataclass(frozen=True)
@@ -499,6 +542,15 @@ class FreeAgentWatch:
     #: When each pool player entered the pool, carried to the next record
     #: (pruned to ALERT_HOURS: older entries alert nothing).
     pool_since: Mapping[str, datetime] = field(default_factory=dict)
+    #: Pool players named on usage alone (`WorkRow`), alerts first, then the
+    #: biggest opening or workload.
+    work: tuple[WorkRow, ...] = field(default=())
+    #: "sleeper id:kind" -> when that row first appeared; None when no
+    #: comparable record could say. Every current row is carried (no pruning:
+    #: the keys ARE the previous build's list).
+    work_since: Mapping[str, datetime | None] = field(default_factory=dict)
+    #: False when the build had no box scores to read usage from.
+    work_known: bool = True
 
     @property
     def notable_total(self) -> int:
@@ -512,13 +564,20 @@ class FreeAgentWatch:
     def alerts(self) -> tuple[NotableFreeAgent, ...]:
         return tuple(n for n in self.notable if n.alert)
 
+    @property
+    def work_alerts(self) -> tuple[WorkRow, ...]:
+        return tuple(w for w in self.work if w.alert)
+
     def record(self) -> dict:
         return {"notable": [n.record() for n in self.notable],
                 "notable_total": self.notable_total,
                 "market": [m.record() for m in self.market],
                 "market_total": self.market_total, "notes": list(self.notes),
                 "prior_loaded": self.prior_loaded, "drops_known": self.drops_known,
-                "pool_since": {k: _iso(v) for k, v in sorted(self.pool_since.items())}}
+                "pool_since": {k: _iso(v) for k, v in sorted(self.pool_since.items())},
+                "work": [w.record() for w in self.work], "work_total": len(self.work),
+                "work_known": self.work_known,
+                "work_since": {k: _iso(v) for k, v in sorted(self.work_since.items())}}
 
 
 def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping[str, object]],
@@ -532,7 +591,9 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
                 out_designations: Iterable[str] = (),
                 reserve: set[str] | None = None, reserve_week: int | None = None,
                 my_roster_id: int | None = None,
-                previous: PreviousWatch | None = None) -> FreeAgentWatch:
+                previous: PreviousWatch | None = None,
+                usage_frame: pd.DataFrame | None = None, through_week: int | None = None,
+                gsis_of=None) -> FreeAgentWatch:
     """Both lists. `market_of(player)` returns Sleeper's pre-kickoff number
     for him or None (the dashboard's `shadow_number`, which refuses a stale or
     post-kickoff feed) — the number shown and the market list's; the "worth
@@ -545,7 +606,11 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
     week has no time (`waiver_clock`). `out_designations`
     are the Sleeper tags that mean he will not play (the dashboard's
     WITHHOLD_DESIGNATIONS). `previous` is the last record's view
-    (`PreviousWatch.from_record`)."""
+    (`PreviousWatch.from_record`). `usage_frame` is the scored, snap-joined
+    player-week frame (`gridiron.usage.player_weeks`) read through
+    `through_week`, and `gsis_of(sleeper_id)` the crosswalk: together they
+    name the pool players with a starter's work or behind a vacated role
+    (`gridiron.openings`), on usage alone."""
     prev = previous or PreviousWatch()
     ranks = ranks or {}
     market_any = market_any or market_of
@@ -572,6 +637,20 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
     else:                       # no pool this build (no player map): carry, compare nothing
         pool_since = dict(prev.pool_since)
 
+    # -- usage: who already has a starter's work, and who is behind a vacated role
+    lines = lines_by_player(usage_frame, through_week=through_week)
+
+    def sits_of(p: Player) -> bool:
+        rec = sleeper_players.get(normalize_id(p.sleeper_id)) or {}
+        return p.projection.is_withheld or str(rec.get("injury_status") or "").upper() in outs
+
+    openings = opening_reasons(
+        pool, sleeper_players,
+        find_vacancies(sleeper_players, lines, through_week=through_week,
+                       gsis_of=gsis_of or (lambda sid: None)),
+        lines, sits=sits_of) if lines else {}
+    work: list[WorkRow] = []
+
     notable: list[NotableFreeAgent] = []
     market: list[MarketRow] = []
     window = now - timedelta(days=DROP_WINDOW_DAYS)
@@ -597,6 +676,16 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
             vs, gain = _versus(mkt, w, "Sleeper's")
             market.append(MarketRow(p, round(float(mkt), 2), ours_note, status, vs, gain,
                                     mrank))
+        # -- usage rows: never for a player known to sit this week
+        if not sits and lines:
+            vol = volume_reason(p.position, lines.get(normalize_id(p.gsis_id), ()),
+                                through_week)
+            for kind, hit in (("opening", openings.get(sid)), ("volume", vol)):
+                if hit:
+                    vs, _ = _versus(ours if ours is not None else seen, w,
+                                    "ours" if ours is not None else "Sleeper's")
+                    work.append(WorkRow(p, kind, hit[0], float(hit[1]), ours, seen,
+                                        status, vs))
         # -- notable
         why = []
         pl = prior.get(p.gsis_id) if p.gsis_id else None
@@ -654,7 +743,28 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
                 -(n.ours if n.ours is not None else (n.market or 0.0)))
     notable.sort(key=nkey)
     market.sort(key=lambda m: -m.market)
+
+    # -- when each usage row first appeared: new against a comparable previous
+    # list (alerts, rule #8); carried otherwise; unknown (no alert) when the
+    # previous record predates the list or cannot be compared
+    prev_rows = prev.work_since if compare else None
+    work_since: dict[str, datetime | None] = {}
+    rows: list[WorkRow] = []
+    for r in work:
+        if prev_rows is not None and r.key not in prev_rows:
+            since = now
+        else:
+            since = (prev.work_since or {}).get(r.key)
+        work_since[r.key] = since
+        rows.append(replace(r, first_seen=since, alert=since is not None
+                            and timedelta(0) <= now - since <= window_s))
+    rows.sort(key=lambda r: (0 if r.alert else 1, 0 if r.kind == "opening" else 1,
+                             -r.weight, r.player.name))
+    if usage_frame is not None and not lines:
+        notes.append("no box scores this build: who has a starter's work, and whose role "
+                     "opened, cannot be read")
     return FreeAgentWatch(tuple(notable), tuple(market), tuple(notes),
                           prior_loaded=bool(prior), drops_known=not drops_note,
                           pool_since={k: v for k, v in pool_since.items()
-                                      if now - v <= window_s})
+                                      if now - v <= window_s},
+                          work=tuple(rows), work_since=work_since, work_known=bool(lines))
