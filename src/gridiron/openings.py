@@ -201,7 +201,8 @@ def opening_reasons(pool: Iterable, sleeper_players: Mapping[str, Mapping[str, o
                     lines: Mapping[str, Sequence[Line]], *,
                     sits: Callable[[object], bool] = lambda p: False
                     ) -> dict[str, tuple[str, float]]:
-    """sleeper id -> (why, the vacated opportunities a game) when he is behind
+    """sleeper id -> (why, the vacated work in roles: opportunities a game
+    over `VACANCY_MIN_OPPS` at that position) when he is behind
     a vacated role, for the `OPENING_TAKE`
     pool players at each vacated team and position who are not known to sit,
     highest on Sleeper's depth chart first (unlisted last), then by their
@@ -220,7 +221,9 @@ def opening_reasons(pool: Iterable, sleeper_players: Mapping[str, Mapping[str, o
             mine = _mean([ln.opps for ln in ls[-2:]]) if ls else None
             return (order if order is not None else 99.0, -(mine or 0.0), p.name)
         gone = "; ".join(v.describe() for v in vacancies[key][:3])
-        work = sum(v.opps for v in vacancies[key])
+        # vacated work in units of "a real role" at that position, so a QB's
+        # 40 pass attempts do not outrank a lead back's 17 touches
+        work = sum(v.opps for v in vacancies[key]) / VACANCY_MIN_OPPS[key[1]]
         for i, p in enumerate(sorted(players, key=rank)[:OPENING_TAKE], 1):
             rec = sleeper_players.get(normalize_id(p.sleeper_id)) or {}
             order = rec.get("depth_chart_order")
