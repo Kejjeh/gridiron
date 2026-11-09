@@ -111,4 +111,9 @@ docs/BOOTSTRAP_FROM_PLV.md for the full history.
     registry test keeping them honest). Start here with five: roster-audit,
     waiver-board, start-sit, matchup, decision-log — plus the registry test
     from the first skill onward. (Four exist; `matchup` is not written until
-    a weekly need for it appears — DECISIONS 2026-09-30.)
+    a weekly need for it appears — DECISIONS 2026-09-30.) 2026-11-09, owner
+    decision: three more, each a workflow done by hand in week 9 — move-plan
+    (the add/drop plan with `scripts/weekly/move_check.py` pre-flight),
+    live-check (game-day reads and the after-games follow-up), and
+    miss-postmortem (trace a miss through archived records, fix it in code).
+    A new skill still needs a repeated need and a change here first.
