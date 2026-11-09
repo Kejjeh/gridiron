@@ -34,7 +34,12 @@ description: Compare free agents against the owner's roster using three kinds of
    ranked WR52; Audric Estime behind a released lead back ranked RB57; both
    scored like starters). Rank receivers by targets and snap share before
    projection (rule #6). On Fridays, after designations, re-run it.
-6. Report one compact table: player, add/drop (or no-drop), this week's
+6. Before reporting any add or drop, pre-flight it:
+   `PYTHONPATH=src python scripts/weekly/move_check.py --record <record>
+   --add "<Name>,<POS>" --drop "<Name>,<POS>"` and settle every flag (a
+   hot game on a drop, a bye next week on an add, a QB change, NOT
+   AVAILABLE). The whole-plan version is the `move-plan` skill.
+7. Report one compact table: player, add/drop (or no-drop), this week's
    lineup change from the page, actual usage (ppg, trend), outside rank or
    value, the major caveat, and the exact Sleeper check. Then say plainly
    which move you would make and why, weighing:

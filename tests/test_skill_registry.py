@@ -14,8 +14,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SKILLS = ROOT / ".claude" / "skills"
 RULES = ROOT / "docs" / "memory" / "rules.md"
 
-#: Rule #12's five, verbatim. Adding a sixth needs the rule changed first.
-ALLOWED = ("roster-audit", "waiver-board", "start-sit", "matchup", "decision-log")
+#: Rule #12's allowlist, verbatim. Adding a skill needs the rule changed
+#: first. 2026-11-09: the owner added move-plan, live-check and
+#: miss-postmortem, each from a workflow done by hand in week 9.
+ALLOWED = ("roster-audit", "waiver-board", "start-sit", "matchup", "decision-log",
+           "move-plan", "live-check", "miss-postmortem")
 
 _FRONT = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 

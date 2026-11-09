@@ -9,6 +9,9 @@ Sleeper's player map, or submits anything to the league.
 |---|---|---|
 | any time | roster-audit | `PYTHONPATH=src python scripts/weekly/fetch_record.py`, then `scripts/weekly/weekly_review.py --record <path>` |
 | Tue-Sat | waiver-board | `weekly_review.py --record <path> --ranks <csv> --watch "Name,POS"` |
+| Tue-Sat | move-plan | `scripts/weekly/move_check.py --record <path> --leaders 8` (roster holes), then `--add/--drop` pre-flight of every move; again Friday after designations |
+| game days | live-check | `move_check.py --record <path> --leaders 8` while games run; a scheduled follow-up after the late games |
+| on a miss | miss-postmortem | trace the player through `data/outputs/cloud/*/` records, fix in code, check on the real records, ship |
 | before kickoffs | start-sit | `weekly_review.py --record <path>` (Action Desk + "Projection vs actual usage") |
 | Tue after the week | decision-log | automatic in the cloud (`grade_week.py --finished`); by hand to record moves: `scripts/weekly/grade_week.py --week W --archives <path> --before <Sunday kickoff> --actuals-nflverse [--acted KEY]` |
 
