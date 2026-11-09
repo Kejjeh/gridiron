@@ -70,7 +70,7 @@ from gridiron.lineup import (
 from gridiron.projection import (
     BASELINE_LABEL, Projection, abstain, build_evidence, project,
 )
-from gridiron.notable import (ALERT_HOURS, MARKET_CAP, NOTABLE_CAP, FreeAgentWatch,
+from gridiron.notable import (ALERT_HOURS, MARKET_CAP, NOTABLE_CAP, WORK_CAP, FreeAgentWatch,
                               PreviousWatch, build_watch, league_drops, market_ranks,
                               prior_lines)
 from gridiron.radar import RadarChanges, diff_radar, move_deadline, radar_record
@@ -895,7 +895,8 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             ranks=market_ranks((shadow or {}).get("players")), drops=drops,
             drops_note=drops_note, now=now, best=plan.best, slots=slots, roster=roster,
             out_designations=WITHHOLD_DESIGNATIONS, reserve=nfl_reserve,
-            reserve_week=nfl_reserve_week, my_roster_id=my_roster_id, previous=previous)
+            reserve_week=nfl_reserve_week, my_roster_id=my_roster_id, previous=previous,
+            usage_frame=weeks, through_week=context.stats_through, gsis_of=crosswalk.gsis)
     dash = Dashboard(context, tuple(sources), tuple(notes), now, tuple(roster), slots,
                      plan, matchup, matchup_reason, board, evaluation,
                      tuple(unresolved), my_roster_id, gate, actions, None, kickoffs,
@@ -2664,6 +2665,69 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
             f"<div class=\"rbody\">{_dl(pairs)}</div></details></li>")
 
 
+def _work_alert(d: Dashboard) -> str:
+    """The first-screen line for the usage list: pool players who JUST got
+    a role opening or a starter's workload (new in the last ALERT_HOURS).
+    Empty when there is nobody."""
+    w = d.watch
+    if w is None or not w.work_alerts:
+        return ""
+    rows = w.work_alerts
+    head = rows[:4]
+    names = "; ".join(
+        f"{r.player.name} ({r.player.position}" + (f", {r.player.team}" if r.player.team else "")
+        + (") — role opening" if r.kind == "opening" else ") — starter's volume")
+        for r in head)
+    more = len(rows) - len(head)
+    return ("<div class=\"gatebox notable-alert\"><b class=\"warn\">Work just opened up in "
+            "the pool:</b> " + _e(names) + (f" and {more} more" if more > 0 else "")
+            + ". Named on usage alone, before any projection catches up. Not a move: "
+            "<a href=\"#work\">who, and whose work ↓</a></div>")
+
+
+def _work_html(d: Dashboard) -> str:
+    """Pool players named on usage alone (`gridiron.openings`)."""
+    w = d.watch
+    if w is None:
+        return ""
+    out = ["<h3 id=\"work\">Role openings and starter volume — usage before projections</h3>"]
+    if w.work:
+        items = []
+        for r in w.work[:WORK_CAP]:
+            p = r.player
+            nums = " · ".join(x for x in (
+                f"ours {_num(r.ours)}" if r.ours is not None else "",
+                f"Sleeper {_num(r.market)}" if r.market is not None else "",
+                r.versus) if x) or "no number of ours or Sleeper's yet"
+            items.append(
+                "<li>" + ("<span class=\"badge\">NEW</span> " if r.alert else "")
+                + ("<span class=\"badge\">OPENING</span> " if r.kind == "opening"
+                   else "<span class=\"badge\">VOLUME</span> ")
+                + f"<b>{_e(p.name)}</b> <span class=\"sub\">({_e(p.position)}"
+                + (f", {_e(p.team)}" if p.team else "") + ")</span><br>"
+                + f"<span class=\"small\">Why: {_e(r.why)}.</span><br>"
+                + f"<span class=\"small\">Status: {_e(r.status)} · {_e(nums)}.</span></li>")
+        out.append("<ul class=\"watch\">" + "".join(items) + "</ul>")
+        if len(w.work) > WORK_CAP:
+            out.append(f"<p class=\"small sub\">{len(w.work) - WORK_CAP} more in the "
+                       f"record.</p>")
+    elif w.work_known:
+        out.append("<p class=\"small sub\">Nobody in the pool has a starter's workload, and "
+                   "no recent role has opened behind a pool player.</p>")
+    else:
+        out.append("<p class=\"small warn\">Usage could not be read this build (no box "
+                   "scores): role openings and starter volume are UNKNOWN, not absent.</p>")
+    out.append("<p class=\"small sub\">Research, not a move, and never a projection. "
+               "OPENING = a player who had real work for that team in the last two weeks "
+               "will not do it this week (Sleeper designates him Out, IR, PUP, suspended or "
+               "Doubtful — never Questionable — or lists him on another team or none); the "
+               "two pool players highest on Sleeper's depth chart at that position are "
+               "named. VOLUME = his last three games average a starter's snap share and "
+               "opportunities (RB 40% and 10, WR 65% and 6, TE 60% and 4). NEW = first seen "
+               f"in the last {ALERT_HOURS} h (only those reach the top of the page).</p>")
+    return "".join(out)
+
+
 def _watch_alert(d: Dashboard) -> str:
     """The first-screen line: the notable free agents with a transition in
     the last ALERT_HOURS, NEW ones first. Empty when there is nobody."""
@@ -2799,6 +2863,7 @@ def _radar_html(d: Dashboard) -> str:
             for pc in b.positions) + ".</p>")
     if b.abstained:
         out.append(f"<p class=\"bad\"><b>ABSTAINED:</b> {_e(b.abstained)}</p>")
+    out.append(_work_html(d))
     out.append(_watch_html(d))
 
     rc = d.radar_changes
@@ -3081,6 +3146,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    "inputs behind it are stale or unreadable, so what follows is the last "
                    "known picture rather than current advice.</div>")
     out.append(_watch_alert(d))
+    out.append(_work_alert(d))
     for i, item in enumerate(desk.top, 1):
         out.append(_desk_card(item, i, first=i == 1))
     if desk.checks:
