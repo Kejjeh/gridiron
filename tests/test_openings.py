@@ -135,6 +135,21 @@ def test_the_backs_behind_the_opening_are_named_by_depth_chart_never_one_who_sit
     assert "not on Sleeper's depth chart" in got2["back4"][0]
 
 
+def test_openings_rank_by_roles_vacated_not_raw_volume_so_qbs_do_not_crowd_the_list():
+    sleeper = {"qb1": {"full_name": "Gone Passer", "position": "QB", "team": None},
+               "qb2": {"full_name": "Backup Passer", "position": "QB", "team": "QBT",
+                       "depth_chart_order": 2},
+               **SLEEPER}
+    f = pd.concat([frame(), pd.DataFrame([row("00-qb1", wk, "QBT", "QB", 1.0, attempts=24)
+                                          for wk in (7, 8)])])
+    ls = O.lines_by_player(f, through_week=THROUGH)
+    gsis = {**GSIS, "qb1": "00-qb1", "qb2": "00-qb2"}
+    vac = O.find_vacancies(sleeper, ls, through_week=THROUGH, gsis_of=gsis.get)
+    got = O.opening_reasons([P("qb2", "QB", "QBT"), P("back2", "RB", "NOO")], sleeper, vac, ls)
+    # 24 attempts is 1.2 QB roles; 18 touches is 2.25 RB roles
+    assert got["back2"][1] > got["qb2"][1]
+
+
 def watch(pool, *, previous=None, now=NOW, usage=True):
     return N.build_watch(
         pool, sleeper_players=SLEEPER, market_of=lambda p: None, prior={},
