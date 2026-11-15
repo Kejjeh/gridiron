@@ -4,6 +4,16 @@ Current state and next step only. The running log through the Game Day,
 Radar, Action Desk and publication releases moved to
 `docs/memory/handoff_history.md` on 2026-10-01 (provenance, not current).
 
+## Live P(win) for nfl-gamezone calibrated (2026-11-15)
+
+- `scripts/research/live_pwin_calibration.py` writes
+  `data/reference/live_pwin_v1.json` and the fixtures.
+- Held-out log loss 0.424 vs 1.153 for the bar Game Zone shows today
+  (`docs/research/LIVE_PWIN.md`).
+- **Next:** a session with push access to `Kejjeh/nfl-gamezone` follows
+  `docs/handoff/GAMEZONE_LIVE_PWIN.md`. Nothing in this repo serves the
+  model.
+
 ## IR-slot lineup lock guarded (2026-11-15)
 
 - **What happened:** week 10, Stevenson was activated but still in the IR slot
