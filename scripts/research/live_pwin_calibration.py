@@ -42,7 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -151,7 +151,7 @@ def game_elapsed(pbp: pd.DataFrame) -> pd.Series:
 def play_points(pbp: pd.DataFrame, scoring: dict, gsis_to_sleeper: dict) -> pd.DataFrame:
     """One row per (game, play, sleeper id) with the points that play earned
     him under the league's scoring, and the game second it happened at."""
-    w = lambda k: float(scoring.get(k, 0.0))           # noqa: E731
+    w = lambda k: float(scoring.get(k, 0.0))
     rows = []
     pbp = pbp.assign(el=game_elapsed(pbp).values)
     for r in pbp.itertuples(index=False):
@@ -253,7 +253,7 @@ def build(refresh: bool) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
             if not kick:
                 continue
             done = [k + timedelta(minutes=GAME_MINUTES) for k, _ in kick.values()]
-            if season == 2026 and max(done) > datetime.now(timezone.utc):
+            if season == 2026 and max(done) > datetime.now(UTC):
                 continue                                   # week not finished
             proj = projections(season, week, refresh)
             slots = sorted({k for k, _ in kick.values()})
@@ -368,7 +368,7 @@ def matchup_frame(df: pd.DataFrame, params: dict, k: float = 1.0) -> pd.DataFram
 
 def metrics(p, y) -> dict:
     p = np.clip(np.asarray(p, float), 1e-4, 1 - 1e-4); y = np.asarray(y, float)
-    return {"n": int(len(y)), "log_loss": float(-(y * np.log(p) + (1 - y) * np.log(1 - p)).mean()),
+    return {"n": len(y), "log_loss": float(-(y * np.log(p) + (1 - y) * np.log(1 - p)).mean()),
             "brier": float(((p - y) ** 2).mean())}
 
 
@@ -398,10 +398,17 @@ def main(argv=None) -> int:
     flat = fit_spread(tr.assign(pos="WR"))                      # one spread for all positions
     flat = {"a": {p: flat["a"]["WR"] for p in POS}, "b": {p: flat["b"]["WR"] for p in POS}, "g": flat["g"]}
     # global spread factor k on TRAIN matchups
-    mtr = lambda k: matchup_frame(tr, params, k)                  # noqa: E731
+    mtr = lambda k: matchup_frame(tr, params, k)
     ks = np.linspace(0.7, 1.5, 17)
     ll = [metrics(mtr(k).p_live, mtr(k).won)["log_loss"] for k in ks]
-    k_best = float(ks[int(np.argmin(ll))])
+    k_train = float(ks[int(np.argmin(ll))])
+    # Shipped k is 1.0, not the train argmin: across 0.85-1.1 the train log loss
+    # moves by < 0.003 (noise), 1.0 is best on the held-out seasons, and 1.0 is
+    # the board's TESTED pre-game convention (gridiron.winprob), so Game Zone
+    # and the board agree at kickoff. A wider pre-game spread was checked and
+    # did not help (the pre-game weakness is the projections, not the spread).
+    k_best = 1.0
+    k_scan = {f"{k:.2f}": round(v, 4) for k, v in zip(ks, ll)}
     print("spread params", json.dumps(params, indent=None), "k", k_best)
     out = {}
     for label, data in (("train", tr), ("test", te)):
@@ -441,12 +448,13 @@ def main(argv=None) -> int:
                  "or names. expected_p is P(side 0 wins) from live_pwin_v1.json", "fixtures": fixtures},
                 indent=1) + "\n")
     const = {"version": "live_pwin_v1", "fitted_on": list(TRAIN), "tested_on": list(TEST),
-             "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+             "generated": datetime.now(UTC).strftime("%Y-%m-%d"),
              "model": "P = Phi((now_a-now_b + sum(proj*f)_a - sum(proj*f)_b) / (k*sqrt(sum sd^2))), "
                       "sd = f^(g/2) * (a_pos + b_pos*proj)",
              "projection": "Sleeper weekly projection stats dot the league's scoring_settings; "
                            "fgmiss = sum of fgmiss_* keys",
-             "game_minutes": GAME_MINUTES, "k": k_best, **params,
+             "game_minutes": GAME_MINUTES, "k": k_best, "k_train_argmin": k_train,
+             "k_scan_train_log_loss": k_scan, **params,
              "rebuild_audit": a, "metrics": out}
     REF.mkdir(parents=True, exist_ok=True)
     (REF / "live_pwin_v1.json").write_text(json.dumps(const, indent=1) + "\n")
