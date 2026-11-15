@@ -106,6 +106,9 @@ docs/BOOTSTRAP_FROM_PLV.md for the full history.
     called. FF equivalents: treating Questionable as Out, and treating
     rostered as startable (byes, IR slots, lineup locks). APIs expose the
     raw designation and make the caller decide.
+    And "in the IR slot" ≠ IR-eligible: a player there without an allowed
+    tag locks the WHOLE lineup in Sleeper until he is moved, and he cannot
+    be moved after his kickoff (2026 week 10; ADR-0002, `gridiron.irslot`).
 
 12. **Skill discipline.** plv_clone grew 94 skills organically (with a
     registry test keeping them honest). Start here with five: roster-audit,

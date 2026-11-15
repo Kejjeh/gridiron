@@ -89,6 +89,12 @@ def compare(league: dict) -> list[dict]:
         add(const, getattr(lc, const),
             None if key not in settings else int(settings[key]))
 
+    # IR-slot eligibility: which designations may sit in the slot. A tag the
+    # league stops allowing would lock the owner's lineup (gridiron.irslot).
+    for tag, key in sorted(lc.IR_ALLOW_FLAGS.items()):
+        add(f"IR_ELIGIBLE_DESIGNATIONS[{tag}] ({key})", tag in lc.IR_ELIGIBLE_DESIGNATIONS,
+            None if key not in settings else bool(settings[key]))
+
     for key, weight in sorted(lc.KICKING_SCORING.items()):
         if key in scoring:
             add(f"KICKING_SCORING[{key}]", float(weight), float(scoring[key]))

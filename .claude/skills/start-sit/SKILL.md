@@ -7,6 +7,13 @@ description: Decide this week's lineup from the published Gridiron record — th
 
 ## Steps
 
+0. **IR slot first.** If the review header says **LINEUP LOCKED**, or the
+   move pre-flight flags a player "IN YOUR IR SLOT WITHOUT AN IR-ELIGIBLE
+   TAG", that comes before every start/sit call. Sleeper blocks ALL lineup
+   moves until he is moved out, and he cannot be moved after his own
+   kickoff. Tell the owner to move him to the bench, dropping someone if
+   needed, before the first kickoff of ANY of their players. That may be a
+   Thursday or a 9:30 ET international game (ADR-0002).
 1. Record: reuse the week's record, or
    `PYTHONPATH=src python scripts/weekly/fetch_record.py`.
 2. `PYTHONPATH=src python scripts/weekly/weekly_review.py --record <record>`

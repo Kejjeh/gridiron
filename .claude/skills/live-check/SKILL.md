@@ -14,7 +14,11 @@ instead of from memory.
    (`nflreadpy.load_schedules`): the kickoff (`gameday`, `gametime`, ET) and
    the score columns, which are blank until the game ends. Say which games
    are still to play, for example Sunday night and Monday.
-2. **Pull the week.**
+2. **Before the day's first kickoff, check the IR slot.** A pre-flight flag
+   "IN YOUR IR SLOT WITHOUT AN IR-ELIGIBLE TAG" means Sleeper will freeze
+   the lineup at that kickoff (ADR-0002). Tell the owner first, with the
+   time.
+3. **Pull the week.**
 
        PYTHONPATH=src python scripts/weekly/fetch_record.py
        PYTHONPATH=src python scripts/weekly/move_check.py --record <record> --leaders 8
@@ -26,12 +30,12 @@ instead of from memory.
      with its volume (opportunities) and his team's QB before calling him a
      pickup. One game with a touchdown is not a role (rule #6). Cross-check
      the review's Role openings and starter volume table.
-3. **Gaps to say out loud.**
+4. **Gaps to say out loud.**
    - Sleeper's week rows carry no snap counts until later, and nflverse
      snaps land the next day. Say "snaps not posted yet", never 0%.
    - A player with no row has not played yet (or is on bye). He has not
      scored 0.
-4. **Follow-up after the late games.** When the owner asks to look again
+5. **Follow-up after the late games.** When the owner asks to look again
    later, schedule one message for about 3 h 15 min after the last kickoff
    in question (for example 8:00 PM ET after the 4:25 games), using the
    session's scheduling tool. Write the message so it stands alone:
@@ -41,7 +45,7 @@ instead of from memory.
    - that nothing is submitted.
 
    Tell the owner the time and how to cancel it.
-5. **Report.**
+6. **Report.**
    - A table of the owner's players: points, line, tag.
    - The free agents worth a look, each with volume and QB.
    - What changed since the last read: new tags, players now owned (the

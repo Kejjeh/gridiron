@@ -44,6 +44,20 @@ ROSTER_SLOTS: dict[str, int] = {
     "BENCH": 5,
 }
 IR_SLOTS = 1
+#: Sleeper tags a player must carry to SIT in the IR slot (the league's
+#: `reserve_allow_*` settings, verified by scripts/verify_league_settings.py;
+#: "IR" itself is always allowed). A player in the slot WITHOUT one of these
+#: tags locks the owner's whole lineup in Sleeper: no lineup move, add or drop
+#: until he is moved out, and he cannot be moved once his game kicks off
+#: (2026 week 10: an activated back stayed in the slot past the Sunday
+#: morning kickoff and froze the lineup for the day). `gridiron.irslot`.
+IR_ELIGIBLE_DESIGNATIONS: frozenset[str] = frozenset(
+    {"IR", "OUT", "DOUBTFUL", "SUS", "NA", "COV", "DNR"})
+#: The Sleeper settings flag behind each designation above (verified).
+IR_ALLOW_FLAGS: dict[str, str] = {
+    "OUT": "reserve_allow_out", "DOUBTFUL": "reserve_allow_doubtful",
+    "SUS": "reserve_allow_sus", "NA": "reserve_allow_na",
+    "COV": "reserve_allow_cov", "DNR": "reserve_allow_dnr"}
 FLEX_ELIGIBLE: tuple[str, ...] = ("RB", "WR", "TE")
 
 # Draft: snake, 15 rounds, 60 s pick clock, Josh holds slot 1 of 12.

@@ -32,6 +32,11 @@ Every step below exists because of one of those.
    - a bye in either of the next two weeks;
    - a FALLING role.
 
+   - a player **IN YOUR IR SLOT WITHOUT AN IR-ELIGIBLE TAG**. This one
+     comes first: Sleeper locks the whole lineup and blocks adds and drops
+     until he is moved out (ADR-0002). When an IR player's tag clears, move
+     him out the same day, never at kickoff.
+
    These holes decide WHICH positions to shop for. List them before naming
    any free agent.
 3. **Candidates.** `PYTHONPATH=src python scripts/weekly/weekly_review.py

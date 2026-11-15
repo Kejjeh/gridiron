@@ -150,6 +150,11 @@ def header(rv: Review) -> list[str]:
            (f"- Sleeper projections captured {rv.shadow_at} are shown for "
             f"comparison only (shadow test; they change no advice)."
             if rv.shadow else "- No Sleeper shadow projections in this record."), ""]
+    traps = r.get("ir_traps") or []
+    if traps:
+        out += ["**LINEUP LOCKED — fix the IR slot first** (tags as of "
+                f"{r.get('ir_tags_as_of') or 'unknown'}):", ""]
+        out += [f"- {t.get('text')}" for t in traps] + [""]
     stale = [s for s in r.get("sources") or [] if " FRESH " not in f" {s} "]
     if stale:
         out += ["**Inputs not current:**", ""] + [f"- `{s[:160]}`" for s in stale] + [""]

@@ -70,6 +70,7 @@ from gridiron.lineup import (
 from gridiron.projection import (
     BASELINE_LABEL, Projection, abstain, build_evidence, project,
 )
+from gridiron.irslot import ir_traps
 from gridiron.notable import (ALERT_HOURS, MARKET_CAP, NOTABLE_CAP, WORK_CAP, FreeAgentWatch,
                               PreviousWatch, build_watch, league_drops, market_ranks,
                               prior_lines)
@@ -193,6 +194,11 @@ class Dashboard:
     #: (`gridiron.notable`): last season's starters and this league's recent
     #: drops, and every abstained player Sleeper does project. Not moves.
     watch: FreeAgentWatch | None = None
+    #: Players in the IR slot without a tag the league allows there
+    #: (`gridiron.irslot`): each one locks the whole lineup in Sleeper.
+    ir_traps: tuple = ()
+    #: When the tags behind `ir_traps` were read (the player map's as-of).
+    ir_tags_as_of: str = ""
 
     @property
     def degraded(self) -> bool:
@@ -287,6 +293,8 @@ class Dashboard:
             "radar_changes": (None if self.radar_changes is None
                               else self.radar_changes.record()),
             "watch": None if self.watch is None else self.watch.record(),
+            "ir_traps": [t.record() for t in self.ir_traps],
+            "ir_tags_as_of": self.ir_tags_as_of,
             "usage": dict(self.usage) if self.usage else None,
             "shadow": dict(self.shadow) if self.shadow else None,
             "projection_model": self.model_status or BASELINE_LABEL,
@@ -916,7 +924,16 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                          advanced, shadow, (*roster, *pool), market=market,
                          market_rates=lambda: season_rates(weeks, context.stats_through)),
                      pwin_calibration=cal, league_matchups=tuple(league_matchups),
-                     watch=watch(PreviousWatch()))
+                     watch=watch(PreviousWatch()),
+                     ir_traps=tuple(ir_traps(
+                         [(p.sleeper_id, p.name,
+                           None if p.sleeper_id not in sleeper_players
+                           else (sleeper_players.get(p.sleeper_id) or {}).get("injury_status") or "",
+                           p.kickoff) for p in roster if p.lineup == "IR"],
+                         now=now, roster_kickoffs=[p.kickoff for p in roster])),
+                     ir_tags_as_of=next((s.as_of.astimezone(timezone.utc).strftime("%a %H:%M UTC")
+                                         for s in sources if s.name == "sleeper_players"
+                                         and s.as_of is not None), "an UNKNOWN time"))
 
     # What changed since the previous frozen page. Read-only: the diff never
     # feeds a projection, so yesterday's numbers cannot enter today's evidence.
@@ -2045,7 +2062,7 @@ color:inherit;font-weight:500;list-style:none}
 .radar li[hidden]{display:none}
 .chg li{margin:3px 0}
 .watch{padding-left:1.1em;margin:6px 0}.watch li{margin:8px 0;overflow-wrap:anywhere}
-.notable-alert{overflow-wrap:anywhere}
+.notable-alert,.ir-lock{overflow-wrap:anywhere}
 .desk h2{border-top:0;margin-top:22px;padding-top:0}
 .desk-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0 28px}
 .deskh{font-size:var(--t-xs);letter-spacing:.12em;text-transform:uppercase;color:var(--warn);margin:22px 0 4px}
@@ -2665,6 +2682,22 @@ def _radar_row(d: Dashboard, c: Candidate, elig, waiver_ok: bool, order: int) ->
             f"<div class=\"rbody\">{_dl(pairs)}</div></details></li>")
 
 
+def _ir_alert(d: Dashboard) -> str:
+    """First screen, above everything: a player in the IR slot whom the league
+    no longer allows there. Sleeper then blocks every lineup move, add and drop
+    until he is moved out (`gridiron.irslot`). A standing blocker, shown for
+    as long as it holds — not a transition alert (rule #8 covers news, not a
+    lock on the owner's own controls)."""
+    traps = getattr(d, "ir_traps", ())
+    if not traps:
+        return ""
+    return ("<div class=\"gatebox ir-lock\"><b class=\"warn\">Your lineup is LOCKED "
+            "in Sleeper until you fix the IR slot:</b> "
+            + _e(" ".join(t.describe() + "." for t in traps))
+            + f" <span class=\"small sub\">(tags as of {_e(d.ir_tags_as_of)}; the player's "
+              "card in Sleeper is the authority)</span></div>")
+
+
 def _work_alert(d: Dashboard) -> str:
     """The first-screen line for the usage list: pool players who JUST got
     a role opening or a starter's workload (new in the last ALERT_HOURS).
@@ -3145,6 +3178,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    "this data.</b> Every item below is WITHHELD or waits on a check: the "
                    "inputs behind it are stale or unreadable, so what follows is the last "
                    "known picture rather than current advice.</div>")
+    out.append(_ir_alert(d))
     out.append(_watch_alert(d))
     out.append(_work_alert(d))
     for i, item in enumerate(desk.top, 1):

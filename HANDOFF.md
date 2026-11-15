@@ -4,6 +4,21 @@ Current state and next step only. The running log through the Game Day,
 Radar, Action Desk and publication releases moved to
 `docs/memory/handoff_history.md` on 2026-10-01 (provenance, not current).
 
+## IR-slot lineup lock guarded (2026-11-15)
+
+- **What happened:** week 10, Stevenson was activated but still in the IR slot
+  at the 9:30 ET Munich kickoff. Sleeper blocked every lineup move for the
+  day.
+- **Shipped:**
+  - `gridiron.irslot`;
+  - verified `IR_ELIGIBLE_DESIGNATIONS`;
+  - the board's first-screen alert;
+  - the review header;
+  - the `move_check.py` flag;
+  - ADR-0002, rules #11, the start-sit, move-plan and live-check steps.
+- **Check after the first cloud build:** the record carries `ir_traps`
+  (empty when the slot is legal) and `ir_tags_as_of`.
+
 ## Model roadmap executed (2026-11-02)
 
 The owner said "execute all phases now" (read as approval of the roadmap's
