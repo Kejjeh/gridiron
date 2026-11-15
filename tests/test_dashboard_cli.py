@@ -753,6 +753,8 @@ def test_without_transactions_the_page_says_drops_are_unknown(tmp_path, no_netwo
     assert rec["watch"]["notable"] == []
     assert any("drops UNKNOWN" in x for x in rec["watch"]["notes"])
     assert "drops UNKNOWN" in html and "notable-alert\"" not in html
+    # the fixture team's IR-slot player has no tag: the page says the lineup is locked
+    assert "ir-lock" in html and rec["ir_traps"] and rec["ir_traps"][0]["tag"] == ""
     assert "recent drops are UNKNOWN" in html and "was dropped by a team in this league" \
         not in html, "an empty list never claims nobody was dropped when drops are unknown"
     assert "Last season's starters cannot be checked" in html \

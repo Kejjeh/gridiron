@@ -9,6 +9,14 @@ CONDITIONAL (availability UNVERIFIED); the Free Agent Radar (`gridiron.radar`,
 under the Action Desk) verdicts every projected pool player; rollover = "no
 comparison".
 
+IR-slot lock (2026-11-15, ADR-0002, `gridiron.irslot`): a player in the IR
+slot whose tag is not in `league_config.IR_ELIGIBLE_DESIGNATIONS` (verified
+against Sleeper's `reserve_allow_*`) makes Sleeper block every lineup move,
+add and drop. First-screen `_ir_alert` above every other alert, with the
+deadline (the first kickoff among ALL rostered players, not 1 PM) and the
+tags' as-of. Record `ir_traps`; review header; pre-flight flag from the live
+week-stats tag. Unknown tag = flagged. Standing blocker, not a transition.
+
 Usage before projections (2026-11-08, `gridiron.openings`, own list
 `#work` under the radar, own first-screen alert): every pool player whose
 last 3 games average a starter's snaps AND opportunities (RB 40%/10, WR

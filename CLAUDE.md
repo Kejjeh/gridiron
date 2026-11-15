@@ -69,8 +69,8 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
 10. Don't commit bulk data (`data/research/cache/` ignored) or roster-bearing
     weekly reports (`data/outputs/week*_report.*` ignored — they name the
     owner's players); DO commit the small projection/ledger CSVs.
-11. "Questionable" ≠ out; "on roster" ≠ startable. No convenience accessor
-    that makes the wrong call easy.
+11. "Questionable" ≠ out; "on roster" ≠ startable; "in IR slot" ≠ IR-eligible
+    (it locks the whole Sleeper lineup: ADR-0002). No wrong-call accessors.
 12. Skills only from rule 12's allowlist (rules.md; enforced by
     tests/test_skill_registry.py). Resist premature skill growth.
 

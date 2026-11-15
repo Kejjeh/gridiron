@@ -32,6 +32,8 @@ def matching_league() -> dict:
     scoring.update({k: float(v) for k, v in lc.DEFENSE_SCORING.items()})
     settings = {key: int(getattr(lc, const))
                 for key, const in V.SETTINGS_MAP.items()}
+    settings.update({key: int(tag in lc.IR_ELIGIBLE_DESIGNATIONS)
+                     for tag, key in lc.IR_ALLOW_FLAGS.items()})
     return {
         "league_id": lc.SLEEPER_LEAGUE_ID,
         "name": lc.LEAGUE_NAME,

@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 import pandas as pd
 
 from gridiron.ids import nflverse_team, normalize_id
+from gridiron.irslot import eligible as ir_eligible
 from gridiron.notable import STARTER_RANK
 from gridiron.openings import VACATING_DESIGNATIONS
 
@@ -280,6 +281,14 @@ def card(sid: str, ix: Index, *, live: Mapping[str, LiveRow], byes: Mapping[int,
         flags.append(f"{tag} per {src}: will not play")
     elif tag:
         flags.append(f"{tag} per {src} (not out, rule #11)")
+    if info.get("lineup") == "IR":
+        if lv is None:
+            flags.append("IN YOUR IR SLOT and his current tag is unknown here: check his "
+                         "Sleeper card — without an IR-eligible tag Sleeper locks your lineup")
+        elif not ir_eligible(lv.tag):
+            flags.append(f"IN YOUR IR SLOT WITHOUT AN IR-ELIGIBLE TAG ({lv.tag or 'no tag'}): "
+                         f"Sleeper blocks every lineup move, add and drop until he is moved "
+                         f"out — move him before the first kickoff of your players")
     bye_hits = tuple(w for w, teams in sorted(byes.items()) if team and team in teams)
     for w in bye_hits:
         flags.append(f"BYE in week {w}")
