@@ -253,7 +253,11 @@ jobs:
           GRIDIRON_WEEK: ${{ inputs.week }}
         # Never --fail-on-degraded here: a degraded page is exactly the page
         # worth reading on a bad day, and it now withholds its own actions.
-        run: python scripts/weekly/dashboard.py --write
+        # --feed-log: Sleeper's number for every high-snap RB starter, one
+        # row each time it changes, carried in the store (the store's ~10 h
+        # of records cannot hold a Saturday-to-Sunday timing; #29 item 2).
+        # Public NFL ids and Sleeper's public projections only.
+        run: python scripts/weekly/dashboard.py --write --feed-log "$CARRY_DIR/starter_feed/season2026.csv"
 
       # The Game Day page: the platform's own matchup scores, who is yet to
       # play, what is still legal, and what the board above advised — built
@@ -352,6 +356,15 @@ jobs:
               print(f"  - `{line.split('  ')[0]}`")
           PY
 
+      # The carried starter-feed log (#29 item 2) beside the grade ledger, so
+      # the artifact keeps its data/ root (fetch_record.py reads that layout).
+      - name: Stage the starter-feed log for the artifact
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p data/ledger/starter_feed
+          cp "$CARRY_DIR"/starter_feed/season*.csv data/ledger/starter_feed/ 2>/dev/null || true
+
       - name: Upload the dashboard run artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -368,6 +381,7 @@ jobs:
             data/outputs/dashboard/*.json
             data/ledger/decisions/season*/*.json
             data/ledger/grades/season*.csv
+            data/ledger/starter_feed/season*.csv
           if-no-files-found: error
           retention-days: 14
 

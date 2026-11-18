@@ -80,7 +80,8 @@ from gridiron.scoring import ScoringCoverage
 from gridiron.models.advanced import (FEED_MIN_PER_POSITION, NAME as ADVANCED_NAME,
                                       POSITIONS as SKILL_POSITIONS, STACK_NAME,
                                       STACK_SHADOW_MAX_AGE_HOURS, AdvancedContext)
-from gridiron.shadow import shadow_block
+from gridiron.openings import high_snap_starters, lines_by_player
+from gridiron.shadow import shadow_block, starter_feed_block
 from gridiron.grading import SYSTEM_LABELS, ReportCard
 from gridiron.trends import (FALLING, MIXED, RISING, STEADY, TOO_FEW,
                              usage_block)
@@ -174,6 +175,9 @@ class Dashboard:
     #: An outside system's projection for the same players, captured for
     #: grading only (`gridiron.shadow`). Record-only; nothing reads it.
     shadow: Mapping[str, object] | None = None
+    #: Sleeper's number for every high-snap RB starter, owned or not
+    #: (`gridiron.shadow.starter_feed_block`, #29 item 2). Record-only.
+    starter_feed: Mapping[str, object] | None = None
     #: Which projection model produced the page's numbers, or why the
     #: baseline stands (`gridiron.models.advanced`).
     model_status: str = ""
@@ -297,6 +301,7 @@ class Dashboard:
             "ir_tags_as_of": self.ir_tags_as_of,
             "usage": dict(self.usage) if self.usage else None,
             "shadow": dict(self.shadow) if self.shadow else None,
+            "starter_feed": dict(self.starter_feed) if self.starter_feed else None,
             "projection_model": self.model_status or BASELINE_LABEL,
             "contenders": dict(self.contenders) if self.contenders else None,
             "withheld_actions": list(self.gate.withheld),
@@ -365,6 +370,19 @@ def _feed_usable(shadow: Mapping[str, object] | None, kickoff: datetime | None,
     fetched = shadow.get("fetched_at_dt")
     return (isinstance(fetched, datetime) and fetched < kickoff
             and (now - fetched) <= timedelta(hours=STACK_SHADOW_MAX_AGE_HOURS))
+
+
+def _starter_feed(shadow, sleeper_players, weeks, *, through_week, gsis_of, week, now,
+                  byes, kicks) -> dict:
+    """The record's `starter_feed` block (#29 item 2): record-only."""
+    lines = lines_by_player(weeks, through_week=through_week)
+    starters = high_snap_starters(
+        sleeper_players or {}, lines, through_week=through_week, gsis_of=gsis_of,
+        plays=lambda t: False if t in byes else (True if t in kicks else None))
+    return starter_feed_block(shadow, starters, week=week, now=now,
+                              kickoff_of=lambda t: kicks.get(t),
+                              min_per_position=FEED_MIN_PER_POSITION,
+                              starters_known=bool(lines))
 
 
 def feed_absence(shadow: Mapping[str, object] | None, sid: str, position: str,
@@ -926,6 +944,10 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                                        through_week=context.stats_through),
                      shadow=shadow_block(shadow, [(p.sleeper_id, p.kickoff)
                                                   for p in (*roster, *pool)]),
+                     starter_feed=_starter_feed(shadow, sleeper_players, weeks,
+                                                through_week=context.stats_through,
+                                                gsis_of=crosswalk.gsis, week=week, now=now,
+                                                byes=byes, kicks=this_kicks),
                      model_status=((advanced.status
                                     + stack_serving_note((*roster, *pool), shadow, now))
                                    if advanced is not None and advanced.active

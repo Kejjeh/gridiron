@@ -27,6 +27,20 @@ or lists on another team or none). Ids through the crosswalk only. A row
 alerts 48 h from first seen against a comparable record carrying
 `work_since`; a legacy record alerts nothing.
 
+Starter feed record (2026-11-18, #29 item 2 option B, `shadow.starter_feed_block`):
+every build's record key `starter_feed` holds Sleeper's projection for each
+RB starter at 45%+ of snaps (`openings.high_snap_starters`, the role-at-risk
+subset), owned or not: LISTED with a number (0 is a number), ABSENT from a
+full feed, or UNKNOWN (no feed, another week's, a thin RB list = a failed
+fetch). Each entry has its fetched-at time and `pre_kickoff`, where None
+means unknown. Record-only: no alert, gate, projection or grade reads it, and
+it is never rendered into the public HTML. The cloud keeps ~10 h of records,
+so `dashboard.py --feed-log` appends each starter-week's CHANGES to a carried
+log (`.carry/starter_feed/season<YYYY>.csv`, staged into the artifact as
+`ledger/starter_feed/`). `scripts/research/feed_reaction.py --log` times a
+drop by Sleeper's fetch time against kickoff; a week with no known answer is
+"unanswered", never a miss.
+
 A free agent the radar cannot rank is still NAMED (2026-10-21,
 `gridiron.notable`, docs/research/RETURNER_BACKTEST.md): last season's
 starters (league ppg rank within LAST season's position, 4+ games) and drops
