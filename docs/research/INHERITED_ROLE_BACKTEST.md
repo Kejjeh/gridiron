@@ -4,8 +4,10 @@
 bad luck.**
 - Our model never moved him: 6.29 → 6.09. The whole +2.2 came from
   Sleeper's number in the stack.
-- No alert can fire on "Questionable + did not practise Friday", and the
-  rules say that is right (rule #11).
+- No alert could fire on "Questionable + did not practise Friday", and the
+  rules say that is right (rule #11). Since the owner's decision of
+  2026-11-18 (§3) an RB role-at-risk watch row does: a research row, not a
+  move, and never an Out.
 - The one watch that does fire on Out only re-reads Sleeper's tags once a
   day, so it fired about seven hours after another team had claimed him.
 
@@ -34,9 +36,10 @@ for Johnson.
 | build (UTC) | Walker on the inputs | Johnson | baseline → ours → served (Sleeper) | verdict |
 |---|---|---|---|---|
 | Tue 10 07:26 – Fri 13 15:27 (13 builds) | no week-10 report yet, then "no designation" | 6.24–6.69 | 4.55 → 6.29 → 6.42 (5.96) | BELOW |
-| **Fri 13 21:32** (injury report pulled 21:32: Questionable, DNP Friday) | Questionable + DNP | **8.48** | 4.64 → **6.09** → 8.48 (**8.62**) | LINEUP, +0.34 at FLEX over a bench WR |
-| Sat 14 01:41, 08:05, 14:58 | Questionable (Sleeper pull of 01:41) | 8.48 | unchanged | LINEUP; change log: "Refreshed, not revised" |
+| **Fri 13 21:32** (injury pull 21:32; Sleeper player pull 21 h old) | "no designation on the wk10 report": no row for him at all | **8.48** | 4.64 → **6.09** → 8.48 (**8.62**) | LINEUP, +0.34 at FLEX over a bench WR (Sleeper's revision, not ours) |
+| Sat 14 01:41, 08:05, 14:58 | "Questionable (Groin)", from the Sleeper pull of 01:41 (no practice field); injury pull still Fri 21:32 | 8.48 | unchanged | LINEUP; change log: "Refreshed, not revised" |
 | Sat 14 19:52 | Questionable (Sleeper pull still 01:41) | — | — | "now owned: claimed by a roster since the previous record" |
+| Sat 14 23:26 | next injury pull: the first that could carry nflverse's Friday DNP + Questionable row (published with its ~07:00 UTC Saturday update) | owned | — | — |
 | **Sun 15 02:59** (first Sleeper pull after his Out) | **Out** | owned | — | opening watch names the next two KC backs; **Johnson is already gone** |
 | Sun 15 17:26 | Out | owned | 4.64 → 6.09 → 13.50 (14.95) | actual: 88% snaps, 22 carries, 7 targets, **35.1** |
 
@@ -48,15 +51,17 @@ team shaped like the week-9 KC box scores: Walker 24 opportunities a game at
 quarterback.
 
 ```
-Fri report: Questionable + DNP (what the board had): Johnson vacated_pickup = 0.00 of Walker's 24.0 opps -> +0.00 pts
+Final report: Questionable + DNP (nflverse, Saturday): Johnson vacated_pickup = 0.00 of Walker's 24.0 opps -> +0.00 pts
 counterfactual: Out on the report: Johnson vacated_pickup = 3.53 of Walker's 24.0 opps -> +1.92 pts
   (RB weight 0.545/opp); WR1 gets 5.65, QB1 2.82
 ```
 
 1. **Questionable is not a vacancy.** `vacated_pickup`
    (`gridiron.models.advanced.features_as_of`) counts only teammates listed
-   Out or Doubtful on the report. Walker was Questionable with a Friday
-   DNP, so the feature was 0. The model's own practice flags (`practice_dnp`,
+   Out or Doubtful on the report. Walker's final report was Questionable
+   with a Friday DNP, so the feature was 0 even once that row arrived (the
+   board's Friday-night inputs had no row for him at all; corrected
+   2026-11-18, see the table). The model's own practice flags (`practice_dnp`,
    `questionable`) describe the player himself, not his teammates.
 2. **Saturday's Out never reaches the model.** The model reads the nflverse
    final report, which is Friday's report. A ruling made on Saturday is in
@@ -245,11 +250,50 @@ the bar never judges them. MAE pooled over the folds:
 
 ## 3. What would have caught Johnson, and what it would cost
 
-**Owner re-check pending (2026-11-18):** whether to alert on a high-snap
-starter's Friday DNP, whether to treat a starter dropping out of Sleeper's
-projections feed as a vacancy, and what the projection serves. Tracked in
-[Kejjeh/gridiron#29](https://github.com/Kejjeh/gridiron/issues/29). These
-are the facts each option rests on:
+**Owner decided (2026-11-18), [Kejjeh/gridiron#29](https://github.com/Kejjeh/gridiron/issues/29):**
+item 1, the alert: "make ths automatic", "RB only (Recommended)", "Board
+watch row", and then, on the trigger, "DNP or Questionable". Item 3, the
+projection: unchanged (A). Built as the RB role-at-risk watch row
+(`gridiron.openings.role_risks`, `gridiron.notable.RiskRow`; tests in
+`tests/test_role_risk.py`):
+
+- **Who:** an RB on 45%+ of his team's offensive snaps over his last 3
+  games. Out or Doubtful stays with the role-opening watch.
+- **Fires on**, once a week per starter, on the transition (rule #8):
+  - DID NOT PRACTISE: the week's final report gives him a game status and a
+    DNP; or
+  - QUESTIONABLE — NOT OUT: a FRESH Sleeper pull tags him Questionable
+    (a stale pull's tag is never read). A Questionable that later gains the
+    DNP is carried with its first sighting, and the row says which fired.
+- **Says:** the next back by snap share and his share, a committee flag, who
+  holds him (pool with the waiver clock, yours, another roster). Never a
+  move, a projection or a claim.
+- **Week 10:** nothing at Fri 21:32 (no report row, Sleeper pull 21 h old);
+  fires at **Sat 01:41** on the fresh Questionable tag, about 18 h before
+  the backup was claimed (by Sat 19:52). DNP-only would have fired at
+  Sat 23:26, too late.
+- **False alarms** (`scripts/research/role_risk_sit_rates.py`; nflverse's
+  final-report Questionable stands in for Sleeper's tag, whose history is not
+  kept). Of 45%+ snap RB starters listed Questionable, 2019–2025:
+
+  | subset | n | sat |
+  |---|---|---|
+  | all Questionable | 269 | 78 (29%) |
+  | Questionable, did not practise | 51 | 31 (61%) |
+  | Questionable, practised | 218 | 47 (22%) |
+  | 2026 (weeks 1–10), all | 8 | 2 |
+
+  So roughly 7 in 10 Questionable rows are for a starter who plays. This is
+  a different subset from §2's `dnp` class (21.7% sat): that class is RB,
+  WR and TE starters at a 60% RB bar, with any final-report DNP not ruled
+  out, whether or not he was given a game status.
+- **Limit:** Sleeper can carry last week's Questionable into a new week; on
+  a fresh pull that tag puts a row up for the new week.
+
+**Owner re-check pending (2026-11-18):** item 2, whether to treat a starter
+dropping out of Sleeper's projections feed as a vacancy (a faster Out).
+Tracked in [Kejjeh/gridiron#29](https://github.com/Kejjeh/gridiron/issues/29).
+The facts each option rested on:
 
 - **Friday DNP alert ("role at risk").** Across 2019–2025 about 40
   high-snap starters a season had a Friday DNP without an Out. About 22% of

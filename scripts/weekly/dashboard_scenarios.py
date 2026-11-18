@@ -53,6 +53,11 @@ stale, and when inputs are missing. Nothing here reads the real cache.
             projects: the radar cannot rank him, so the first screen names
             him (`gridiron.notable`), with the waiver timing, and the "Can't
             project" list carries Sleeper's number.
+  role_risk the complete cache plus a week-3 final report on which the KC lead
+            back (68% of snaps, Sunday night) is Questionable and did not
+            practise, and an
+            invented backup on 30% of snaps in the pool: the RB-role-at-risk
+            row (`gridiron.openings.role_risks`), with his waiver status.
 
 Every scenario's rosters carry `taxi: null` like the real league object, and
 (outside open_spot) the league's bench is sized so the owner's active roster
@@ -95,7 +100,7 @@ FIXTURES = REPO_ROOT / "tests" / "fixtures"
 UTC = timezone.utc
 SCENARIOS = ("complete", "stale", "missing", "partial_schedule", "slate_end",
              "hold", "sparse", "taken", "roster_changed", "next_week", "designations",
-             "open_spot", "notable")
+             "open_spot", "notable", "role_risk")
 
 #: Saturday of NFL week 3 in the fixture calendar (games Sun 2026-09-27),
 #: rendered at noon UTC: pregame, nothing locked, waivers cleared.
@@ -116,6 +121,7 @@ TWO_RUN = ("taken", "roster_changed", "next_week")
 #: The synthetic scenarios that are the `complete` cache with a twist.
 _BASE = {"slate_end": "complete", "hold": "complete", "sparse": "complete",
          "designations": "complete", "open_spot": "complete", "notable": "complete",
+         "role_risk": "complete",
          "taken": "complete", "roster_changed": "complete", "next_week": "complete"}
 
 #: Unrostered fixture players with box scores AND crosswalk rows. Two go to
@@ -127,6 +133,13 @@ _FREE_AGENTS = {"11646": ("Jalen Coker", "WR", "CAR"), "11564": ("Drake Maye", "
 #: season, dropped by the opponent 36 hours before the render, projected by
 #: Sleeper — the case the radar cannot rank and `gridiron.notable` names.
 _RETURNER = ("99001", "00-0099001", "Rex Returner", "RB", "CAR", 16.4)
+#: The `role_risk` twist: the KC lead back (a fixture RB on 68% of snaps; KC
+#: plays Sunday night, so his game has not started at NOW — DET's Thursday
+#: game has) did not practise and is Questionable on the week-3 final report,
+#: and an invented backup on 30% of snaps sits in the pool
+#: (`gridiron.openings.role_risks`).
+_RISK_STARTER_GSIS = "00-0038134"
+_RISK_BACKUP = ("99002", "00-0099002", "BackBe00", "Ben Backup", "RB", "KC")
 
 _CHROME_CANDIDATES = (
     os.environ.get("GRIDIRON_CHROME", ""),
@@ -212,8 +225,20 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
 
     weekly1 = pd.concat([pd.read_csv(FIXTURES / "weekly_offense_wk1.csv"),
                          pd.read_csv(FIXTURES / "weekly_kickers_wk1.csv")], ignore_index=True)
-    weekly = pd.concat([weekly1, _perturbed_week2(weekly1)], ignore_index=True)
     snaps1 = pd.read_csv(FIXTURES / "snaps_wk1.csv")
+    if twist == "role_risk":
+        sid, gid, pfr, name, pos, team = _RISK_BACKUP
+        lead = weekly1.loc[weekly1["player_id"] == _RISK_STARTER_GSIS].copy()
+        nums = lead.select_dtypes("number").columns.drop(["season", "week"], errors="ignore")
+        lead[nums] = (lead[nums] * 0.2).round()
+        lead = lead.assign(player_id=gid, **{c: name for c in ("player_name",
+                                             "player_display_name") if c in lead})
+        weekly1 = pd.concat([weekly1, lead], ignore_index=True)
+        back = snaps1.loc[(snaps1["team"] == team) & (snaps1["position"] == pos)].head(1)
+        snaps1 = pd.concat([snaps1, back.assign(pfr_player_id=pfr, player=name,
+                                                offense_snaps=23.0, offense_pct=0.30)],
+                           ignore_index=True)
+    weekly = pd.concat([weekly1, _perturbed_week2(weekly1)], ignore_index=True)
     snaps = pd.concat([snaps1, snaps1.assign(week=2)], ignore_index=True)
     if twist == "sparse":
         # week 1 only, and only every third player: most projections abstain
@@ -230,6 +255,13 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
     if twist == "next_week" and run == 2:
         injuries = pd.concat([injuries, injuries.loc[injuries["week"] == 3].assign(week=4)],
                              ignore_index=True)
+    if twist == "role_risk":
+        injuries = pd.concat([injuries, pd.DataFrame([{
+            "season": 2026, "week": 3, "team": "KC", "gsis_id": _RISK_STARTER_GSIS,
+            "full_name": "Kenneth Walker III", "position": "RB", "report_status": "Questionable",
+            "practice_status": "Did Not Participate In Practice",
+            "report_primary_injury": "Groin", "practice_primary_injury": "Groin"}])],
+            ignore_index=True)
 
     frames = [("schedules", schedules, "nflreadpy.load_schedules"),
               ("injuries", injuries, "nflreadpy.load_injuries"),
@@ -308,6 +340,10 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
         sid, _, name, pos, team, _ = _RETURNER
         players[sid] = {"player_id": sid, "full_name": name, "position": pos, "team": team,
                         "injury_status": None, "status": "Active", "gsis_id": None}
+    if twist == "role_risk":
+        sid, _, _, name, pos, team = _RISK_BACKUP
+        players[sid] = {"player_id": sid, "full_name": name, "position": pos, "team": team,
+                        "injury_status": None, "status": "Active", "gsis_id": None}
     if kind == "stale":
         players["3198"]["injury_status"] = "Questionable"     # a designation that will read STALE
     players_path = directory / "sleeper_players.json"
@@ -333,6 +369,13 @@ def build_scenario(root: Path, kind: str, *, now: datetime = NOW, run: int = 1) 
         write_shadow(directory, {"source": SHADOW_SOURCE, "season": season, "week": week,
                                  "fetched_at": (now - timedelta(hours=1)).isoformat(),
                                  "players": {sid: {"points": points, "position": pos}}})
+    if twist == "role_risk":
+        cw = pd.read_csv(cross_path, dtype=str)
+        sid, gid, pfr, name, pos, team = _RISK_BACKUP
+        cw = pd.concat([cw, pd.DataFrame([{"sleeper_id": sid, "gsis_id": gid, "pfr_id": pfr,
+                                           "name": name, "position": pos, "team": team}])],
+                       ignore_index=True)
+        cw.to_csv(cross_path, index=False)
     manifest.record("crosswalk", path=cross_path, rows=18, as_of=stamp,
                     source="dynastyprocess db_playerids.csv")
     manifest.save()

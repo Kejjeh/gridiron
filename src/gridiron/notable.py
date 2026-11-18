@@ -61,8 +61,8 @@ from gridiron.lineup import Player, eligible
 # A feed with fewer players than this at a position is a failed fetch, not a
 # ranking (the floor `feed_absence` uses).
 from gridiron.models.advanced import FEED_MIN_PER_POSITION
-from gridiron.openings import (find_vacancies, lines_by_player, opening_reasons,
-                               volume_reason)
+from gridiron.openings import (RoleRisk, find_vacancies, lines_by_player, opening_reasons,
+                               role_risks, volume_reason)
 from gridiron.usage import score_frame
 
 #: A "starter last season" by league points per game, within position.
@@ -317,6 +317,52 @@ def waiver_clock(drop: Drop, now: datetime, *, kickoffs: Iterable[datetime | Non
                        (drop.at, free_from))
 
 
+def pool_clock(sleeper_id: str, now: datetime, drop: Drop | None = None,
+               **clock: object) -> WaiverClock:
+    """`waiver_clock` for a pool player, dropped or not. With no league drop
+    on record he has been unrostered since before the last run, so the
+    league's weekly cycle alone places him (free from the run until his game,
+    or the week's last game, locks him); the stand-in drop is never shown."""
+    if drop is None:
+        drop = Drop(normalize_id(sleeper_id), None,
+                    last_waiver_run(now) - timedelta(days=WAIVER_CLEAR_DAYS + 7), "none")
+    return waiver_clock(drop, now, **clock)  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True)
+class RiskRow:
+    """An RB starter's role at risk this week (`gridiron.openings.role_risks`)
+    and where his backup is: in the pool (`holder` "pool", with the board's
+    waiver clock), on the owner's roster ("yours"), on another team's
+    ("other"), or nowhere the league snapshot shows ("unknown"). A watch row:
+    never a move, never a projection, never a claim."""
+
+    risk: RoleRisk
+    holder: str
+    waiver: str
+    clock: WaiverClock | None = None
+    first_seen: datetime | None = None
+    alert: bool = False
+
+    @property
+    def key(self) -> str:
+        return self.risk.key
+
+    def record(self) -> dict:
+        r = self.risk
+
+        def back(b):
+            return None if b is None else {"id": b.sleeper_id, "gsis_id": b.gsis_id,
+                                           "name": b.name, "snap_pct": b.snap_pct}
+        return {"key": self.key, "week": r.week, "team": r.team, "position": r.position,
+                "starter": back(r.starter), "starter_opps": round(r.starter_opps, 1),
+                "kind": r.kind, "signal": r.signal, "backup": back(r.backup),
+                "runner_up": back(r.runner_up),
+                "committee": r.committee, "holder": self.holder, "waiver": self.waiver,
+                "waiver_phase": None if self.clock is None else self.clock.phase,
+                "alert": self.alert, "first_seen": _iso(self.first_seen)}
+
+
 def market_ranks(players: Mapping[str, object] | None) -> dict[str, int]:
     """sleeper id -> rank of his Sleeper projection within his position, over
     the whole feed (`gridiron.shadow.read_shadow` players). A position the
@@ -472,6 +518,8 @@ class PreviousWatch:
     #: The previous build's usage rows ("sleeper id:kind" -> first seen, or
     #: None when unknown). None when that record predates the list.
     work_since: Mapping[str, datetime | None] | None = None
+    #: The same for the role-at-risk rows ("starter sleeper id:wkN").
+    risk_since: Mapping[str, datetime | None] | None = None
 
     @classmethod
     def from_record(cls, record: Mapping[str, object] | None) -> "PreviousWatch":
@@ -488,13 +536,14 @@ class PreviousWatch:
             generated = None
         if generated is not None and generated.tzinfo is None:
             generated = None
-        ws = w.get("work_since")
-        work_since = None
-        if isinstance(ws, Mapping):
-            known = _times(ws)
-            work_since = {str(k): known.get(str(k)) for k in ws}
+        def since(raw: object) -> dict[str, datetime | None] | None:
+            if not isinstance(raw, Mapping):
+                return None
+            known = _times(raw)
+            return {str(k): known.get(str(k)) for k in raw}
         return cls(pool=ids or None, pool_since=_times(w.get("pool_since")),
-                   generated=generated, work_since=work_since)
+                   generated=generated, work_since=since(w.get("work_since")),
+                   risk_since=since(w.get("risk_since")))
 
     def comparable(self, now: datetime) -> bool:
         return (self.pool is not None and self.generated is not None
@@ -551,6 +600,14 @@ class FreeAgentWatch:
     work_since: Mapping[str, datetime | None] = field(default_factory=dict)
     #: False when the build had no box scores to read usage from.
     work_known: bool = True
+    #: RB starters whose role is at risk this week (`RiskRow`), alerts first.
+    risk: tuple[RiskRow, ...] = field(default=())
+    risk_since: Mapping[str, datetime | None] = field(default_factory=dict)
+    #: False when this build had no injury report for the week (or no box
+    #: scores): roles at risk are UNKNOWN, not absent.
+    risk_known: bool = True
+    #: Sleeper's Questionable tags were read (the player pull was FRESH).
+    risk_tags_fresh: bool = False
 
     @property
     def notable_total(self) -> int:
@@ -568,6 +625,10 @@ class FreeAgentWatch:
     def work_alerts(self) -> tuple[WorkRow, ...]:
         return tuple(w for w in self.work if w.alert)
 
+    @property
+    def risk_alerts(self) -> tuple[RiskRow, ...]:
+        return tuple(r for r in self.risk if r.alert)
+
     def record(self) -> dict:
         return {"notable": [n.record() for n in self.notable],
                 "notable_total": self.notable_total,
@@ -577,7 +638,10 @@ class FreeAgentWatch:
                 "pool_since": {k: _iso(v) for k, v in sorted(self.pool_since.items())},
                 "work": [w.record() for w in self.work], "work_total": len(self.work),
                 "work_known": self.work_known,
-                "work_since": {k: _iso(v) for k, v in sorted(self.work_since.items())}}
+                "work_since": {k: _iso(v) for k, v in sorted(self.work_since.items())},
+                "risk": [r.record() for r in self.risk], "risk_total": len(self.risk),
+                "risk_known": self.risk_known, "risk_tags_fresh": self.risk_tags_fresh,
+                "risk_since": {k: _iso(v) for k, v in sorted(self.risk_since.items())}}
 
 
 def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping[str, object]],
@@ -593,7 +657,9 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
                 my_roster_id: int | None = None,
                 previous: PreviousWatch | None = None,
                 usage_frame: pd.DataFrame | None = None, through_week: int | None = None,
-                gsis_of=None) -> FreeAgentWatch:
+                gsis_of=None, injury_rows: Mapping[str, Mapping] | None = None,
+                report_week: int | None = None, holders: Mapping[str, int] | None = None,
+                team_kickoff=None, tags_fresh: bool = False) -> FreeAgentWatch:
     """Both lists. `market_of(player)` returns Sleeper's pre-kickoff number
     for him or None (the dashboard's `shadow_number`, which refuses a stale or
     post-kickoff feed) — the number shown and the market list's; the "worth
@@ -610,7 +676,13 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
     player-week frame (`gridiron.usage.player_weeks`) read through
     `through_week`, and `gsis_of(sleeper_id)` the crosswalk: together they
     name the pool players with a starter's work or behind a vacated role
-    (`gridiron.openings`), on usage alone."""
+    (`gridiron.openings`), on usage alone. `injury_rows` (this week's
+    report, `gridiron.weekly.injury_index`; None when no current report)
+    and `report_week` drive the role-at-risk rows (`RiskRow`); `holders`
+    (sleeper id -> roster id, every league roster) says who holds a
+    backup, and `team_kickoff(team)` when a backup outside the pool plays.
+    `tags_fresh` (the Sleeper player pull is FRESH) lets a Questionable tag
+    put a role-at-risk row up too (owner decision 2026-11-18, #29)."""
     prev = previous or PreviousWatch()
     ranks = ranks or {}
     market_any = market_any or market_of
@@ -763,8 +835,50 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
     if usage_frame is not None and not lines:
         notes.append("no box scores this build: who has a starter's work, and whose role "
                      "opened, cannot be read")
+
+    # -- RB starters whose role is at risk (a watch row; rule #8 transitions)
+    risk_known = bool(lines) and injury_rows is not None and report_week is not None
+    risks = role_risks(sleeper_players, lines, injury_rows, week=int(report_week),
+                       through_week=through_week, gsis_of=gsis_of or (lambda sid: None),
+                       tags_fresh=tags_fresh) if risk_known else []
+    in_pool = {normalize_id(p.sleeper_id): p for p in pool}
+    mine = {normalize_id(p.sleeper_id) for p in roster}
+    held = {normalize_id(k): v for k, v in (holders or {}).items()}
+    prev_risk = prev.risk_since if compare else None
+    risk_rows: list[RiskRow] = []
+    risk_since: dict[str, datetime | None] = {}
+    for rk in risks:
+        bid = rk.backup.sleeper_id if rk.backup is not None else ""
+        bp = in_pool.get(bid)
+        kick = bp.kickoff if bp is not None else (team_kickoff(rk.team) if team_kickoff else None)
+        if kick is not None and kick <= now:
+            continue                    # his game has started: nothing left to do
+        clock = None
+        if not bid:
+            holder, waiver = "unknown", "no back behind him has played recently"
+        elif bp is not None:
+            d = drops.get(bid)
+            clock = pool_clock(bid, now, d, kickoffs=kickoffs_of(bp), slate_ends=slate_ends,
+                               game_time_unknown=time_unknown_of(bp), open_weeks=open_weeks)
+            holder, waiver = "pool", clock.text
+        elif bid in mine or (my_roster_id is not None and held.get(bid) == my_roster_id):
+            holder, waiver = "yours", "on your roster"
+        elif bid in held:
+            holder, waiver = "other", f"held by roster #{held[bid]}: not available"
+        else:
+            holder, waiver = "unknown", ("not in the league's pool or on a roster in this "
+                                         "snapshot: check his Sleeper card")
+        since = now if prev_risk is not None and rk.key not in prev_risk else \
+            (prev.risk_since or {}).get(rk.key)
+        risk_since[rk.key] = since
+        risk_rows.append(RiskRow(rk, holder, waiver, clock, since,
+                                 since is not None and timedelta(0) <= now - since <= window_s))
+    risk_rows.sort(key=lambda r: (0 if r.alert else 1, {"pool": 0, "yours": 1}.get(r.holder, 2),
+                                  -(r.risk.backup.snap_pct if r.risk.backup else 0.0)))
     return FreeAgentWatch(tuple(notable), tuple(market), tuple(notes),
                           prior_loaded=bool(prior), drops_known=not drops_note,
                           pool_since={k: v for k, v in pool_since.items()
                                       if now - v <= window_s},
-                          work=tuple(rows), work_since=work_since, work_known=bool(lines))
+                          work=tuple(rows), work_since=work_since, work_known=bool(lines),
+                          risk=tuple(risk_rows), risk_since=risk_since, risk_known=risk_known,
+                          risk_tags_fresh=risk_known and tags_fresh)
