@@ -912,7 +912,10 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             injury_rows=inj if injuries_cover else None, report_week=week,
             holders=holders, team_kickoff=lambda t: this_kicks.get(nflverse_team(t)),
             # a Questionable tag counts only from a fresh player pull (#29)
-            tags_fresh=designation_fresh)
+            tags_fresh=designation_fresh,
+            # False only for a bye the schedule declares; unknown is never a bye
+            team_plays=lambda t: False if nflverse_team(t) in byes
+            else (True if nflverse_team(t) in this_kicks else None))
     dash = Dashboard(context, tuple(sources), tuple(notes), now, tuple(roster), slots,
                      plan, matchup, matchup_reason, board, evaluation,
                      tuple(unresolved), my_roster_id, gate, actions, None, kickoffs,
@@ -2775,7 +2778,9 @@ def _risk_html(d: Dashboard) -> str:
             b = k.backup
             back = (f"next in line: <b>{_e(b.name)}</b> ({b.snap_pct:.0f}% of snaps, last 3 "
                     f"games) — {_e(_HOLDER.get(r.holder, r.holder))}"
-                    if b is not None else "no back behind him has played recently")
+                    if b is not None else
+                    "the backs behind him have UNKNOWN snap counts" if k.unknown_snaps
+                    else "no back behind him has played recently")
             items.append(
                 "<li>" + ("<span class=\"badge\">NEW</span> " if r.alert else "")
                 + f"<span class=\"badge\">{_e(_RISK_BADGE.get(k.kind, k.kind))}</span> "

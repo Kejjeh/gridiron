@@ -61,7 +61,8 @@ from gridiron.lineup import Player, eligible
 # A feed with fewer players than this at a position is a failed fetch, not a
 # ranking (the floor `feed_absence` uses).
 from gridiron.models.advanced import FEED_MIN_PER_POSITION
-from gridiron.openings import (RoleRisk, find_vacancies, lines_by_player, opening_reasons,
+from gridiron.openings import (KIND_QUESTIONABLE, RISK_POSITIONS, SLEEPER_QUESTIONABLE,
+                               RoleRisk, find_vacancies, lines_by_player, opening_reasons,
                                role_risks, volume_reason)
 from gridiron.usage import score_frame
 
@@ -358,7 +359,8 @@ class RiskRow:
                 "starter": back(r.starter), "starter_opps": round(r.starter_opps, 1),
                 "kind": r.kind, "signal": r.signal, "backup": back(r.backup),
                 "runner_up": back(r.runner_up),
-                "committee": r.committee, "holder": self.holder, "waiver": self.waiver,
+                "committee": r.committee, "unknown_snaps": list(r.unknown_snaps),
+                "holder": self.holder, "waiver": self.waiver,
                 "waiver_phase": None if self.clock is None else self.clock.phase,
                 "alert": self.alert, "first_seen": _iso(self.first_seen)}
 
@@ -520,6 +522,9 @@ class PreviousWatch:
     work_since: Mapping[str, datetime | None] | None = None
     #: The same for the role-at-risk rows ("starter sleeper id:wkN").
     risk_since: Mapping[str, datetime | None] | None = None
+    #: RBs a FRESH Sleeper pull tagged Questionable -> since when (None:
+    #: unknown). None when that record predates the list.
+    risk_tag_since: Mapping[str, datetime | None] | None = None
 
     @classmethod
     def from_record(cls, record: Mapping[str, object] | None) -> "PreviousWatch":
@@ -543,7 +548,8 @@ class PreviousWatch:
             return {str(k): known.get(str(k)) for k in raw}
         return cls(pool=ids or None, pool_since=_times(w.get("pool_since")),
                    generated=generated, work_since=since(w.get("work_since")),
-                   risk_since=since(w.get("risk_since")))
+                   risk_since=since(w.get("risk_since")),
+                   risk_tag_since=since(w.get("risk_tag_since")))
 
     def comparable(self, now: datetime) -> bool:
         return (self.pool is not None and self.generated is not None
@@ -608,6 +614,10 @@ class FreeAgentWatch:
     risk_known: bool = True
     #: Sleeper's Questionable tags were read (the player pull was FRESH).
     risk_tags_fresh: bool = False
+    #: Watched-position players a fresh pull tagged Questionable -> since when
+    #: (carried through builds whose pull is stale): "newly" Questionable means
+    #: the tag changed between pulls, never that the week did.
+    risk_tag_since: Mapping[str, datetime | None] = field(default_factory=dict)
 
     @property
     def notable_total(self) -> int:
@@ -641,6 +651,7 @@ class FreeAgentWatch:
                 "work_since": {k: _iso(v) for k, v in sorted(self.work_since.items())},
                 "risk": [r.record() for r in self.risk], "risk_total": len(self.risk),
                 "risk_known": self.risk_known, "risk_tags_fresh": self.risk_tags_fresh,
+                "risk_tag_since": {k: _iso(v) for k, v in sorted(self.risk_tag_since.items())},
                 "risk_since": {k: _iso(v) for k, v in sorted(self.risk_since.items())}}
 
 
@@ -659,7 +670,8 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
                 usage_frame: pd.DataFrame | None = None, through_week: int | None = None,
                 gsis_of=None, injury_rows: Mapping[str, Mapping] | None = None,
                 report_week: int | None = None, holders: Mapping[str, int] | None = None,
-                team_kickoff=None, tags_fresh: bool = False) -> FreeAgentWatch:
+                team_kickoff=None, tags_fresh: bool = False,
+                team_plays=None) -> FreeAgentWatch:
     """Both lists. `market_of(player)` returns Sleeper's pre-kickoff number
     for him or None (the dashboard's `shadow_number`, which refuses a stale or
     post-kickoff feed) — the number shown and the market list's; the "worth
@@ -840,13 +852,39 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
     risk_known = bool(lines) and injury_rows is not None and report_week is not None
     risks = role_risks(sleeper_players, lines, injury_rows, week=int(report_week),
                        through_week=through_week, gsis_of=gsis_of or (lambda sid: None),
-                       tags_fresh=tags_fresh) if risk_known else []
+                       tags_fresh=tags_fresh, plays=team_plays) if risk_known else []
     in_pool = {normalize_id(p.sleeper_id): p for p in pool}
     mine = {normalize_id(p.sleeper_id) for p in roster}
     held = {normalize_id(k): v for k, v in (holders or {}).items()}
     prev_risk = prev.risk_since if compare else None
+    # Transition state survives any build that cannot read it (rule #8): a
+    # stale or missing report keeps every key, and a key of this week that
+    # did not fire now (a stale player pull, a kickoff) stays. Weeks before
+    # the report's are dropped. The Questionable tag is tracked by player:
+    # updated only from a FRESH pull, carried otherwise.
+    def key_week(k: str) -> int | None:
+        try:
+            return int(k.rsplit(":wk", 1)[1])
+        except (IndexError, ValueError):
+            return None
+    carried = {k: v for k, v in (prev.risk_since or {}).items()
+               if not risk_known or key_week(k) is None or key_week(k) >= int(report_week)}
+    prev_tags = dict(prev.risk_tag_since or {})
+    if risk_known and tags_fresh:
+        tagged = {normalize_id(sid) for sid, rec in sleeper_players.items()
+                  if isinstance(rec, Mapping)
+                  and str(rec.get("position") or "").upper() in RISK_POSITIONS
+                  and str(rec.get("injury_status") or "").strip().upper()
+                  == SLEEPER_QUESTIONABLE}
+        tag_since = {sid: prev_tags[sid] if sid in prev_tags else (now if compare else None)
+                     for sid in sorted(tagged)}
+    else:
+        tag_since = prev_tags
+    # a fresh pull that no longer tags him: if the tag comes back, that IS new
+    cleared = set(prev_tags) - set(tag_since)
     risk_rows: list[RiskRow] = []
-    risk_since: dict[str, datetime | None] = {}
+    risk_since: dict[str, datetime | None] = {
+        k: v for k, v in carried.items() if k.rsplit(":wk", 1)[0] not in cleared}
     for rk in risks:
         bid = rk.backup.sleeper_id if rk.backup is not None else ""
         bp = in_pool.get(bid)
@@ -854,7 +892,10 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
         if kick is not None and kick <= now:
             continue                    # his game has started: nothing left to do
         clock = None
-        if not bid:
+        if not bid and rk.unknown_snaps:
+            holder, waiver = "unknown", ("the backs behind him have UNKNOWN snap counts: who "
+                                         "is next in line is UNKNOWN")
+        elif not bid:
             holder, waiver = "unknown", "no back behind him has played recently"
         elif bp is not None:
             d = drops.get(bid)
@@ -868,8 +909,16 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
         else:
             holder, waiver = "unknown", ("not in the league's pool or on a roster in this "
                                          "snapshot: check his Sleeper card")
-        since = now if prev_risk is not None and rk.key not in prev_risk else \
-            (prev.risk_since or {}).get(rk.key)
+        if rk.key in carried and not (rk.kind == KIND_QUESTIONABLE
+                                      and rk.starter.sleeper_id in cleared):
+            since = carried[rk.key]
+        elif prev_risk is None:
+            since = None                # no comparable record: unknown, never NEW
+        elif rk.kind == KIND_QUESTIONABLE:
+            # first seen when the TAG was: a tag carried into a new week is old
+            since = tag_since.get(rk.starter.sleeper_id)
+        else:
+            since = now
         risk_since[rk.key] = since
         risk_rows.append(RiskRow(rk, holder, waiver, clock, since,
                                  since is not None and timedelta(0) <= now - since <= window_s))
@@ -881,4 +930,4 @@ def build_watch(pool: Sequence[Player], *, sleeper_players: Mapping[str, Mapping
                                       if now - v <= window_s},
                           work=tuple(rows), work_since=work_since, work_known=bool(lines),
                           risk=tuple(risk_rows), risk_since=risk_since, risk_known=risk_known,
-                          risk_tags_fresh=risk_known and tags_fresh)
+                          risk_tags_fresh=risk_known and tags_fresh, risk_tag_since=tag_since)

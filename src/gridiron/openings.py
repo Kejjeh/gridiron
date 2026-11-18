@@ -298,6 +298,9 @@ class RoleRisk:
     #: KIND_QUESTIONABLE (a fresh Sleeper tag only). One key a week either
     #: way: a Questionable that later gains the DNP is carried, not re-fired.
     kind: str = KIND_DNP
+    #: Backs behind him whose snap counts are unknown (names): who is next
+    #: in line is then UNKNOWN, never "nobody" or a committee.
+    unknown_snaps: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:
@@ -327,7 +330,7 @@ def risk_signal(sleeper_rec: Mapping[str, object], report_row: Mapping[str, obje
         return KIND_DNP, f"{status} on the wk{int(week)} final injury report, and did not practise"
     if tags_fresh and tag == SLEEPER_QUESTIONABLE:
         part = str(sleeper_rec.get("injury_body_part") or "").strip()
-        return KIND_QUESTIONABLE, (f"newly Questionable on Sleeper{f' ({part})' if part else ''}"
+        return KIND_QUESTIONABLE, (f"Questionable on Sleeper{f' ({part})' if part else ''}"
                                    ", no final-report DNP: Questionable is not out, and most "
                                    "such backs play")
     return None
@@ -356,14 +359,17 @@ def role_risks(sleeper_players: Mapping[str, Mapping[str, object]],
                lines: Mapping[str, Sequence[Line]], injury_rows: Mapping[str, Mapping] | None,
                *, week: int, through_week: int | None,
                gsis_of: Callable[[str], str | None],
-               tags_fresh: bool = False) -> list[RoleRisk]:
+               tags_fresh: bool = False,
+               plays: Callable[[str], bool | None] | None = None) -> list[RoleRisk]:
     """Every watched starter whose role is at risk this week (`risk_signal`),
     with the back next in line by snap share. `injury_rows` is the report
     (`gridiron.weekly.injury_index`: gsis id -> his latest row; None = no
     current report, so nothing is read); `tags_fresh` says Sleeper's
-    Questionable tags may be read. The team is Sleeper's current one checked
-    against the player's own last stat line (a traded starter is the opening
-    watch's); every join is by id (rule #3)."""
+    Questionable tags may be read; `plays(team)` is False only when the
+    schedule DECLARES a bye this week (None: unknown, never a bye). The team
+    is Sleeper's current one checked against each back's own last stat line:
+    a traded starter is the opening watch's, and a back who just changed
+    teams has no snaps for this one. Every join is by id (rule #3)."""
     if through_week is None or not lines or injury_rows is None:
         return []
     by_team: dict[tuple[str, str], list[tuple[str, str, Mapping, list[Line]]]] = {}
@@ -380,6 +386,8 @@ def role_risks(sleeper_players: Mapping[str, Mapping[str, object]],
                 (normalize_id(sid), gid, rec, ls))
     out: list[RoleRisk] = []
     for (team, pos), backs in sorted(by_team.items()):
+        if plays is not None and plays(team) is False:
+            continue                        # a declared bye: no game, no role to lose
         for sid, gid, rec, ls in backs:
             if ls[-1].week <= int(through_week) - VACANCY_RECENT_WEEKS or ls[-1].team != team:
                 continue
@@ -390,19 +398,25 @@ def role_risks(sleeper_players: Mapping[str, Mapping[str, object]],
             if fired is None:
                 continue
             kind, signal = fired
-            behind = []
+            behind, unknown = [], []
             for osid, ogid, orec, ols in backs:
                 if osid == sid or ols[-1].week <= int(through_week) - BACKUP_RECENT_WEEKS \
+                        or ols[-1].team != team \
                         or _ruled_out(orec, injury_rows.get(ogid), week):
                     continue
                 osnap = _snap_avg(ols) if len(ols) >= RISK_MIN_GAMES else ols[-1].snap_pct
                 if osnap is None:
+                    unknown.append(_name(orec, osid))   # unknown is not "no snaps"
                     continue
                 behind.append(DepthBack(osid, ogid, _name(orec, osid), round(osnap, 1)))
             behind.sort(key=lambda b: (-b.snap_pct, b.name))
+            unknown.sort()
             backup = behind[0] if behind else None
             runner = behind[1] if len(behind) > 1 else None
-            if backup is None or backup.snap_pct < COMMITTEE_MIN_SNAP:
+            if unknown:
+                committee = (f"snap counts UNKNOWN for {', '.join(unknown)}: who is next in "
+                             f"line is UNKNOWN")
+            elif backup is None or backup.snap_pct < COMMITTEE_MIN_SNAP:
                 committee = (f"no back behind him has {COMMITTEE_MIN_SNAP:.0f}% of the snaps: "
                              f"the work may be split")
             elif runner is not None and backup.snap_pct - runner.snap_pct < COMMITTEE_GAP:
@@ -413,5 +427,6 @@ def role_risks(sleeper_players: Mapping[str, Mapping[str, object]],
                 committee = ""
             opps = _mean([ln.opps for ln in ls[-RISK_GAMES:]]) or 0.0
             out.append(RoleRisk(int(week), team, pos, DepthBack(sid, gid, _name(rec, sid), snap),
-                                float(opps), signal, backup, runner, committee, kind))
+                                float(opps), signal, backup, runner, committee, kind,
+                                tuple(unknown)))
     return out

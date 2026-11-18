@@ -287,8 +287,15 @@ projection: unchanged (A). Built as the RB role-at-risk watch row
   a different subset from §2's `dnp` class (21.7% sat): that class is RB,
   WR and TE starters at a 60% RB bar, with any final-report DNP not ruled
   out, whether or not he was given a game status.
-- **Limit:** Sleeper can carry last week's Questionable into a new week; on
-  a fresh pull that tag puts a row up for the new week.
+- **What counts as new** (review fixes, 2026-11-18): "newly Questionable"
+  means the tag changed between fresh pulls, not that the week did. A tag
+  carried from last week's game shows the row without NEW; a tag a fresh
+  pull clears and later re-posts is NEW. A build that cannot read the
+  report or the tags carries every first sighting, so the next good build
+  does not re-fire. A declared bye shows no row (an unknown schedule is not
+  a bye). A back whose snap counts are unknown is named as UNKNOWN, never
+  as "nobody behind him" or a committee, and a back whose last game was
+  for another team is not named for this one.
 
 **Owner re-check pending (2026-11-18):** item 2, whether to treat a starter
 dropping out of Sleeper's projections feed as a vacancy (a faster Out).
