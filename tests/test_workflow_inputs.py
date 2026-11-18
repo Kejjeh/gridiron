@@ -98,9 +98,11 @@ def test_the_dispatched_week_reaches_python_through_the_environment():
     assert "GRIDIRON_WEEK: ${{ inputs.week }}" in text, \
         "the week input must be bound to an env var, not spliced into a command"
     assert CLI.WEEK_ENV == "GRIDIRON_WEEK"
-    # and the render command itself is a constant string
+    # and the render command itself is a constant string (the feed log's path
+    # is the workflow's own CARRY_DIR, never an input; #29 item 2)
     render = next(b for _n, b in _run_blocks(text) if "weekly/dashboard.py" in b)
-    assert render.strip() == "python scripts/weekly/dashboard.py --write"
+    assert render.strip() == ("python scripts/weekly/dashboard.py --write "
+                              '--feed-log "$CARRY_DIR/starter_feed/season2026.csv"')
 
 
 def test_the_run_summary_never_claims_a_page_that_was_not_built():

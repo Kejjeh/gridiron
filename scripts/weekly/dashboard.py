@@ -201,6 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--props-root", type=Path, default=None,
                     help="the prop collector's derived folder (record-only market_v1 "
                          "contender; default <cache root>/props/derived)")
+    ap.add_argument("--feed-log", type=Path, default=None,
+                    help="append the record's starter_feed changes to this CSV (the cloud's "
+                         "carried log, #29 item 2; record-only, best effort)")
     args = ap.parse_args(argv)
 
     if not SETTINGS_VERIFIED:
@@ -356,6 +359,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"evaluation: {dash.evaluation.verdict()}")
     if dash.archive:
         print(f"archive: {dash.archive}")
+
+    if args.feed_log is not None:
+        # record-only and best effort: a failed log never costs the page
+        try:
+            from gridiron.shadow import append_feed_log
+            n = append_feed_log(args.feed_log, dash.record().get("starter_feed"),
+                                dash.generated)
+            print(f"[dashboard] starter feed log: {n} change(s) -> {args.feed_log}",
+                  file=sys.stderr)
+        except Exception as exc:                                   # noqa: BLE001
+            print(f"[dashboard] starter feed log not written: {exc}", file=sys.stderr)
 
     if args.write:
         ensure_dirs()

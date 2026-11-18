@@ -181,3 +181,127 @@ def shadow_block(blob: Mapping[str, object] | None,
             "fetched_at": blob.get("fetched_at"), "players": out,
             "note": "shadow only: recorded for grading, never used by any "
                     "projection, gate or action on this page"}
+
+
+# --------------------------------------------------------------------------
+# Every high-snap RB starter's number, every build (#29 item 2)
+# --------------------------------------------------------------------------
+# Owner decision 2026-11-18 (Kejjeh/gridiron#29 item 2, option B: "record
+# first, decide later"). Sleeper's player map is read once a day, so a
+# Saturday Out can reach the board on Sunday; this projections feed is read
+# every build. Whether a starter dropping out of it (or to 0) is a timely,
+# reliable sign of a ruling is unmeasured. This records the evidence for
+# `scripts/research/feed_reaction.py`; nothing fires on it.
+FEED_LISTED, FEED_ABSENT, FEED_UNKNOWN = "LISTED", "ABSENT", "UNKNOWN"
+FEED_SUBSET = "RB starters at 45%+ of offensive snaps over their last 3 games " \
+              "(gridiron.openings.high_snap_starters)"
+
+
+def starter_feed_block(blob: Mapping[str, object] | None, starters: Iterable[object], *,
+                       week: int, now: datetime,
+                       kickoff_of, min_per_position: int,
+                       starters_known: bool = True) -> dict:
+    """The record's `starter_feed` block: for each watched starter
+    (`openings.WatchedStarter`), what this build's projections feed says.
+
+    Three answers, never two (sop-fail-loud): LISTED with his number (0 is a
+    number), ABSENT from a feed that lists `min_per_position`+ RBs for this
+    week, UNKNOWN otherwise (no feed, another week's, or a thin position,
+    which is a failed fetch). `kickoff_of(team)` gives his kickoff or None;
+    `pre_kickoff` is then None (unknown), never False. `starters_known`
+    False (no usage lines) says the subset itself is UNKNOWN, so an empty
+    `players` is never read as "no starters"."""
+    starters = list(starters)
+    players = (blob or {}).get("players") or {}
+    n_rb = sum(1 for v in players.values()
+               if isinstance(v, Mapping) and v.get("position") == "RB")
+    fetched = (blob or {}).get("fetched_at_dt")
+    if not blob or not isinstance(fetched, datetime):
+        state, reason = FEED_UNKNOWN, "no projections feed for this week"
+    elif int(blob.get("week") or 0) != int(week):
+        state, reason = FEED_UNKNOWN, (f"the feed is for another week "
+                                       f"(wk{blob.get('week')}, not wk{int(week)})")
+    elif n_rb < int(min_per_position):
+        state, reason = FEED_UNKNOWN, (f"thin feed: {n_rb} RBs listed (< {min_per_position}) "
+                                       f"is a failed fetch, never an absence")
+    else:
+        state, reason = "FULL", f"{n_rb} RBs listed"
+    out: dict[str, dict] = {}
+    for s in starters:
+        sid = normalize_id(s.back.sleeper_id)
+        if not sid or sid in out:
+            continue
+        kick = kickoff_of(s.team)
+        hit = players.get(sid) if state == "FULL" else None
+        feed = FEED_UNKNOWN if state != "FULL" else (FEED_LISTED if hit is not None
+                                                     else FEED_ABSENT)
+        out[sid] = {"gsis_id": s.back.gsis_id, "team": s.team, "position": s.position,
+                    "snap_pct": s.back.snap_pct,
+                    "feed": feed, "points": None if hit is None else hit.get("points"),
+                    "kickoff": None if kick is None else kick.isoformat(),
+                    # when Sleeper's number was fetched (the pull reuses a
+                    # feed under `REFRESH_HOURS` old), not when the board ran
+                    "fetched_at": (blob or {}).get("fetched_at")
+                    if isinstance(fetched, datetime) else None,
+                    "pre_kickoff": (None if kick is None or not isinstance(fetched, datetime)
+                                    else bool(fetched < kick))}
+    return {"week": int(week), "subset": FEED_SUBSET, "feed": state, "reason": reason,
+            "starters_known": bool(starters_known),
+            "rb_listed": n_rb,
+            "fetched_at": (blob or {}).get("fetched_at") if isinstance(fetched, datetime)
+            else None,
+            "age_hours": (round((now - fetched).total_seconds() / 3600, 2)
+                          if isinstance(fetched, datetime) else None),
+            "players": out,
+            "note": "record only (#29 item 2): never read by an alert, a projection, a gate "
+                    "or a grade"}
+
+
+#: The carried change log of `starter_feed` (one row per starter-week each
+#: time his feed answer changes). The cloud keeps only ~10 h of decision
+#: records, which would erase a Saturday drop before Sunday's kickoff; this
+#: small file rides the carry store and the run artifact instead.
+FEED_LOG_FIELDS = ("generated", "week", "sleeper_id", "gsis_id", "team", "feed", "points",
+                   "fetched_at", "kickoff", "pre_kickoff")
+
+
+def append_feed_log(path: Path, block: Mapping[str, object] | None,
+                    generated: datetime) -> int:
+    """Append this build's `starter_feed` answers that CHANGED since the
+    log's last row for that starter-week (feed state or number). A build no
+    newer than the last row for a starter-week adds nothing for it, so a
+    re-run is harmless. Returns the rows written."""
+    import csv
+    if not block or not isinstance(block.get("players"), Mapping):
+        return 0
+    path = Path(path)
+    last: dict[tuple[str, str], dict] = {}
+    if path.exists():
+        with path.open(encoding="utf-8", newline="") as fh:
+            for r in csv.DictReader(fh):
+                last[(r["sleeper_id"], r["week"])] = r
+    stamp = generated.astimezone(timezone.utc).isoformat(timespec="seconds")
+    week = str(int(block.get("week") or 0))
+    new = []
+    for sid, p in sorted(block["players"].items()):
+        row = {"generated": stamp, "week": week, "sleeper_id": str(sid),
+               "gsis_id": p.get("gsis_id") or "", "team": p.get("team") or "",
+               "feed": p.get("feed") or FEED_UNKNOWN,
+               "points": "" if p.get("points") is None else f"{float(p['points']):g}",
+               "fetched_at": p.get("fetched_at") or "", "kickoff": p.get("kickoff") or "",
+               "pre_kickoff": "" if p.get("pre_kickoff") is None else str(p["pre_kickoff"])}
+        prev = last.get((row["sleeper_id"], week))
+        if prev is not None and (datetime.fromisoformat(prev["generated"]) >= generated
+                                 or (prev["feed"], prev["points"]) == (row["feed"], row["points"])):
+            continue
+        new.append(row)
+    if not new:
+        return 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fresh = not path.exists()
+    with path.open("a", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=FEED_LOG_FIELDS)
+        if fresh:
+            w.writeheader()
+        w.writerows(new)
+    return len(new)

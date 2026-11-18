@@ -355,6 +355,68 @@ def _ruled_out(rec: Mapping[str, object], row: Mapping[str, object] | None, week
         str(row.get("report_status") or "").upper() in RULED_OUT
 
 
+_Room = list[tuple[str, str, Mapping, list[Line]]]
+
+
+def _rooms(sleeper_players: Mapping[str, Mapping[str, object]],
+           lines: Mapping[str, Sequence[Line]],
+           gsis_of: Callable[[str], str | None]) -> dict[tuple[str, str], _Room]:
+    """Watched-position backs with a stat line, by (Sleeper's current team,
+    position). Joined by id only (rule #3)."""
+    by_team: dict[tuple[str, str], _Room] = {}
+    for sid, rec in sleeper_players.items():
+        if not isinstance(rec, Mapping) or not rec.get("team"):
+            continue
+        pos = str(rec.get("position") or "").upper()
+        if pos not in RISK_POSITIONS:
+            continue
+        gid = normalize_id(gsis_of(normalize_id(sid)))
+        ls = list(lines.get(gid) or []) if gid else []
+        if ls:
+            by_team.setdefault((nflverse_team(rec.get("team")), pos), []).append(
+                (normalize_id(sid), gid, rec, ls))
+    return by_team
+
+
+def _starter_snap(ls: Sequence[Line], team: str, through_week: int) -> float | None:
+    """His snap share if he is a watched starter for `team` now, else None:
+    played within `VACANCY_RECENT_WEEKS`, last line for this team, and
+    `RISK_SNAP_PCT`+ over his last games (unknown snaps never qualify)."""
+    if ls[-1].week <= int(through_week) - VACANCY_RECENT_WEEKS or ls[-1].team != team:
+        return None
+    snap = _snap_avg(ls)
+    return snap if snap is not None and snap >= RISK_SNAP_PCT else None
+
+
+@dataclass(frozen=True)
+class WatchedStarter:
+    team: str                   # nflverse abbreviation
+    position: str
+    back: DepthBack
+
+
+def high_snap_starters(sleeper_players: Mapping[str, Mapping[str, object]],
+                       lines: Mapping[str, Sequence[Line]], *, through_week: int | None,
+                       gsis_of: Callable[[str], str | None],
+                       plays: Callable[[str], bool | None] | None = None
+                       ) -> list[WatchedStarter]:
+    """Every watched starter this week, whatever his injury report says: the
+    subset `role_risks` fires on, and the one whose Sleeper projection every
+    build records (#29 item 2). A declared bye (`plays(team)` False) is
+    skipped; unknown is never a bye."""
+    if through_week is None or not lines:
+        return []
+    out: list[WatchedStarter] = []
+    for (team, pos), backs in sorted(_rooms(sleeper_players, lines, gsis_of).items()):
+        if plays is not None and plays(team) is False:
+            continue
+        for sid, gid, rec, ls in backs:
+            snap = _starter_snap(ls, team, int(through_week))
+            if snap is not None:
+                out.append(WatchedStarter(team, pos, DepthBack(sid, gid, _name(rec, sid), snap)))
+    return out
+
+
 def role_risks(sleeper_players: Mapping[str, Mapping[str, object]],
                lines: Mapping[str, Sequence[Line]], injury_rows: Mapping[str, Mapping] | None,
                *, week: int, through_week: int | None,
@@ -372,27 +434,13 @@ def role_risks(sleeper_players: Mapping[str, Mapping[str, object]],
     teams has no snaps for this one. Every join is by id (rule #3)."""
     if through_week is None or not lines or injury_rows is None:
         return []
-    by_team: dict[tuple[str, str], list[tuple[str, str, Mapping, list[Line]]]] = {}
-    for sid, rec in sleeper_players.items():
-        if not isinstance(rec, Mapping) or not rec.get("team"):
-            continue
-        pos = str(rec.get("position") or "").upper()
-        if pos not in RISK_POSITIONS:
-            continue
-        gid = normalize_id(gsis_of(normalize_id(sid)))
-        ls = list(lines.get(gid) or []) if gid else []
-        if ls:
-            by_team.setdefault((nflverse_team(rec.get("team")), pos), []).append(
-                (normalize_id(sid), gid, rec, ls))
     out: list[RoleRisk] = []
-    for (team, pos), backs in sorted(by_team.items()):
+    for (team, pos), backs in sorted(_rooms(sleeper_players, lines, gsis_of).items()):
         if plays is not None and plays(team) is False:
             continue                        # a declared bye: no game, no role to lose
         for sid, gid, rec, ls in backs:
-            if ls[-1].week <= int(through_week) - VACANCY_RECENT_WEEKS or ls[-1].team != team:
-                continue
-            snap = _snap_avg(ls)
-            if snap is None or snap < RISK_SNAP_PCT:
+            snap = _starter_snap(ls, team, int(through_week))
+            if snap is None:
                 continue
             fired = risk_signal(rec, injury_rows.get(gid), week, tags_fresh=tags_fresh)
             if fired is None:
