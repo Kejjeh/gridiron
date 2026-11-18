@@ -287,6 +287,18 @@ class WeekGrade:
     mae_n: int
     pairs: int
     rates: Mapping[str, float]  # system -> start/sit pairwise rate this week
+    #: The direction rate split by kind (#28 option C, owner 2026-11-18): one
+    #: counted comparison per slot, waivers against the displaced starter.
+    #: None on a week graded before the split, whose direction_* is pooled
+    #: (every pair, waivers against the drop) and is never added to these.
+    ss_agree: int | None = None
+    ss_n: int | None = None
+    wv_agree: int | None = None
+    wv_n: int | None = None
+
+    @property
+    def split(self) -> bool:
+        return self.ss_n is not None and self.wv_n is not None
 
 
 @dataclass(frozen=True)
@@ -308,15 +320,37 @@ class ReportCard:
     def totals(self) -> dict[str, object]:
         w = self.weeks
         mae_n = sum(g.mae_n for g in w if g.mae is not None)
+        split = [g for g in w if g.split]
+        pooled = [g for g in w if not g.split]
         return {
             "weeks": len(w),
             "agree": sum(g.agree for g in w), "scorable": sum(g.scorable for g in w),
             "direction_agree": sum(g.direction_agree for g in w),
             "direction_n": sum(g.direction_n for g in w),
+            # the split rates, over the weeks graded with them only
+            "split_weeks": tuple(g.week for g in split),
+            "ss_agree": sum(g.ss_agree or 0 for g in split),
+            "ss_n": sum(g.ss_n or 0 for g in split),
+            "wv_agree": sum(g.wv_agree or 0 for g in split),
+            "wv_n": sum(g.wv_n or 0 for g in split),
+            # the weeks graded before the split, pooled: never mixed into them
+            "pooled_weeks": tuple(g.week for g in pooled),
+            "pooled_agree": sum(g.direction_agree for g in pooled),
+            "pooled_n": sum(g.direction_n for g in pooled),
             "mae": (sum(g.mae * g.mae_n for g in w if g.mae is not None) / mae_n
                     if mae_n else None),
             "mae_n": mae_n,
         }
+
+
+def _split(r: Mapping[str, object]) -> dict[str, int | None]:
+    """The row's split direction columns, or all None when it predates them
+    (a blank is "not graded this way", never 0)."""
+    cols = ("ss_direction_agree", "ss_direction_n", "wv_direction_agree", "wv_direction_n")
+    if any(str(r.get(c) if r.get(c) is not None else "").strip() == "" for c in cols):
+        return {"ss_agree": None, "ss_n": None, "wv_agree": None, "wv_n": None}
+    return {"ss_agree": _i(r["ss_direction_agree"]), "ss_n": _i(r["ss_direction_n"]),
+            "wv_agree": _i(r["wv_direction_agree"]), "wv_n": _i(r["wv_direction_n"])}
 
 
 def report_card(rows: Sequence[Mapping[str, object]], season: int) -> ReportCard:
@@ -339,7 +373,8 @@ def report_card(rows: Sequence[Mapping[str, object]], season: int) -> ReportCard
             agree=_i(r.get("agree")), scorable=_i(r.get("scorable")),
             direction_agree=_i(r.get("direction_agree")), direction_n=_i(r.get("direction_n")),
             mae=_f(r.get("projection_mae")), mae_n=_i(r.get("projection_n")),
-            pairs=pairs, rates=rates))
+            pairs=pairs, rates=rates,
+            **_split(r)))
     shoot = {s: (hits[s] / pairs_by[s], pairs_by[s]) for s in SYSTEM_LABELS if pairs_by.get(s)}
     return ReportCard(int(season), tuple(weeks), shoot, pwin_totals(rows))
 

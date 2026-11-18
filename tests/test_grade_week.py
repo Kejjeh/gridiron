@@ -42,8 +42,8 @@ def _archive(phase, *, bench_proj=11.0, lineup_allowed=True):
                        _p("3", "g3", 4.0, "Drop Name")],
             "alternatives": [{"slot": "WR", "bench_id": "2", "starter_id": "1",
                               "delta_points": bench_proj - 8.0}],
-            "upgrades": [{"slot": "WR", "drop_id": "3",
-                          "add": _p("9", "g9", 12.0, "Add Name")}],
+            "upgrades": [{"slot": "WR", "drop_id": "3", "displaces_id": "1",
+                          "lineup_gain": 4.0, "add": _p("9", "g9", 12.0, "Add Name")}],
             "gate": {"lineup": {"allowed": lineup_allowed}, "waiver": {"allowed": True}}}
 
 
@@ -98,7 +98,8 @@ def test_a_week_is_graded_and_the_ledger_holds_aggregates_only(tmp_path, capsys)
     for leak in ("Name", "g1", "g2", "g9", "start_sit", "waiver:"):
         assert leak not in values, f"the season ledger leaked {leak!r}"
     # bench (11) over starter (8) projected; actual 15 vs 5 -> right way.
-    # drop (4) vs add (12) projected; actual 2 vs 10 -> right way.
+    # the add (12) over the starter it displaces (8), by the board's +4;
+    # actual 10 vs 5 -> right way (#28: never the drop's 2).
     assert (row["graded"], row["direction_n"], row["direction_agree"]) == ("2", "2", "2")
     assert row["scorable"] == "1" and row["agree"] == "1"     # the start/sit only
     assert row["decisions"] == "1"

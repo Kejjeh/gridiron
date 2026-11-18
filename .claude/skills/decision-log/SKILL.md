@@ -47,8 +47,16 @@ skill runs it every week so accuracy accumulates.
 
 - `agree/scorable` counts only advice the page ENDORSED (gate open, add not
   UNVERIFIED). It is often empty: on game days the page withholds.
-- `direction_agree/direction_n` is the projection's directional hit rate on
-  every graded comparison, advice or not — the model's report card.
+- `direction_agree/direction_n` is the projection's directional hit rate,
+  advice or not — the model's report card. Since #28 (owner, 2026-11-18) it
+  counts ONE comparison per lineup slot a week (the top waiver add, or the
+  closest start/sit), and it is split into `ss_direction_*` (start/sit) and
+  `wv_direction_*` (waiver: the add against the starter he would displace,
+  signed by the board's `lineup_gain`, never against the drop). Report the
+  two apart. A row with blank split columns was graded before #28: its
+  direction is pooled (every pair, waivers against the drop) and is not
+  comparable. `--acted` waiver keys still name the drop:
+  `waiver:<slot>:<drop>:<add>`.
 - The **shoot-out** line compares this repo's projection, Sleeper's
   pre-kickoff projection and their average on the same players; report the
   week and the season-to-date line — it decides which projection the page

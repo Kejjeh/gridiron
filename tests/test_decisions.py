@@ -47,7 +47,9 @@ def _archive(gate_allows: bool = True):
             {"slot": "TE", "bench_id": "b2", "starter_id": "s2"},
         ],
         "upgrades": [
-            {"slot": "FLEX", "drop_id": "s2",
+            # the drop is also the starter the add displaces (the board's
+            # `displaces_id`), by the board's `lineup_gain`
+            {"slot": "FLEX", "drop_id": "s2", "displaces_id": "s2", "lineup_gain": 3.0,
              "add": {"sleeper_id": "fa", "gsis_id": "g9", "projected": 11.0}},
         ],
     }

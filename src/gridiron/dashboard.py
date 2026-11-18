@@ -2312,6 +2312,17 @@ def _pct(n: int, k: int) -> str:
     return f"{n / k:.0%}" if k else "\u2014"
 
 
+def _weeks_label(weeks: Sequence[int]) -> str:
+    ws = sorted(weeks)
+    if not ws:
+        return ""
+    if len(ws) == 1:
+        return f"week {ws[0]}"
+    if ws == list(range(ws[0], ws[-1] + 1)):
+        return f"weeks {ws[0]}\u2013{ws[-1]}"
+    return "weeks " + ", ".join(str(w) for w in ws)
+
+
 def _report_html(card: "ReportCard | None") -> list[str]:
     """The season's graded weeks: how the page's numbers have held up."""
     out = ["<h2 id=\"grades\">Report card \u2014 how this page has graded</h2>",
@@ -2325,10 +2336,22 @@ def _report_html(card: "ReportCard | None") -> list[str]:
     t = card.totals()
     endorsed = (f"{t['agree']}/{t['scorable']}" if t["scorable"]
                 else "none yet")
+    if t["split_weeks"]:
+        # #28 (owner 2026-11-18): start/sit and waiver calls apart, one per
+        # slot a week; a waiver add against the starter it displaces
+        direction_kpi = (
+            f"<div>start/sit direction<b class=\"lime\">{_pct(t['ss_agree'], t['ss_n'])}</b>"
+            f"<span class=\"kfoot\">{t['ss_agree']} of {t['ss_n']} calls</span></div>"
+            f"<div>waiver direction<b class=\"lime\">{_pct(t['wv_agree'], t['wv_n'])}</b>"
+            f"<span class=\"kfoot\">{t['wv_agree']} of {t['wv_n']} calls, vs the displaced "
+            f"starter</span></div>")
+    else:
+        direction_kpi = (
+            f"<div>projection direction<b class=\"lime\">{_pct(t['direction_agree'], t['direction_n'])}</b>"
+            f"<span class=\"kfoot\">{t['direction_agree']} of {t['direction_n']} calls</span></div>")
     out.append("<div class=\"kpi\">"
                f"<div>weeks graded<b>{t['weeks']}</b></div>"
-               f"<div>projection direction<b class=\"lime\">{_pct(t['direction_agree'], t['direction_n'])}</b>"
-               f"<span class=\"kfoot\">{t['direction_agree']} of {t['direction_n']} calls</span></div>"
+               + direction_kpi +
                f"<div>endorsed advice right<b>{_e(endorsed)}</b>"
                f"<span class=\"kfoot\">moves the page backed</span></div>"
                f"<div>roster projection error<b>{_num(t['mae'])}</b>"
@@ -2359,8 +2382,13 @@ def _report_html(card: "ReportCard | None") -> list[str]:
     rows = []
     for g in card.weeks:
         built = g.built[:16].replace("T", " ") + " UTC" if g.built else "\u2014"
-        dirn = (f"{_bar_svg(g.direction_agree / g.direction_n, 'meter')} "
-                f"{g.direction_agree}/{g.direction_n}" if g.direction_n else "\u2014")
+        if g.split:
+            dirn = (f"start/sit {g.ss_agree}/{g.ss_n}" if g.ss_n else "start/sit \u2014") + \
+                (f" \u00b7 waiver {g.wv_agree}/{g.wv_n}" if g.wv_n else " \u00b7 waiver \u2014")
+        else:
+            dirn = ((f"{_bar_svg(g.direction_agree / g.direction_n, 'meter')} "
+                     f"{g.direction_agree}/{g.direction_n}" if g.direction_n else "\u2014")
+                    + (" <span class=\"dim\">pooled</span>" if t["split_weeks"] else ""))
         vs = (f"{g.rates['page']:.0%} vs {g.rates['sleeper']:.0%}"
               if "page" in g.rates and "sleeper" in g.rates else "\u2014")
         rows.append([f"<b>{g.week}</b>", _e(built), dirn,
@@ -2369,9 +2397,16 @@ def _report_html(card: "ReportCard | None") -> list[str]:
     out.append(_table(["week", "board graded", "direction", "endorsed", "error", "page vs Sleeper"],
                       rows, numeric=(4,)))
     out.append("<p class=\"small sub\">Graded from the board frozen at decision time against the "
-               "week\u2019s box scores (rule #7: the choice, not hindsight). Direction counts every "
-               "graded comparison, endorsed or withheld; endorsed counts only the moves the page "
-               "backed. One week is noise (rule #5): nothing on this page is retuned from it.</p></div>")
+               "week\u2019s box scores (rule #7: the choice, not hindsight). Direction counts one "
+               "graded comparison per lineup slot a week, endorsed or withheld; endorsed counts only the moves the page "
+               "backed. One week is noise (rule #5): nothing on this page is retuned from it.</p>"
+               + (f"<p class=\"small sub\">Since #28 each lineup slot counts once a week, and a "
+                  f"waiver add is graded against the starter it would have displaced, never the "
+                  f"drop. {_e(_weeks_label(t['pooled_weeks']))} were graded before that, "
+                  f"pooled (every pair, waivers against the drop): {t['pooled_agree']} of "
+                  f"{t['pooled_n']}, not comparable and not in the rates above.</p>"
+                  if t["split_weeks"] and t["pooled_weeks"] else "")
+               + "</div>")
     return out
 
 

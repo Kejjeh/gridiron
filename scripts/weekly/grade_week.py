@@ -53,7 +53,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
-from gridiron.decisions import (ACTED, DECLINED, Grade, archive_stamp,
+from gridiron.decisions import (ACTED, DECLINED, Grade, actual_key, archive_stamp,
                                 grade_archive, read_archive)
 from gridiron.ids import nflverse_team
 from gridiron.paths import LEDGER
@@ -61,7 +61,13 @@ from gridiron.trends import actuals_from_usage
 
 GRADES_DIR = LEDGER / "grades"
 FIELDS = ("season", "week", "archive", "archive_built", "graded", "ungradeable",
-          "scorable", "agree", "direction_n", "direction_agree", "withheld",
+          "scorable", "agree", "direction_n", "direction_agree",
+          # the same rate split by kind (#28 option C, owner 2026-11-18): one
+          # counted comparison per slot (option B), waivers graded against the
+          # starter the add displaces (option A). Blank on a row graded before
+          # the split; such a row's direction_* counted every pair, pooled.
+          "ss_direction_n", "ss_direction_agree", "wv_direction_n", "wv_direction_agree",
+          "withheld",
           "unverified", "decisions", "projection_mae", "projection_n",
           "shootout_n", "shootout_pairs",
           "page_pairwise", "baseline_v1_pairwise", "sleeper_pairwise", "blend_pairwise",
@@ -117,13 +123,19 @@ SKILL = ("QB", "RB", "WR", "TE")
 SPECIAL = {"k": ("K",), "def": ("DEF",)}
 
 
-def direction(grade: Grade) -> tuple[int, int]:
-    """(agree, n) over EVERY graded comparison — withheld and unverified ones
-    included. This is the projection's directional hit rate, not the advice's:
-    on game days the page withholds most comparisons (stale designations), so
-    without it a season could pass with no measure of the model at all. It is
-    stored and printed under its own name and never merged with `agree`."""
-    rows = [c for c in grade.comparisons if c.status == "graded"
+def direction(grade: Grade, kind: str | None = None) -> tuple[int, int]:
+    """(agree, n) over the graded comparisons the page counts, withheld and
+    unverified ones included; `kind` ("start_sit" | "waiver") narrows it.
+    This is the projection's directional hit rate, not the advice's: on game
+    days the page withholds most comparisons (stale designations), so without
+    it a season could pass with no measure of the model at all. It is stored
+    and printed under its own name and never merged with `agree`.
+
+    Owner decision 2026-11-18 (#28): only each slot's ONE counted comparison
+    (`GradedComparison.primary`, option B) counts, so seven kicker adds
+    against one starting kicker are one call, not seven."""
+    rows = [c for c in grade.comparisons if c.status == "graded" and c.primary
+            and (kind is None or c.kind == kind)
             and c.projected_edge is not None and c.realized_edge is not None
             and c.projected_edge != 0]
     return sum(1 for c in rows if (c.projected_edge > 0) == (c.realized_edge > 0)), len(rows)
@@ -217,12 +229,9 @@ def defense_actuals(dhist, week: int) -> dict[str, float]:
     return {f"DEF:{t}": float(p) for t, p in zip(wk["team"], wk["dst_points"])}
 
 
-def actual_key(p: Mapping[str, object]) -> str:
-    """The actuals key for one record entry: gsis id, or `DEF:<team>`."""
-    if str(p.get("position") or "") in ("DEF", "DST"):
-        team = nflverse_team(p.get("team") or p.get("sleeper_id") or p.get("id") or "")
-        return f"DEF:{team}" if team else ""
-    return str(p.get("gsis_id") or "")
+# `actual_key` (gsis id, or `DEF:<team>`) lives in gridiron.decisions now, so
+# the waiver grader keys team defenses the same way (#28 item 2); it is
+# imported above and stays importable from here for the research scripts.
 
 
 def league_pwin(archive: Mapping[str, object],
@@ -407,6 +416,8 @@ def aggregate(grade: Grade, season: int, archive: Path, built: datetime,
               market: Mapping[str, Mapping[str, object]] | None = None) -> dict:
     agree, n = grade.agreement()
     d_agree, d_n = direction(grade)
+    ss_agree, ss_n = direction(grade, "start_sit")
+    wv_agree, wv_n = direction(grade, "waiver")
     extra = {}
     for f in FIELDS:
         g, _, key = f.partition("_")
@@ -418,6 +429,8 @@ def aggregate(grade: Grade, season: int, archive: Path, built: datetime,
             "graded": sum(1 for c in grade.comparisons if c.status == "graded"),
             "ungradeable": grade.ungradeable, "scorable": n, "agree": agree,
             "direction_n": d_n, "direction_agree": d_agree,
+            "ss_direction_n": ss_n, "ss_direction_agree": ss_agree,
+            "wv_direction_n": wv_n, "wv_direction_agree": wv_agree,
             "withheld": len(grade.withheld), "unverified": len(grade.unverified),
             "decisions": len(grade.decisions),
             "projection_mae": "" if grade.projection_mae is None else grade.projection_mae,
@@ -452,19 +465,41 @@ def upsert(path: Path, row: Mapping[str, object]) -> list[dict]:
     return rows
 
 
+def _split_row(r: Mapping[str, object]) -> bool:
+    return all(str(r.get(c) if r.get(c) is not None else "").strip() != ""
+               for c in ("ss_direction_n", "wv_direction_n"))
+
+
+def direction_line(rows: Sequence[Mapping[str, object]]) -> str:
+    """The direction rates, season to date: split rows (#28) apart, rows
+    graded before the split pooled and labelled, never added together."""
+    def tot(rs, a, n):
+        return (sum(int(r.get(a) or 0) for r in rs), sum(int(r.get(n) or 0) for r in rs))
+    new = [r for r in rows if _split_row(r)]
+    old = [r for r in rows if not _split_row(r)]
+    parts = []
+    if new:
+        ss, wv = (tot(new, "ss_direction_agree", "ss_direction_n"),
+                  tot(new, "wv_direction_agree", "wv_direction_n"))
+        parts.append(f"projection direction, one counted comparison per slot: start/sit "
+                     f"{ss[0]}/{ss[1]}, waiver vs the displaced starter {wv[0]}/{wv[1]}")
+    if old:
+        a, n = tot(old, "direction_agree", "direction_n")
+        parts.append(f"projection direction {a}/{n}" + (f" ({a / n:.0%})" if n else "")
+                     + (" over weeks graded before #28 (pooled, not comparable)" if new else ""))
+    return "; ".join(parts) or "no projection direction graded"
+
+
 def season_line(rows: Sequence[Mapping[str, object]]) -> str:
     agree = sum(int(r["agree"]) for r in rows)
     n = sum(int(r["scorable"]) for r in rows)
     maes = [(float(r["projection_mae"]), int(r["projection_n"])) for r in rows
             if str(r["projection_mae"]) not in ("", "None")]
     mae = (sum(m * k for m, k in maes) / sum(k for _, k in maes)) if maes else None
-    d_agree = sum(int(r.get("direction_agree") or 0) for r in rows)
-    d_n = sum(int(r.get("direction_n") or 0) for r in rows)
     return (f"season to date over {len(rows)} graded archive(s): endorsed advice "
             f"pointed the right way {agree}/{n}"
             + (f" ({agree / n:.0%})" if n else "")
-            + f"; projection direction on every graded comparison {d_agree}/{d_n}"
-            + (f" ({d_agree / d_n:.0%})" if d_n else "")
+            + "; " + direction_line(rows)
             + (f"; roster projection MAE {mae:.2f}" if mae is not None else "")
             + shootout_line(rows))
 
@@ -514,14 +549,16 @@ def shootout_line(rows: Sequence[Mapping[str, object]]) -> str:
 
 
 def render(grade: Grade, names: Mapping[str, str]) -> list[str]:
-    out = ["| kind | slot | held | alternative | projected edge | actual edge | status | key |",
-           "|---|---|---|---|---|---|---|---|"]
+    out = ["| kind | slot | held | alternative | projected edge | actual edge | status "
+           "| counted | key |",
+           "|---|---|---|---|---|---|---|---|---|"]
     for c in grade.comparisons:
         out.append(f"| {c.kind} | {c.slot} | {names.get(c.held_id, c.held_id)} | "
                    f"{names.get(c.alternative_id, c.alternative_id)} | "
                    f"{c.projected_edge if c.projected_edge is not None else '—'} | "
                    f"{c.realized_edge if c.realized_edge is not None else '—'} | "
-                   f"{c.status} ({c.label()}) | `{c.key}` |")
+                   f"{c.status} ({c.label()}{'; ' + c.reason if c.reason else ''}) | "
+                   f"{'yes' if c.primary else 'no (not the slot top pick)'} | `{c.key}` |")
     return out
 
 
@@ -639,8 +676,9 @@ def run_finished(args: argparse.Namespace) -> int:
                                                  market))
     if rows:
         t = grading.report_card(rows, season).totals()
-        print(f"[grade] season to date over {t['weeks']} graded week(s): projection direction "
-              f"{t['direction_agree']}/{t['direction_n']}, endorsed advice "
+        print(f"[grade] season to date over {t['weeks']} graded week(s): "
+              f"{direction_line(grading.one_per_week([r for r in rows if int(r['season']) == season]))}"
+              f", endorsed advice "
               f"{t['agree']}/{t['scorable']}"
               + (f", roster MAE {t['mae']:.2f}" if t["mae"] is not None else ""))
     else:
@@ -723,8 +761,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     d_agree, d_n = direction(grade)
     shoot = shootout(archive, actuals)
     print(grade.summary())
-    print(f"projection direction on every graded comparison (advice or not): "
-          f"{d_agree}/{d_n}")
+    ss, wv = direction(grade, "start_sit"), direction(grade, "waiver")
+    print(f"projection direction, one counted comparison per slot (advice or not): "
+          f"{d_agree}/{d_n} (start/sit {ss[0]}/{ss[1]}, waiver vs the displaced starter "
+          f"{wv[0]}/{wv[1]})")
     if shoot and shoot.get("pairs"):
         print(f"shoot-out on {shoot['n']} players / {shoot['pairs']} start/sit pairs: "
               + ", ".join(f"{s} {shoot[f'{s}_pairwise']:.1%} (MAE {shoot[f'{s}_mae']:.2f})"
