@@ -855,6 +855,9 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
                     or "")
     owned_ids = tuple(sorted({normalize_id(sid) for r in rosters
                               for sid in (r.get("players") or []) if normalize_id(sid)}))
+    holders = {normalize_id(sid): r.get("roster_id") for r in rosters
+               for sid in (r.get("players") or [])
+               if normalize_id(sid) and r.get("roster_id") is not None}
     designations = {p.sleeper_id: str((sleeper_players.get(p.sleeper_id) or {})
                                       .get("injury_status") or "") for p in pool}
     drops, drops_note = league_drops(snapshot.get("transactions"))
@@ -904,7 +907,15 @@ def build_dashboard(*, context: WeekContext, sources: Sequence[SourceFreshness],
             drops_note=drops_note, now=now, best=plan.best, slots=slots, roster=roster,
             out_designations=WITHHOLD_DESIGNATIONS, reserve=nfl_reserve,
             reserve_week=nfl_reserve_week, my_roster_id=my_roster_id, previous=previous,
-            usage_frame=weeks, through_week=context.stats_through, gsis_of=crosswalk.gsis)
+            usage_frame=weeks, through_week=context.stats_through, gsis_of=crosswalk.gsis,
+            # no current report for the week: roles at risk are UNKNOWN
+            injury_rows=inj if injuries_cover else None, report_week=week,
+            holders=holders, team_kickoff=lambda t: this_kicks.get(nflverse_team(t)),
+            # a Questionable tag counts only from a fresh player pull (#29)
+            tags_fresh=designation_fresh,
+            # False only for a bye the schedule declares; unknown is never a bye
+            team_plays=lambda t: False if nflverse_team(t) in byes
+            else (True if nflverse_team(t) in this_kicks else None))
     dash = Dashboard(context, tuple(sources), tuple(notes), now, tuple(roster), slots,
                      plan, matchup, matchup_reason, board, evaluation,
                      tuple(unresolved), my_roster_id, gate, actions, None, kickoffs,
@@ -2718,6 +2729,89 @@ def _work_alert(d: Dashboard) -> str:
             "<a href=\"#work\">who, and whose work ↓</a></div>")
 
 
+_HOLDER = {"pool": "in the pool", "yours": "YOURS", "other": "on another team",
+           "unknown": "holder unknown"}
+
+
+#: The row's badge, by the signal that put it up (`gridiron.openings`).
+_RISK_BADGE = {"DNP": "DID NOT PRACTISE", "QUESTIONABLE": "QUESTIONABLE — NOT OUT"}
+
+
+def _risk_alert(d: Dashboard) -> str:
+    """The first-screen line for RB roles at risk: a lead back did not
+    practise on the final report, or is newly Questionable on Sleeper (new
+    in the last ALERT_HOURS). Empty when there is nobody."""
+    w = d.watch
+    if w is None or not w.risk_alerts:
+        return ""
+    rows = w.risk_alerts
+    head = rows[:3]
+    names = "; ".join(
+        f"{r.risk.starter.name} ({r.risk.team}, "
+        + ("did not practise" if r.risk.kind == "DNP" else "Questionable")
+        + ")" + (f" → {r.risk.backup.name}, {_HOLDER.get(r.holder, r.holder)}"
+                 if r.risk.backup is not None else "") for r in head)
+    more = len(rows) - len(head)
+    kinds = {r.risk.kind for r in rows}
+    odds = " ".join(x for x in (
+        "Did not practise: about three in five such backs sat (2019-2025)."
+        if "DNP" in kinds else "",
+        "Questionable is not out: most such backs play." if "QUESTIONABLE" in kinds else "")
+        if x)
+    return ("<div class=\"gatebox notable-alert\"><b class=\"warn\">A lead back's role is "
+            "at risk:</b> " + _e(names) + (f" and {more} more" if more > 0 else "")
+            + ". " + odds + " Not a move: "
+            "<a href=\"#risk\">the backup and his waiver status ↓</a></div>")
+
+
+def _risk_html(d: Dashboard) -> str:
+    """RB starters whose role is at risk this week (`gridiron.openings.role_risks`)."""
+    w = d.watch
+    if w is None:
+        return ""
+    out = ["<h3 id=\"risk\">RB role at risk — the lead back did not practise or is "
+           "Questionable</h3>"]
+    if w.risk:
+        items = []
+        for r in w.risk:
+            k = r.risk
+            b = k.backup
+            back = (f"next in line: <b>{_e(b.name)}</b> ({b.snap_pct:.0f}% of snaps, last 3 "
+                    f"games) — {_e(_HOLDER.get(r.holder, r.holder))}"
+                    if b is not None else
+                    "the backs behind him have UNKNOWN snap counts" if k.unknown_snaps
+                    else "no back behind him has played recently")
+            items.append(
+                "<li>" + ("<span class=\"badge\">NEW</span> " if r.alert else "")
+                + f"<span class=\"badge\">{_e(_RISK_BADGE.get(k.kind, k.kind))}</span> "
+                + f"<b>{_e(k.starter.name)}</b> <span class=\"sub\">({_e(k.position)}, "
+                + f"{_e(k.team)}; {k.starter.snap_pct:.0f}% of snaps, "
+                + f"{k.starter_opps:.0f} opportunities a game)</span><br>"
+                + f"<span class=\"small\">{_e(k.signal)}.</span><br>"
+                + f"<span class=\"small\">{back}.</span><br>"
+                + (f"<span class=\"small warn\">{_e(k.committee)}.</span><br>"
+                   if k.committee else "")
+                + f"<span class=\"small\">Waiver: {_e(r.waiver)}.</span></li>")
+        out.append("<ul class=\"watch\">" + "".join(items) + "</ul>")
+    elif w.risk_known:
+        out.append("<p class=\"small sub\">No RB starter (45%+ of snaps) missed practice on "
+                   "this week's final injury report or is Questionable on Sleeper"
+                   + ("" if w.risk_tags_fresh else " (Sleeper's tags are not fresh this "
+                      "build, so only the report was read)") + ".</p>")
+    else:
+        out.append("<p class=\"small warn\">No current injury report (or no box scores) this "
+                   "build: RB roles at risk are UNKNOWN, not absent.</p>")
+    out.append("<p class=\"small sub\">Not a move: research only, never a projection and "
+               "never a claim. Listed: an RB on 45%+ of his team's snaps over his last three "
+               "games who did not practise and is Questionable on the week's final report "
+               "(DID NOT PRACTISE: in 2019-2025, 31 of 51 such backs sat), or whom a fresh "
+               "Sleeper pull tags Questionable (QUESTIONABLE — NOT OUT: most play; 47 of 218 "
+               "who practised sat). Out or Doubtful is the role-opening list below. When the "
+               "starter sat, the next RB's points roughly doubled. The next in line is the RB "
+               "behind him with the most snaps; a committee is flagged.</p>")
+    return "".join(out)
+
+
 def _work_html(d: Dashboard) -> str:
     """Pool players named on usage alone (`gridiron.openings`)."""
     w = d.watch
@@ -2896,6 +2990,7 @@ def _radar_html(d: Dashboard) -> str:
             for pc in b.positions) + ".</p>")
     if b.abstained:
         out.append(f"<p class=\"bad\"><b>ABSTAINED:</b> {_e(b.abstained)}</p>")
+    out.append(_risk_html(d))
     out.append(_work_html(d))
     out.append(_watch_html(d))
 
@@ -3180,6 +3275,7 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
                    "known picture rather than current advice.</div>")
     out.append(_ir_alert(d))
     out.append(_watch_alert(d))
+    out.append(_risk_alert(d))
     out.append(_work_alert(d))
     for i, item in enumerate(desk.top, 1):
         out.append(_desk_card(item, i, first=i == 1))
