@@ -35,10 +35,11 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+from gridiron.ids import nflverse_team
 from gridiron.paths import LEDGER
 
 ARCHIVE_DIR = LEDGER / "decisions"
@@ -220,10 +221,23 @@ class GradedComparison:
     owner_action: str = ""          # "" | ACTED | DECLINED
     eligibility: str = ""           # "UNVERIFIED" for every waiver pair
     reason: str = ""
+    #: The ONE comparison of its (kind, slot) this week that the direction
+    #: rates count (owner decision 2026-11-18, #28 option B): the waiver add
+    #: with the largest claimed lineup gain, or the start/sit with the
+    #: smallest projected edge (the swap the page came closest to making).
+    #: The others stay in the table and are never counted.
+    primary: bool = True
+    #: A waiver pair's drop. Its held side is the starter the add displaces
+    #: (#28 option A); the key keeps the drop, because "drop X, add Y" is the
+    #: move the owner makes and confirms (`--acted`).
+    drop_id: str = ""
 
     @property
     def key(self) -> str:
-        return f"{self.kind}:{self.slot}:{self.held_id}:{self.alternative_id}"
+        # a waiver add with no drop (an open roster spot) is "nodrop", never
+        # the displaced starter, who is not part of the move
+        held = (self.drop_id or "nodrop") if self.kind == "waiver" else self.held_id
+        return f"{self.kind}:{self.slot}:{held}:{self.alternative_id}"
 
     @property
     def is_decision(self) -> bool:
@@ -320,6 +334,42 @@ def _actual(actuals: Mapping[str, float], gsis: str) -> float | None:
     return None if v is None else float(v)
 
 
+def actual_key(p: Mapping[str, object]) -> str:
+    """The actuals key for one record entry: his gsis id, or `DEF:<team>` for
+    a team defense, which has no gsis id (#28 item 2)."""
+    if str(p.get("position") or "") in ("DEF", "DST"):
+        team = nflverse_team(p.get("team") or p.get("sleeper_id") or p.get("id") or "")
+        return f"DEF:{team}" if team else ""
+    return str(p.get("gsis_id") or "")
+
+
+#: The held side of a waiver pair whose add fills an EMPTY lineup slot
+#: (`displaces_id` None): an empty slot scores 0 under the league's rules.
+EMPTY_SLOT = "EMPTY"
+
+
+def _mark_primary(graded: list[GradedComparison]) -> list[GradedComparison]:
+    """One counted comparison per (kind, slot) a week (#28 option B): the
+    lowest projected edge wins, which is the largest claimed gain for a
+    waiver add (its edge is minus the lineup gain) and the closest swap for a
+    start/sit. Ties keep the archive's order; no edge ranks last. The pick
+    ignores the outcome, so an ungradeable top pick leaves its slot
+    uncounted rather than promoting a gradeable second."""
+    def rank(c: GradedComparison) -> tuple[int, float]:
+        # an edge of exactly 0 is no call (the page had no preference), so it
+        # never takes a slot from a real one; no edge at all ranks last
+        if c.projected_edge is None:
+            return (2, 0.0)
+        return (1 if c.projected_edge == 0 else 0, c.projected_edge)
+    best: dict[tuple[str, str], int] = {}
+    for i, c in enumerate(graded):
+        k = (c.kind, c.slot)
+        if k not in best or rank(c) < rank(graded[best[k]]):
+            best[k] = i
+    keep = set(best.values())
+    return [c if i in keep else replace(c, primary=False) for i, c in enumerate(graded)]
+
+
 def _stance_for(archive: Mapping[str, object], kind: str) -> str:
     """What the page did with this class of action, read from the archived
     gate. An archive written before the gate existed says UNKNOWN rather than
@@ -357,46 +407,73 @@ def grade_archive(archive: Mapping[str, object],
     ungradeable = 0
 
     def one(kind: str, slot: str, held: Mapping | None, alt: Mapping | None,
-            eligibility: str = "") -> None:
+            eligibility: str = "", *, drop_id: str = "", claimed: float | None = None,
+            held_actual: float | None = None, why_not: str = "") -> None:
+        """`claimed`: the edge the page claimed (held - alternative) when it is
+        not the two projections' difference; `held_actual`: a held side whose
+        points are known without a stat line (an empty slot's 0); `why_not`:
+        the comparison cannot be graded at all, and why."""
         nonlocal ungradeable
         if held is None or alt is None:
             return
-        h_act = _actual(actuals, str(held.get("gsis_id") or ""))
-        a_act = _actual(actuals, str(alt.get("gsis_id") or ""))
+        h_act = (held_actual if held_actual is not None
+                 else _actual(actuals, actual_key(held)))
+        a_act = _actual(actuals, actual_key(alt))
         h_proj = held.get("projected")
         a_proj = alt.get("projected")
-        p_edge = (None if h_proj is None or a_proj is None
+        p_edge = (round(float(claimed), 3) if claimed is not None
+                  else None if h_proj is None or a_proj is None
                   else round(float(h_proj) - float(a_proj), 3))
         held_id, alt_id = str(held.get("sleeper_id")), str(alt.get("sleeper_id"))
         stance = _stance_for(archive, kind)
-        action = watched.get(f"{kind}:{slot}:{held_id}:{alt_id}", "")
+        key_held = (drop_id or "nodrop") if kind == "waiver" else held_id   # = `.key`
+        action = watched.get(f"{kind}:{slot}:{key_held}:{alt_id}", "")
         basis = OBSERVED if action in (ACTED, DECLINED) else HYPOTHETICAL
-        if h_act is None or a_act is None:
+        if why_not or h_act is None or a_act is None:
             ungradeable += 1
             missing = [n for n, a in (("held", h_act), ("alternative", a_act))
                        if a is None]
             graded.append(GradedComparison(
                 kind, slot, held_id, alt_id, h_proj, a_proj, h_act, a_act,
                 p_edge, None, "ungradeable", stance, basis, action, eligibility,
-                f"no actual for the {' and '.join(missing)} side "
-                f"(bye, cut, or no stat line)"))
+                why_not or f"no actual for the {' and '.join(missing)} side "
+                           f"(bye, cut, or no stat line)", drop_id=drop_id))
             return
         graded.append(GradedComparison(
             kind, slot, held_id, alt_id, h_proj, a_proj, h_act, a_act,
             p_edge, round(h_act - a_act, 3), "graded", stance, basis, action,
-            eligibility))
+            eligibility, drop_id=drop_id))
 
     for alt in archive.get("alternatives") or []:
         one("start_sit", str(alt.get("slot") or ""),
             seen.get(str(alt.get("starter_id") or "")),
             seen.get(str(alt.get("bench_id") or "")))
     for up in archive.get("upgrades") or []:
-        # The roster held the drop and did not have the add. Whether the add
-        # was even claimable is not something the page established, so every
-        # waiver pair carries UNVERIFIED and stays out of the headline rate.
-        one("waiver", str(up.get("slot") or ""),
-            seen.get(str(up.get("drop_id") or "")), up.get("add"),
-            eligibility="UNVERIFIED")
+        # Owner decision 2026-11-18 (#28 option A): the board claimed the add
+        # beats the starter he DISPLACES by `lineup_gain` this week, so that
+        # is what is graded: add vs displaced starter, signed by the claim.
+        # The drop is the move's cost, not its claim (a bench receiver's
+        # points say nothing about a kicker pickup). Whether the add was
+        # claimable the page never established, so every waiver pair carries
+        # UNVERIFIED and stays out of the endorsed rate.
+        slot, drop = str(up.get("slot") or ""), str(up.get("drop_id") or "")
+        gain = up.get("lineup_gain")
+        claimed = None if gain is None else -float(gain)
+        if "displaces_id" not in up:
+            one("waiver", slot, seen.get(drop) or {"sleeper_id": drop}, up.get("add"),
+                eligibility="UNVERIFIED", drop_id=drop, claimed=claimed,
+                why_not="the board recorded no displaced starter (an archive before "
+                        "`displaces_id`): its claim cannot be graded")
+        elif up.get("displaces_id") is None:
+            one("waiver", slot, {"sleeper_id": EMPTY_SLOT, "projected": 0.0}, up.get("add"),
+                eligibility="UNVERIFIED", drop_id=drop, claimed=claimed, held_actual=0.0)
+        else:
+            shown = seen.get(str(up["displaces_id"]))
+            one("waiver", slot, shown or {"sleeper_id": str(up["displaces_id"])},
+                up.get("add"), eligibility="UNVERIFIED", drop_id=drop, claimed=claimed,
+                why_not="" if shown is not None else
+                "the displaced starter is not on the archived roster")
+    graded[:] = _mark_primary(graded)
 
     errs = []
     for p in seen.values():

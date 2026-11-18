@@ -42,8 +42,14 @@ Sleeper's player map, or submits anything to the league.
   archive per week, actuals by gsis id, and one aggregate row per week in
   `data/ledger/grades/season<YYYY>.csv` (committed; counts only). Two rates,
   never merged: `agree/scorable` (advice the page endorsed) and
-  `direction_agree/direction_n` (the projection's direction on every graded
-  comparison, including withheld ones — the page withholds most of game day).
+  `direction_agree/direction_n` (the projection's direction, including
+  withheld comparisons — the page withholds most of game day). Since #28
+  (owner, 2026-11-18): one counted comparison per lineup slot a week; a
+  waiver add is graded against the starter it would displace (signed by
+  `lineup_gain`, an empty slot = 0), never the drop; team defenses grade
+  from `DEF:<team>`; the split columns `ss_direction_*` and `wv_direction_*`
+  are shown apart on the Report card. Rows graded before #28 have blank
+  split columns and stay pooled, labelled, never mixed in.
 - **Cloud grading** (`gridiron.grading`, `grade_week.py --finished`): every
   build pins one board per week (the latest built before the Sunday early
   kickoff; the cloud keeps only ~10 h of records, so the pin is what lets a
