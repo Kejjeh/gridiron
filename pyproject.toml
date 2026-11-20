@@ -27,7 +27,8 @@ where = ["src"]
 # The prop market's fitted shapes and sizes (gridiron.props reads them beside
 # the module), so an installed package carries them too.
 [tool.setuptools.package-data]
-gridiron = ["props_params.json"]
+# The home-screen manifest and icons gridiron.publication packages for Pages.
+gridiron = ["props_params.json", "site_assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

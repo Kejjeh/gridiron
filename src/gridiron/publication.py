@@ -2,7 +2,9 @@
 
 The owner authorised publishing the repository AND the personalised pages
 (2026-09-21, docs/DECISIONS.md). That authorisation covers two rendered HTML
-files and nothing else, so the boundary is an allowlist of exact filenames
+files and, since the owner asked for a home-screen app (2026-11-20), a web
+app manifest and its icons: committed static files with no data in them.
+Nothing else, so the boundary is an allowlist of exact filenames
 rather than a glob: a JSON decision record, a cache file, an archive file or
 a stray screenshot next to the pages is refused by name, never uploaded by
 accident. Credentials were never in the render path (rule #9) and the scan
@@ -40,9 +42,15 @@ REQUIRED_PAGES: tuple[str, ...] = (GAMEDAY_PAGE, BOARD_PAGE)
 #: The root document, written by the packager.
 INDEX_PAGE = "index.html"
 
+#: The home-screen app files, committed under `site_assets/` and copied by
+#: exact name like the pages. Flat names: the site holds no directories.
+ASSETS_DIR = Path(__file__).resolve().parent / "site_assets"
+STATIC_FILES: tuple[str, ...] = ("app.webmanifest", "icon-192.png", "icon-512.png",
+                                 "apple-touch-icon.png")
+
 #: Everything a finished site directory may hold. A test asserts the built
 #: directory equals this set exactly.
-SITE_FILES: frozenset[str] = frozenset((INDEX_PAGE, *REQUIRED_PAGES))
+SITE_FILES: frozenset[str] = frozenset((INDEX_PAGE, *REQUIRED_PAGES, *STATIC_FILES))
 
 #: Strings that must not appear in any published byte. The first group is
 #: the credential surface (rule #9: every secret is a GRIDIRON_-prefixed
@@ -62,6 +70,8 @@ FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
 INDEX_HTML = (
     "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+    "<link rel=\"manifest\" href=\"app.webmanifest\">"
+    "<link rel=\"apple-touch-icon\" href=\"apple-touch-icon.png\">"
     f"<meta http-equiv=\"refresh\" content=\"0; url={GAMEDAY_PAGE}\">"
     "<meta name=\"robots\" content=\"noindex\">"
     "<title>gridiron</title></head><body>"
@@ -96,6 +106,9 @@ def _check_pages(source: Path) -> list[str]:
             continue
         if p.stat().st_size == 0:
             problems.append(f"required page is empty: {name}")
+    for name in STATIC_FILES:
+        if not (ASSETS_DIR / name).is_file():
+            problems.append(f"missing site asset: {name}")
     return problems
 
 
@@ -129,7 +142,8 @@ def _links_resolve(name: str, data: bytes) -> list[str]:
 
 
 def build_site(source: Path, site: Path) -> SiteBuild:
-    """Copy the two allowlisted pages verbatim into `site` and write the index.
+    """Copy the two allowlisted pages and the home-screen assets verbatim into
+    `site` and write the index.
 
     All checks run BEFORE anything is written; on any failure `site` is left
     exactly as it was (absent or holding the previous package), so a failed
@@ -144,6 +158,8 @@ def build_site(source: Path, site: Path) -> SiteBuild:
     for name in REQUIRED_PAGES:
         payload[name] = (source / name).read_bytes()
     payload[INDEX_PAGE] = INDEX_HTML.encode("utf-8")
+    for name in STATIC_FILES:
+        payload[name] = (ASSETS_DIR / name).read_bytes()
     hits: list[str] = []
     for name, data in payload.items():
         hits.extend(scan_bytes(name, data))

@@ -468,6 +468,17 @@ window.gridironSnapshot={check:check,state:function(){ return S; },tune:function
 #: then pads it by `env(safe-area-inset-bottom)` so no tab sits under it.
 VIEWPORT = "width=device-width, initial-scale=1, viewport-fit=cover"
 
+#: Home-screen app tags (owner request, 2026-11-20). The manifest and the
+#: icons they name are static files `gridiron.publication` packages beside
+#: the pages; each page's policy allows them with `img-src 'self'` and
+#: `manifest-src 'self'` (browsers fetch manifest icons under img-src).
+HOME_SCREEN_HEAD = (
+    "<link rel=\"manifest\" href=\"app.webmanifest\">"
+    "<link rel=\"apple-touch-icon\" href=\"apple-touch-icon.png\">"
+    "<meta name=\"apple-mobile-web-app-title\" content=\"Gridiron\">"
+    "<meta name=\"theme-color\" content=\"#0a0f1c\">"
+)
+
 
 def page_copy(html_text: str) -> str:
     """The words a reader can see or hear: the page with its stylesheets and

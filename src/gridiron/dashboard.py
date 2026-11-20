@@ -3100,10 +3100,13 @@ def render_html(d: Dashboard, *, include_names: bool = True) -> str:
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
         f"<meta name=\"viewport\" content=\"{theme.VIEWPORT}\">",
         # The board fetches nothing but its own URL (the published-build
-        # check) and runs only its own two scripts.
+        # check) and runs only its own two scripts; images and the manifest
+        # are the home-screen icons, from this site only.
         f"<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
-        f"connect-src 'self'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+        f"connect-src 'self'; img-src 'self'; manifest-src 'self'; "
+        f"script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
         f"base-uri 'none'; form-action 'none'\">",
+        theme.HOME_SCREEN_HEAD,  # after the policy, so it covers them
         theme.build_meta(generated_iso, "dashboard_latest.html"),
         _valid_meta(d),
         f"<title>{_e(title)}</title>",

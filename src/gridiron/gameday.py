@@ -1645,12 +1645,15 @@ def render_gameday_html(d: GameDay, *, include_names: bool = True) -> str:
         f"<meta name=\"viewport\" content=\"{theme.VIEWPORT}\">",
         # The policy is the request fan-out guard: the page may talk to the
         # Sleeper hosts it names and to nothing else, run only its own script,
-        # load no image, font or frame, and submit no form anywhere.
+        # load no font or frame, and submit no form anywhere. Images and the
+        # manifest come from this site only: the home-screen icons.
         # 'self' is the published-build check: a conditional GET of this
         # page's own URL on the hosting origin, and nothing else.
         f"<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
-        f"connect-src 'self' {_e(bases)}; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+        f"connect-src 'self' {_e(bases)}; img-src 'self'; manifest-src 'self'; "
+        f"script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
         f"base-uri 'none'; form-action 'none'\">",
+        theme.HOME_SCREEN_HEAD,  # after the policy, so it covers them
         theme.build_meta(d.generated.astimezone(timezone.utc).isoformat(timespec="seconds"),
                          "gameday_latest.html"),
         f"<title>{_e(title)}</title><style nonce=\"{nonce}\">{_CSS}</style></head><body><main>",

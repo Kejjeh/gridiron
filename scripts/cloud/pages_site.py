@@ -1,11 +1,11 @@
-"""Package the two rendered pages for GitHub Pages, and check the package.
+"""Package the two rendered pages (and the app icons) for GitHub Pages, and check the package.
 
     PYTHONPATH=src python scripts/cloud/pages_site.py build --out .site
     PYTHONPATH=src python scripts/cloud/pages_site.py check --site .site --width 375
 
 `build` copies `gameday_latest.html` and `dashboard_latest.html` from the
 render directory into `--out`, byte for byte, writes `index.html` (a redirect
-to Game Day), and exits 1 WITHOUT writing anything when either page is
+to Game Day), copies the committed home-screen manifest and icons, and exits 1 WITHOUT writing anything when either page is
 missing or when any page carries a forbidden string. The allowlist, the scan
 and the reasons live in `gridiron.publication`; this file is the command
 line around it. In the workflow a non-zero exit here means no Pages artifact
@@ -173,7 +173,9 @@ class _Site(http.server.BaseHTTPRequestHandler):
             rel = path[len(PREFIX):] or publication.INDEX_PAGE
             target = (_Site.root / rel)
             if "/" not in rel and target.is_file() and rel in publication.SITE_FILES:
-                return self._send(200, target.read_bytes(), "text/html; charset=utf-8")
+                ctype = {".png": "image/png", ".webmanifest": "application/manifest+json"}.get(
+                    target.suffix, "text/html; charset=utf-8")
+                return self._send(200, target.read_bytes(), ctype)
         return self._send(404, b"not found", "text/plain")
 
 
@@ -258,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    b = sub.add_parser("build", help="package the two pages into a site directory")
+    b = sub.add_parser("build", help="package the two pages and the app icons into a site directory")
     b.add_argument("--source", type=Path, default=DASHBOARD_DIR,
                    help="the render directory (default data/outputs/dashboard/)")
     b.add_argument("--out", type=Path, default=REPO_ROOT / ".site")

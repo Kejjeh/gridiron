@@ -31,7 +31,7 @@ Keep this file tight. The ceiling is enforced by `tests/test_claude_md_budget.py
   with its records AND last-good inputs carried between runs by
   `gridiron.carryover` (an Actions cache, not durable storage). The repo and
   the personalised pages are PUBLIC by owner decision (2026-09-21):
-  `gridiron.publication` packages exactly two allowlisted HTML files for
+  `gridiron.publication` packages exactly two allowlisted HTML files (+ app icons) for
   GitHub Pages under the `GRIDIRON_PUBLIC_PUBLICATION` opt-in — never JSON,
   cache or archive — and artifacts, caches and logs are public too. A pickup
   is a move ONLY if it improves THIS WEEK's lineup (`gridiron.waivers`); an
