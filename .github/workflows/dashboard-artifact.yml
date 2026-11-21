@@ -71,8 +71,9 @@ name: Weekly dashboard artifact
 # the copy that survives independently, and it has its own finite retention.
 # Neither of these is a backup.
 #
-# Publishing. `pages_site.py build` copies exactly two files, byte for byte,
-# into .site/ with an index that opens Game Day, and refuses (exit 1, nothing
+# Publishing. `pages_site.py build` copies exactly two pages, byte for byte,
+# into .site/ with an index that opens Game Day, adds the committed
+# home-screen manifest and icons, and refuses (exit 1, nothing
 # written) when either page is missing or carries a forbidden string. Only
 # that directory is uploaded as the Pages artifact, only when the package
 # step succeeded, and only the `publish` job below holds the permissions to
@@ -371,12 +372,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # The public site is exactly two pages. The packager refuses a partial
+      # The public site is exactly two pages (plus the home-screen manifest and
+      # icons, committed static files). The packager refuses a partial
       # or suspect set with nothing written, so this step's outcome is the
       # deploy's gate: no package, no Pages artifact, no deploy, last good
       # site stays. It runs only under the publication opt-in, and it is
       # NOT `if: always()`: a run whose render failed has no site to offer.
-      - name: Package the public site (two allowlisted pages, verbatim)
+      - name: Package the public site (two allowlisted pages and the app icons, verbatim)
         id: site
         if: vars.GRIDIRON_PUBLIC_PUBLICATION == 'true'
         run: python scripts/cloud/pages_site.py build --source data/outputs/dashboard --out .site

@@ -59,7 +59,7 @@ This collects cloud snapshots. The dashboard workflow runs every 15 minutes
 (best effort), refreshes the snapshot itself, carries its records and last-good
 inputs between runs in an Actions cache (`gridiron.carryover`) and, under the
 same publication opt-in, publishes exactly two
-HTML pages to GitHub Pages at https://kejjeh.github.io/gridiron/ (root opens
+HTML pages (plus the home-screen manifest and icons) to GitHub Pages at https://kejjeh.github.io/gridiron/ (root opens
 Game Day; the pages link to each other). Snapshot timestamps are preserved:
 the packager copies bytes and restamps nothing. GitHub Pages from a PRIVATE
 repository needs a paid plan (Pro, Team or Enterprise); on Free the repository

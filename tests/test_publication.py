@@ -9,7 +9,7 @@ The owner authorised publishing the repository and the personalised pages
     SHA-pinned, on the schedule or a manual dispatch only, never on a pull
     request, and only after a package step that succeeded;
   * the package is exactly two allowlisted pages copied byte for byte plus an
-    index that opens Game Day — no JSON record, no cache, no archive, no
+    index that opens Game Day and the home-screen manifest and icons — no JSON record, no cache, no archive, no
     credential-shaped string — and a missing page refuses the whole package
     with nothing written, so the last good site stays up.
 
@@ -255,6 +255,49 @@ def test_a_stray_file_in_the_site_directory_does_not_ride_along(rendered, tmp_pa
     (site / "nested").mkdir()
     with pytest.raises(pub.PublicationError, match="directory"):
         pub.build_site(rendered, site)
+
+
+# ------------------------------------------- home-screen app (2026-11-20)
+# The owner asked for gridiron to install as a home-screen app ("Yes, all 5",
+# 2026-11-20). That adds a web app manifest and its icons to the package:
+# static committed files with no data in them, by exact name like the pages.
+def test_the_site_carries_a_home_screen_manifest_and_its_icons(rendered, tmp_path):
+    site = tmp_path / "site"
+    pub.build_site(rendered, site)
+    m = json.loads((site / "app.webmanifest").read_text("utf-8"))
+    assert m["display"] == "standalone" and m["start_url"] == "./" and m["scope"] == "./"
+    srcs = {i["src"] for i in m["icons"]}
+    assert {i["sizes"] for i in m["icons"]} >= {"192x192", "512x512"}
+    assert srcs <= set(pub.SITE_FILES), "every icon the manifest names is packaged"
+    for name in srcs | {"apple-touch-icon.png"}:
+        assert (site / name).read_bytes()[:4] == b"\x89PNG", name
+
+
+def test_every_page_links_the_manifest_and_its_policy_allows_it(rendered, tmp_path):
+    site = tmp_path / "site"
+    pub.build_site(rendered, site)
+    for name in (pub.INDEX_PAGE, *pub.REQUIRED_PAGES):
+        html = (site / name).read_text("utf-8")
+        assert '<link rel="manifest" href="app.webmanifest">' in html, name
+        assert '<link rel="apple-touch-icon" href="apple-touch-icon.png">' in html, name
+        csp = re.search(r'http-equiv="Content-Security-Policy" content="([^"]*)"', html)
+        if csp:  # the redirect index carries no policy
+            assert "manifest-src 'self'" in csp.group(1), name
+            assert "default-src 'none'" in csp.group(1), name
+            # a meta policy covers only what follows it
+            assert html.index('rel="manifest"') > csp.start(), f"{name}: manifest link before the policy"
+
+
+def test_a_missing_site_asset_refuses_the_whole_package(rendered, tmp_path, monkeypatch):
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    for name in pub.STATIC_FILES[:-1]:
+        (assets / name).write_bytes((pub.ASSETS_DIR / name).read_bytes())
+    monkeypatch.setattr(pub, "ASSETS_DIR", assets)
+    site = tmp_path / "site"
+    with pytest.raises(pub.PublicationError, match=f"missing site asset: {pub.STATIC_FILES[-1]}"):
+        pub.build_site(rendered, site)
+    assert not site.exists(), "a refused build must write nothing"
 
 
 def test_the_rendered_pages_carry_no_forbidden_string(rendered):
